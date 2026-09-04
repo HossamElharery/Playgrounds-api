@@ -1,0 +1,1222 @@
+// Mal3ab API — Prisma schema
+// Domain reference: PROJECT_BLUEPRINT.md §1-19. See MAL3AB_BACKEND.md for the full narrative.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Identity & RBAC
+// ============================================================
+
+enum UserRole {
+  player
+  owner
+  staff
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+  banned
+}
+
+model User {
+  id              String     @id @default(uuid())
+  phone           String     @unique
+  email           String?    @unique
+  passwordHash    String?
+  name            String
+  avatarUrl       String?
+  avatarConfig    Json?
+  roles           UserRole[] @default([player])
+  status          UserStatus @default(active)
+  preferredLang   String     @default("ar")
+  reputation      Int        @default(0)
+  reliabilityPct  Float      @default(100)
+  coinsBalance    Int        @default(0)
+  streakCount     Int        @default(0)
+  streakUpdatedAt DateTime?
+  referralCode    String     @unique @default(uuid())
+  referredById    String?
+  referredBy      User?      @relation("Referrals", fields: [referredById], references: [id])
+  referrals       User[]     @relation("Referrals")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  refreshTokens         RefreshToken[]
+  otpCodes              OtpCode[]
+  ownedVenues           Venue[]                 @relation("VenueOwner")
+  approvedVenues        Venue[]                 @relation("VenueApprovedBy")
+  bookings              Booking[]
+  splitShares           BookingSplitShare[]
+  recurringSeries       RecurringBookingSeries[]
+  venueReviews          VenueReview[]
+  ratingsGiven          PlayerRating[]          @relation("PlayerRatingRater")
+  ratingsReceived       PlayerRating[]          @relation("PlayerRatingRatee")
+  friendshipsInitiated  Friendship[]            @relation("FriendshipRequester")
+  friendshipsReceived   Friendship[]            @relation("FriendshipAddressee")
+  matchPosts            MatchPost[]
+  matchJoinRequests     MatchPostJoinRequest[]
+  teamsCaptained        Team[]                  @relation("TeamCaptain")
+  teamMemberships       TeamMember[]
+  chatParticipants      ChatThreadParticipant[]
+  chatMessages          ChatMessage[]
+  notifications         Notification[]
+  squadMemberships      SquadMember[]
+  sentSquadInvites      SquadInvite[]           @relation("SquadInviteFrom")
+  receivedSquadInvites  SquadInvite[]           @relation("SquadInviteTo")
+  squadJoinRequestsMade SquadJoinRequest[]      @relation("SquadJoinRequestFrom")
+  squadJoinRequestsRes  SquadJoinRequest[]      @relation("SquadJoinRequestResolvedBy")
+  coinLedger            CoinLedgerEntry[]
+  questProgress         UserQuestProgress[]
+  badges                UserBadge[]
+  promoCodesCreated     PromoCode[]
+  promoRedemptions      PromoRedemption[]
+  pulseAvailability     PulseAvailability?
+  pulseOpportunities    PulseOpportunity[]      @relation("PulseOpportunityOrganizer")
+  pulseClaims           PulseClaim[]
+  staffInvitesSent      StaffInvite[]           @relation("StaffInviteInvitedBy")
+  staffInvitesReceived  StaffInvite[]           @relation("StaffInviteInvitee")
+  roleAssignments       UserRoleAssignment[]
+  ownedRoles            Role[]                  @relation("RoleOwner")
+  reportsFiled          ModerationReport[]      @relation("ModerationReportReporter")
+  reportsAgainstMe      ModerationReport[]      @relation("ModerationReportReportedUser")
+  reportsReviewed       ModerationReport[]      @relation("ModerationReportReviewedBy")
+  auditLogEntries       AuditLogEntry[]
+  sportSkills           UserSportSkill[]
+  blogPosts             BlogPost[]
+  supportInquiries      SupportInquiry[]
+
+  @@index([status])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  deviceInfo String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+enum OtpPurpose {
+  login
+  register
+  reset_password
+  verify_phone
+}
+
+model OtpCode {
+  id        String     @id @default(uuid())
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target    String // phone or email the code was sent to
+  codeHash  String
+  purpose   OtpPurpose
+  attempts  Int        @default(0)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime   @default(now())
+
+  @@index([target, purpose])
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  key         String           @unique // e.g. "bookings.checkin", "calendar.view"
+  descriptionEn String?
+  descriptionAr String?
+  roles       RolePermission[]
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  ownerId     String // the venue-owner account this staff role belongs to
+  owner       User             @relation("RoleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  createdAt   DateTime         @default(now())
+  permissions RolePermission[]
+  assignments UserRoleAssignment[]
+
+  @@index([ownerId])
+}
+
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRoleAssignment {
+  id      String  @id @default(uuid())
+  userId  String
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId  String
+  role    Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  venueId String?
+  venue   Venue?  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, venueId])
+}
+
+// ============================================================
+// Geo / taxonomy
+// ============================================================
+
+model CountryConfig {
+  code            String  @id // "EG"
+  nameEn          String
+  nameAr          String
+  currency        String  @default("EGP")
+  phoneCallingCode String
+  weekendDays     Int[]   @default([5, 6]) // Fri=5, Sat=6
+  paymentMethods  String[]
+  governorates    Governorate[]
+}
+
+model Governorate {
+  id          String        @id @default(uuid())
+  countryCode String
+  country     CountryConfig @relation(fields: [countryCode], references: [code])
+  nameEn      String
+  nameAr      String
+  districts   District[]
+  venues      Venue[]
+
+  @@index([countryCode])
+}
+
+model District {
+  id            String      @id @default(uuid())
+  governorateId String
+  governorate   Governorate @relation(fields: [governorateId], references: [id])
+  nameEn        String
+  nameAr        String
+  venues        Venue[]
+  matchPosts    MatchPost[]
+
+  @@index([governorateId])
+}
+
+model SportCategory {
+  id            String   @id @default(uuid())
+  slug          String   @unique
+  nameEn        String
+  nameAr        String
+  icon          String
+  accentColor   String?
+  createdAt     DateTime @default(now())
+
+  courts       Court[]
+  matchPosts   MatchPost[]
+  promoCodes   PromoCode[]
+  userSkills   UserSportSkill[]
+  pulseAvail   PulseAvailability[]
+  pulseOpps    PulseOpportunity[]
+  venueSports  VenueSport[]
+}
+
+enum SkillTier {
+  bronze
+  silver
+  gold
+  platinum
+  legend
+}
+
+model UserSportSkill {
+  id       String        @id @default(uuid())
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sportId  String
+  sport    SportCategory @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  tier     SkillTier     @default(bronze)
+  eloScore Int           @default(1000)
+  position String?
+
+  @@unique([userId, sportId])
+}
+
+model Amenity {
+  id     String        @id @default(uuid())
+  key    String        @unique
+  nameEn String
+  nameAr String
+  icon   String
+  venues VenueAmenity[]
+}
+
+// ============================================================
+// Venues & booking core
+// ============================================================
+
+enum VenueStatus {
+  pending
+  active
+  suspended
+}
+
+model Venue {
+  id              String       @id @default(uuid())
+  slug            String       @unique
+  ownerId         String
+  owner           User         @relation("VenueOwner", fields: [ownerId], references: [id])
+  nameEn          String
+  nameAr          String
+  descriptionEn   String?      @db.Text
+  descriptionAr   String?      @db.Text
+  governorateId   String?
+  governorate     Governorate? @relation(fields: [governorateId], references: [id])
+  districtId      String?
+  district        District?    @relation(fields: [districtId], references: [id])
+  address         String?
+  lat             Float
+  lng             Float
+  geohash         String
+  surface         String?
+  instantBook     Boolean      @default(true)
+  cancellationPolicy String?  @db.Text
+  status          VenueStatus  @default(pending)
+  featured        Boolean      @default(false)
+  approvedById    String?
+  approvedBy      User?        @relation("VenueApprovedBy", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  ratingAvg       Float        @default(0)
+  ratingCount     Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  courts          Court[]
+  photos          VenuePhoto[]
+  amenities       VenueAmenity[]
+  sports          VenueSport[]
+  reviews         VenueReview[]
+  bookings        Booking[]
+  matchPosts      MatchPost[]
+  promoCodes      PromoCode[]
+  commissionSetting CommissionSetting?
+  payouts         Payout[]
+  staffInvites    StaffInvite[]
+  roleAssignments UserRoleAssignment[]
+
+  @@index([geohash])
+  @@index([lat, lng])
+  @@index([status])
+}
+
+model VenueSport {
+  venueId String
+  venue   Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  sportId String
+  sport   SportCategory @relation(fields: [sportId], references: [id], onDelete: Cascade)
+
+  @@id([venueId, sportId])
+}
+
+model VenueAmenity {
+  venueId   String
+  venue     Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  amenityId String
+  amenity   Amenity @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+
+  @@id([venueId, amenityId])
+}
+
+model VenuePhoto {
+  id       String @id @default(uuid())
+  venueId  String
+  venue    Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  url      String
+  position Int    @default(0)
+
+  @@index([venueId])
+}
+
+model Court {
+  id              String   @id @default(uuid())
+  venueId         String
+  venue           Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  sportId         String
+  sport           SportCategory @relation(fields: [sportId], references: [id])
+  name            String
+  surface         String?
+  indoor          Boolean  @default(false)
+  format          String? // "5v5", "7v7"...
+  slotDurationMins Int     @default(60)
+  createdAt       DateTime @default(now())
+
+  pricingRules PricingRule[]
+  bookings     Booking[]
+  recurring    RecurringBookingSeries[]
+  matchPosts   MatchPost[]
+
+  @@index([venueId])
+}
+
+model PricingRule {
+  id            String   @id @default(uuid())
+  courtId       String
+  court         Court    @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  label         String // "base" | "peak" | "weekend" | custom
+  daysOfWeek    Int[] // 0=Sun..6=Sat, empty = every day
+  startTime     String // "18:00"
+  endTime       String // "23:00"
+  priceAmount   Int // minor units (piasters)
+  currency      String   @default("EGP")
+  priority      Int      @default(0)
+
+  @@index([courtId])
+}
+
+enum BookingStatus {
+  held
+  confirmed
+  cancelled
+  completed
+  no_show
+}
+
+
+enum PaymentMethod {
+  card
+  wallet
+  fawry
+  instapay
+  cash
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+  partial
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  code              String        @unique // human-friendly booking code
+  courtId           String
+  court             Court         @relation(fields: [courtId], references: [id])
+  venueId           String
+  venue             Venue         @relation(fields: [venueId], references: [id])
+  userId            String
+  user              User          @relation(fields: [userId], references: [id])
+  slotStart         DateTime
+  slotEnd           DateTime
+  baseAmount        Int
+  feeAmount         Int           @default(0)
+  discountAmount    Int           @default(0)
+  totalAmount       Int
+  currency          String        @default("EGP")
+  promoCodeId       String?
+  promoCode         PromoCode?    @relation(fields: [promoCodeId], references: [id])
+  coinsRedeemed     Int           @default(0)
+  paymentMethod     PaymentMethod?
+  paymentStatus     PaymentStatus @default(pending)
+  status            BookingStatus @default(held)
+  holdExpiresAt     DateTime?
+  isSplitPayment    Boolean       @default(false)
+  qrPayload         String?       @unique
+  checkedInAt       DateTime?
+  checkedInByUserId String?
+  cancelledAt       DateTime?
+  cancellationReason String?
+  recurringSeriesId String?
+  recurringSeries   RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  splitShares   BookingSplitShare[]
+  payments      Payment[]
+  reviews       VenueReview[]
+  ratings       PlayerRating[]
+  promoRedemptions PromoRedemption[]
+  coinLedgerEntries CoinLedgerEntry[]
+  pulseOpportunity PulseOpportunity?
+  pulseClaims   PulseClaim[]
+
+  @@index([courtId, slotStart])
+  @@index([userId])
+  @@index([status])
+}
+
+enum SplitShareStatus {
+  pending
+  paid
+  released
+}
+
+model BookingSplitShare {
+  id        String            @id @default(uuid())
+  bookingId String
+  booking   Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?             @relation(fields: [userId], references: [id])
+  phone     String?
+  amount    Int
+  currency  String            @default("EGP")
+  status    SplitShareStatus  @default(pending)
+  shareLinkToken String       @unique @default(uuid())
+  createdAt DateTime          @default(now())
+
+  @@index([bookingId])
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  bookingId   String
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amount      Int
+  currency    String        @default("EGP")
+  method      PaymentMethod
+  status      PaymentStatus @default(pending)
+  providerRef String?
+  createdAt   DateTime      @default(now())
+
+  @@index([bookingId])
+}
+
+model RecurringBookingSeries {
+  id         String   @id @default(uuid())
+  courtId    String
+  court      Court    @relation(fields: [courtId], references: [id])
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  dayOfWeek  Int
+  startTime  String
+  durationMins Int
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  bookings Booking[]
+
+  @@index([userId])
+}
+
+// ============================================================
+// Reviews & ratings
+// ============================================================
+
+model VenueReview {
+  id        String   @id @default(uuid())
+  venueId   String
+  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  stars     Int
+  tags      String[]
+  text      String?  @db.Text
+  photos    String[]
+  ownerReply String? @db.Text
+  ownerRepliedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@unique([bookingId, userId])
+  @@index([venueId])
+}
+
+model PlayerRating {
+  id            String   @id @default(uuid())
+  bookingId     String
+  booking       Booking  @relation(fields: [bookingId], references: [id])
+  raterId       String
+  rater         User     @relation("PlayerRatingRater", fields: [raterId], references: [id])
+  rateeId       String
+  ratee         User     @relation("PlayerRatingRatee", fields: [rateeId], references: [id])
+  sportsmanship Int
+  skill         Int
+  punctuality   Int
+  mvpVote       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@unique([bookingId, raterId, rateeId])
+  @@index([rateeId])
+}
+
+// ============================================================
+// Social
+// ============================================================
+
+enum FriendshipStatus {
+  pending
+  accepted
+  declined
+  blocked
+}
+
+model Friendship {
+  id            String           @id @default(uuid())
+  requesterId   String
+  requester     User             @relation("FriendshipRequester", fields: [requesterId], references: [id])
+  addresseeId   String
+  addressee     User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id])
+  status        FriendshipStatus @default(pending)
+  createdAt     DateTime         @default(now())
+  respondedAt   DateTime?
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+}
+
+enum MatchPostStatus {
+  open
+  full
+  played
+  expired
+  cancelled
+}
+
+model MatchPost {
+  id             String          @id @default(uuid())
+  authorId       String
+  author         User            @relation(fields: [authorId], references: [id])
+  sportId        String
+  sport          SportCategory   @relation(fields: [sportId], references: [id])
+  venueId        String?
+  venue          Venue?          @relation(fields: [venueId], references: [id])
+  courtId        String?
+  court          Court?          @relation(fields: [courtId], references: [id])
+  districtId     String?
+  district       District?       @relation(fields: [districtId], references: [id])
+  dateTime       DateTime
+  playersNeeded  Int
+  skillTier      SkillTier?
+  costPerPlayerAmount Int?
+  currency       String          @default("EGP")
+  notes          String?         @db.Text
+  chatThreadId   String?         @unique
+  chatThread     ChatThread?     @relation(fields: [chatThreadId], references: [id])
+  status         MatchPostStatus @default(open)
+  createdAt      DateTime        @default(now())
+
+  joinRequests MatchPostJoinRequest[]
+  pulseOpportunities PulseOpportunity[]
+
+  @@index([sportId, status])
+  @@index([districtId])
+}
+
+enum JoinRequestStatus {
+  pending
+  approved
+  declined
+}
+
+model MatchPostJoinRequest {
+  id          String             @id @default(uuid())
+  matchPostId String
+  matchPost   MatchPost          @relation(fields: [matchPostId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User               @relation(fields: [userId], references: [id])
+  status      JoinRequestStatus  @default(pending)
+  createdAt   DateTime           @default(now())
+
+  @@unique([matchPostId, userId])
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  logoUrl   String?
+  captainId String
+  captain   User     @relation("TeamCaptain", fields: [captainId], references: [id])
+  createdAt DateTime @default(now())
+
+  members            TeamMember[]
+  challengesMade      TeamChallenge[] @relation("TeamChallengeChallenger")
+  challengesReceived  TeamChallenge[] @relation("TeamChallengeChallenged")
+}
+
+model TeamMember {
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@id([teamId, userId])
+}
+
+enum ChallengeStatus {
+  pending
+  accepted
+  declined
+  played
+}
+
+model TeamChallenge {
+  id                 String          @id @default(uuid())
+  challengerTeamId   String
+  challengerTeam     Team            @relation("TeamChallengeChallenger", fields: [challengerTeamId], references: [id])
+  challengedTeamId   String
+  challengedTeam     Team            @relation("TeamChallengeChallenged", fields: [challengedTeamId], references: [id])
+  status             ChallengeStatus @default(pending)
+  proposedDateTime   DateTime?
+  createdAt          DateTime        @default(now())
+}
+
+enum ChatThreadType {
+  direct
+  match
+  team
+}
+
+model ChatThread {
+  id           String                 @id @default(uuid())
+  type         ChatThreadType
+  pairKey      String?                @unique // canonical "userIdA:userIdB" for direct find-or-create
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  participants ChatThreadParticipant[]
+  messages     ChatMessage[]
+  matchPost    MatchPost?
+
+  @@index([type])
+}
+
+model ChatThreadParticipant {
+  threadId          String
+  thread            ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId            String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastReadMessageId String?
+  joinedAt          DateTime   @default(now())
+
+  @@id([threadId, userId])
+}
+
+enum MessageType {
+  text
+  image
+  voice
+  system
+}
+
+enum MessageDelivery {
+  sent
+  delivered
+  read
+}
+
+model ChatMessage {
+  id              String          @id @default(uuid())
+  threadId        String
+  thread          ChatThread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  clientMessageId String?
+  senderId        String
+  sender          User            @relation(fields: [senderId], references: [id])
+  type            MessageType     @default(text)
+  text            String?         @db.Text
+  attachmentUrl   String?
+  attachmentMime  String?
+  attachmentSize  Int?
+  delivery        MessageDelivery @default(sent)
+  createdAt       DateTime        @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+
+  @@unique([threadId, clientMessageId])
+  @@index([threadId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String
+  titleEn   String
+  titleAr   String
+  bodyEn    String?
+  bodyAr    String?
+  deepLink  String?
+  payload   Json?
+  read      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@index([userId, read])
+}
+
+// ---- Squad (§13) ----
+
+model Squad {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  members       SquadMember[]
+  invites       SquadInvite[]
+  joinRequests  SquadJoinRequest[]
+}
+
+model SquadMember {
+  id        String   @id @default(uuid())
+  squadId   String
+  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  isLeader  Boolean  @default(false)
+  micMuted  Boolean  @default(false)
+  joinedAt  DateTime @default(now())
+
+  @@unique([squadId, userId])
+}
+
+enum SquadInviteStatus {
+  pending
+  accepted
+  declined
+  expired
+}
+
+model SquadInvite {
+  id        String            @id @default(uuid())
+  squadId   String
+  squad     Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  fromUserId String
+  fromUser  User              @relation("SquadInviteFrom", fields: [fromUserId], references: [id])
+  toUserId  String
+  toUser    User              @relation("SquadInviteTo", fields: [toUserId], references: [id])
+  status    SquadInviteStatus @default(pending)
+  createdAt DateTime          @default(now())
+}
+
+model SquadJoinRequest {
+  id             String            @id @default(uuid())
+  squadId        String
+  squad          Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  fromUserId     String
+  fromUser       User              @relation("SquadJoinRequestFrom", fields: [fromUserId], references: [id])
+  viaMemberId    String?
+  status         SquadInviteStatus @default(pending)
+  resolvedByUserId String?
+  resolvedByUser User?             @relation("SquadJoinRequestResolvedBy", fields: [resolvedByUserId], references: [id])
+  createdAt      DateTime          @default(now())
+}
+
+// ============================================================
+// Rewards economy
+// ============================================================
+
+model CoinLedgerEntry {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int // positive=earn, negative=burn
+  reason        String
+  bookingId     String?
+  booking       Booking? @relation(fields: [bookingId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model Quest {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  titleEn     String
+  titleAr     String
+  rule        Json
+  rewardCoins Int
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  progress UserQuestProgress[]
+}
+
+model UserQuestProgress {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId     String
+  quest       Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+  progress    Int      @default(0)
+  target      Int
+  completedAt DateTime?
+  weekKey     String // ISO week for weekly quests
+
+  @@unique([userId, questId, weekKey])
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  nameEn      String
+  nameAr      String
+  icon        String
+  descriptionEn String?
+  descriptionAr String?
+
+  users UserBadge[]
+}
+
+model UserBadge {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId   String
+  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  earnedAt  DateTime @default(now())
+
+  @@id([userId, badgeId])
+}
+
+enum PromoType {
+  percentage
+  fixed_amount
+}
+
+model PromoCode {
+  id                 String    @id @default(uuid())
+  code               String    @unique
+  type               PromoType
+  value              Int // percentage points OR minor-unit amount depending on type
+  currency           String    @default("EGP")
+  sportId            String?
+  sport              SportCategory? @relation(fields: [sportId], references: [id])
+  venueId            String?
+  venue              Venue?    @relation(fields: [venueId], references: [id])
+  firstBookingOnly   Boolean   @default(false)
+  offPeakOnly        Boolean   @default(false)
+  minBookingAmount   Int?
+  usageLimitTotal    Int?
+  usageLimitPerUser  Int       @default(1)
+  stackableWithCoins Boolean   @default(true)
+  validFrom          DateTime
+  validUntil         DateTime
+  createdById        String?
+  createdBy          User?     @relation(fields: [createdById], references: [id])
+  createdAt          DateTime  @default(now())
+
+  bookings    Booking[]
+  redemptions PromoRedemption[]
+
+  @@index([code])
+}
+
+model PromoRedemption {
+  id          String    @id @default(uuid())
+  promoCodeId String
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  bookingId   String?
+  booking     Booking?  @relation(fields: [bookingId], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@index([promoCodeId, userId])
+}
+
+// ============================================================
+// Pulse / Rescue Match (§19)
+// ============================================================
+
+enum PulseWindow {
+  now
+  tonight
+  weekend
+}
+
+enum PulseMode {
+  casual
+  competitive
+}
+
+model PulseAvailability {
+  id             String        @id @default(uuid())
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  window         PulseWindow
+  sportId        String
+  sport          SportCategory @relation(fields: [sportId], references: [id])
+  mode           PulseMode
+  radiusKm       Float
+  maxBudgetAmount Int
+  currency       String        @default("EGP")
+  districtId     String?
+  startsAt       DateTime
+  expiresAt      DateTime
+  status         String        @default("active") // active|expired|cancelled
+  version        Int           @default(1)
+  createdAt      DateTime      @default(now())
+}
+
+enum PulseOpportunityKind {
+  rescue
+  micro_lobby
+  friend_ready
+  venue_drop
+}
+
+enum PulseOpportunityStatus {
+  open
+  held
+  claimed
+  full
+  expired
+  cancelled
+}
+
+model PulseOpportunity {
+  id                     String                  @id @default(uuid())
+  kind                   PulseOpportunityKind
+  status                 PulseOpportunityStatus  @default(open)
+  sportId                String
+  sport                  SportCategory           @relation(fields: [sportId], references: [id])
+  mode                   PulseMode
+  skillTier              SkillTier?
+  organizerUserId        String?
+  organizer              User?                   @relation("PulseOpportunityOrganizer", fields: [organizerUserId], references: [id])
+  matchPostId            String?
+  matchPost              MatchPost?              @relation(fields: [matchPostId], references: [id])
+  bookingId              String?                 @unique
+  booking                Booking?                @relation(fields: [bookingId], references: [id])
+  districtId             String?
+  startsAt               DateTime
+  expiresAt              DateTime
+  costPerPlayerAmount    Int
+  originalCostPerPlayerAmount Int?
+  currency               String                  @default("EGP")
+  capacity               Int
+  reliabilityFloor       Float                   @default(0)
+  urgent                 Boolean                 @default(false)
+  version                Int                     @default(1)
+  createdAt              DateTime                @default(now())
+
+  claims PulseClaim[]
+
+  @@index([status, sportId])
+}
+
+enum PulseClaimState {
+  held
+  confirmed
+  released
+  expired
+}
+
+model PulseClaim {
+  id             String          @id @default(uuid())
+  opportunityId  String
+  opportunity    PulseOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User            @relation(fields: [userId], references: [id])
+  state          PulseClaimState @default(held)
+  holdExpiresAt  DateTime?
+  bookingId      String?
+  booking        Booking?        @relation(fields: [bookingId], references: [id])
+  createdAt      DateTime        @default(now())
+
+  @@unique([opportunityId, userId])
+}
+
+// ============================================================
+// Owner & admin
+// ============================================================
+
+model CommissionSetting {
+  id             String  @id @default(uuid())
+  venueId        String? @unique
+  venue          Venue?  @relation(fields: [venueId], references: [id])
+  percentageBps  Int // basis points, null venueId = global default
+  createdAt      DateTime @default(now())
+}
+
+model Payout {
+  id         String   @id @default(uuid())
+  venueId    String
+  venue      Venue    @relation(fields: [venueId], references: [id])
+  amount     Int
+  currency   String   @default("EGP")
+  periodStart DateTime
+  periodEnd   DateTime
+  status     String   @default("pending") // pending|paid
+  paidAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([venueId])
+}
+
+enum StaffInviteStatus {
+  pending
+  accepted
+  declined
+  revoked
+}
+
+model StaffInvite {
+  id             String            @id @default(uuid())
+  venueId        String
+  venue          Venue             @relation(fields: [venueId], references: [id])
+  invitedById    String
+  invitedBy      User              @relation("StaffInviteInvitedBy", fields: [invitedById], references: [id])
+  inviteePhone   String
+  inviteeUserId  String?
+  inviteeUser    User?             @relation("StaffInviteInvitee", fields: [inviteeUserId], references: [id])
+  roleId         String?
+  status         StaffInviteStatus @default(pending)
+  createdAt      DateTime          @default(now())
+
+  @@index([venueId])
+}
+
+model AuditLogEntry {
+  id           String   @id @default(uuid())
+  actorUserId  String
+  actor        User     @relation(fields: [actorUserId], references: [id])
+  action       String
+  targetType   String?
+  targetId     String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+}
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(false)
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+model PlatformSetting {
+  id                  Int      @id @default(1)
+  serviceFeePct       Float    @default(5)
+  coinsPerHundredEgp  Int      @default(10)
+  coinToEgpRate       Float    @default(20) // 500 coins = 25 EGP -> 20 coins/EGP
+  updatedAt           DateTime @updatedAt
+}
+
+enum ReportEntityType {
+  post
+  review
+  chat
+  player
+  venue
+}
+
+enum ReportStatus {
+  open
+  resolved
+  dismissed
+}
+
+model ModerationReport {
+  id              String           @id @default(uuid())
+  entityType      ReportEntityType
+  entityId        String
+  reporterId      String
+  reporter        User             @relation("ModerationReportReporter", fields: [reporterId], references: [id])
+  reportedUserId  String?
+  reportedUser    User?            @relation("ModerationReportReportedUser", fields: [reportedUserId], references: [id])
+  reason          String
+  status          ReportStatus     @default(open)
+  reviewedById    String?
+  reviewedBy      User?            @relation("ModerationReportReviewedBy", fields: [reviewedById], references: [id])
+  resolutionNote  String?
+  createdAt       DateTime         @default(now())
+
+  @@index([status])
+}
+
+// ============================================================
+// Content / CMS
+// ============================================================
+
+enum PublishStatus {
+  draft
+  published
+  archived
+}
+
+model BlogCategory {
+  id     String @id @default(uuid())
+  nameEn String
+  nameAr String
+  posts  BlogPost[]
+}
+
+model BlogPost {
+  id            String        @id @default(uuid())
+  titleEn       String
+  titleAr       String
+  subtitleEn    String?
+  subtitleAr    String?
+  coverImageUrl String?
+  contentEn     String        @db.Text
+  contentAr     String        @db.Text
+  categoryId    String?
+  category      BlogCategory? @relation(fields: [categoryId], references: [id])
+  authorId      String?
+  author        User?         @relation(fields: [authorId], references: [id])
+  status        PublishStatus @default(draft)
+  publishedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status])
+}
+
+model Banner {
+  id        String   @id @default(uuid())
+  titleEn   String
+  titleAr   String
+  imageUrl  String
+  linkUrl   String?
+  placement String // "home_hero" | "explore_top" ...
+  position  Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model FaqEntry {
+  id        String   @id @default(uuid())
+  questionEn String
+  questionAr String
+  answerEn   String  @db.Text
+  answerAr   String  @db.Text
+  position   Int     @default(0)
+}
+
+model SupportInquiry {
+  id        String   @id @default(uuid())
+  fullName  String
+  email     String
+  phone     String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  message   String   @db.Text
+  status    String   @default("new") // new|read
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+}
+
+// ============================================================
+// Idempotency
+// ============================================================
+
+model IdempotencyKey {
+  key         String   @id
+  userId      String
+  responseBody Json?
+  statusCode   Int?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
