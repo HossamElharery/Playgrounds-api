@@ -14,4 +14,6 @@ export interface StorageProvider {
   ): Promise<UploadResult>;
   deleteObject(key: string): Promise<void>;
   urlFor(key: string): string;
+  /** Reverse a public URL back to the object key, or undefined if unknown. */
+  keyFromUrl(url: string): string | undefined;
 }

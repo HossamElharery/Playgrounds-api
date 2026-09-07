@@ -1,10 +1,14 @@
 import * as Joi from 'joi';
 
 export const envValidationSchema = Joi.object({
-  NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
+  NODE_ENV: Joi.string()
+    .valid('development', 'test', 'production')
+    .default('development'),
   PORT: Joi.number().default(3000),
 
-  DATABASE_URL: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
+  DATABASE_URL: Joi.string()
+    .uri({ scheme: ['postgresql', 'postgres'] })
+    .required(),
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
@@ -38,4 +42,10 @@ export const envValidationSchema = Joi.object({
   QR_SIGNING_SECRET: Joi.string().min(32).required(),
 
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
+
+  FCM_SERVER_KEY: Joi.string().allow('').optional(),
+  STUN_URLS: Joi.string().allow('').optional(),
+  TURN_URLS: Joi.string().allow('').optional(),
+  TURN_USERNAME: Joi.string().allow('').optional(),
+  TURN_CREDENTIAL: Joi.string().allow('').optional(),
 }).unknown(true);

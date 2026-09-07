@@ -12,8 +12,11 @@ import { S3StorageProvider } from './s3-storage.provider';
     S3StorageProvider,
     {
       provide: STORAGE_PROVIDER,
-      useFactory: (config: ConfigService, local: LocalDiskStorageProvider, s3: S3StorageProvider) =>
-        config.get<string>('STORAGE_PROVIDER') === 's3' ? s3 : local,
+      useFactory: (
+        config: ConfigService,
+        local: LocalDiskStorageProvider,
+        s3: S3StorageProvider,
+      ) => (config.get<string>('STORAGE_PROVIDER') === 's3' ? s3 : local),
       inject: [ConfigService, LocalDiskStorageProvider, S3StorageProvider],
     },
     StorageService,

@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { StorageProvider, UploadResult } from './storage.interface';
 
 /** Prod provider, activated by STORAGE_PROVIDER=s3 once real AWS credentials are supplied. */
@@ -14,7 +18,7 @@ export class S3StorageProvider implements StorageProvider {
   private readonly region: string;
 
   constructor(private readonly config: ConfigService) {
-    this.region = this.config.get<string>('AWS_REGION', 'us-east-1');
+    this.region = this.config.get<string>('AWS_REGION') || 'us-east-1';
     this.bucket = this.config.get<string>('S3_BUCKET', '');
     this.publicBase = this.config.get<string>('S3_PUBLIC_BASE');
     this.client = new S3Client({ region: this.region });
@@ -42,11 +46,33 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async deleteObject(key: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
   }
 
   urlFor(key: string): string {
     if (this.publicBase) return `${this.publicBase}/${key}`;
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+  }
+
+  keyFromUrl(url: string): string | undefined {
+    const base = this.publicBase
+      ? `${this.publicBase.replace(/\/$/, '')}/`
+      : `https://${this.bucket}.s3.${this.region}.amazonaws.com/`;
+    if (url.startsWith(base)) return url.slice(base.length);
+    try {
+      const parsed = new URL(url);
+      const prefix = `/${this.bucket}/`;
+      if (parsed.pathname.startsWith(prefix)) {
+        return parsed.pathname.slice(prefix.length);
+      }
+      if (parsed.hostname.startsWith(`${this.bucket}.s3.`)) {
+        return parsed.pathname.replace(/^\//, '');
+      }
+    } catch {
+      /* ignore */
+    }
+    return undefined;
   }
 }

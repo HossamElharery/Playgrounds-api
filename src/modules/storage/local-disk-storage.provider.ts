@@ -12,7 +12,10 @@ export class LocalDiskStorageProvider implements StorageProvider {
   private readonly publicBase: string;
 
   constructor(private readonly config: ConfigService) {
-    this.publicBase = this.config.get<string>('STORAGE_LOCAL_PUBLIC_BASE', '/uploads');
+    this.publicBase = this.config.get<string>(
+      'STORAGE_LOCAL_PUBLIC_BASE',
+      '/uploads',
+    );
   }
 
   async uploadBuffer(
@@ -35,5 +38,19 @@ export class LocalDiskStorageProvider implements StorageProvider {
 
   urlFor(key: string): string {
     return `${this.publicBase}/${key}`;
+  }
+
+  keyFromUrl(url: string): string | undefined {
+    const base = this.publicBase.endsWith('/')
+      ? this.publicBase
+      : `${this.publicBase}/`;
+    if (url.startsWith(base)) return url.slice(base.length);
+    try {
+      const pathname = new URL(url).pathname;
+      if (pathname.startsWith(base)) return pathname.slice(base.length);
+    } catch {
+      /* relative non-matching path */
+    }
+    return undefined;
   }
 }

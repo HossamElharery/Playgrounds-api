@@ -20,7 +20,10 @@ import { MAIL_TRANSPORT } from './email.tokens';
           host,
           port: config.get<number>('SMTP_PORT', 587),
           secure: false,
-          auth: { user: config.get('SMTP_USER'), pass: config.get('SMTP_PASS') },
+          auth: {
+            user: config.get('SMTP_USER'),
+            pass: config.get('SMTP_PASS'),
+          },
         });
       },
       inject: [ConfigService],

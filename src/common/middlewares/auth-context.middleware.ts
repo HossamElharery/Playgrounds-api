@@ -17,8 +17,14 @@ export class AuthContextMiddleware implements NestMiddleware {
     private readonly config: ConfigService,
   ) {}
 
-  async use(request: Request, _res: Response, next: NextFunction): Promise<void> {
-    const token = this.extractTokenFromHeader(request) ?? this.extractTokenFromCookie(request);
+  async use(
+    request: Request,
+    _res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    const token =
+      this.extractTokenFromHeader(request) ??
+      this.extractTokenFromCookie(request);
 
     if (token) {
       try {
@@ -42,6 +48,8 @@ export class AuthContextMiddleware implements NestMiddleware {
   }
 
   private extractTokenFromCookie(request: Request): string | undefined {
-    return (request as any).cookies?.['mal3ab_access_token'];
+    const cookies = (request as unknown as { cookies?: Record<string, string> })
+      .cookies;
+    return cookies?.['mal3ab_access_token'];
   }
 }

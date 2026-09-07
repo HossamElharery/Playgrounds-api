@@ -19,7 +19,7 @@ export class EmailService {
       html,
       from: this.config.get<string>('MAIL_FROM'),
     });
-    if ((info as any).message) {
+    if (info.message) {
       this.logger.debug(`[dev email:no-smtp] to=${to} subject="${subject}"`);
     }
   }

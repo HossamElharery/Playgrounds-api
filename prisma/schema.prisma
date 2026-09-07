@@ -1,13 +1,24 @@
 // Mal3ab API — Prisma schema
 // Domain reference: PROJECT_BLUEPRINT.md §1-19. See MAL3AB_BACKEND.md for the full narrative.
 
+// Default client for runtime (`require('@prisma/client')`).
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// Editor/TS copy. Cursor's language service often resolves `.prisma/client`
+// to a stale User/Venue type. tsconfig paths maps `@prisma/client` here.
+generator clientSrc {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  output          = "../src/generated/prisma"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm, btree_gist]
 }
 
 // ============================================================
@@ -28,73 +39,135 @@ enum UserStatus {
 }
 
 model User {
-  id              String     @id @default(uuid())
-  phone           String     @unique
-  email           String?    @unique
-  passwordHash    String?
-  name            String
-  avatarUrl       String?
-  avatarConfig    Json?
-  roles           UserRole[] @default([player])
-  status          UserStatus @default(active)
-  preferredLang   String     @default("ar")
-  reputation      Int        @default(0)
-  reliabilityPct  Float      @default(100)
-  coinsBalance    Int        @default(0)
-  streakCount     Int        @default(0)
-  streakUpdatedAt DateTime?
-  referralCode    String     @unique @default(uuid())
-  referredById    String?
-  referredBy      User?      @relation("Referrals", fields: [referredById], references: [id])
-  referrals       User[]     @relation("Referrals")
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id                String        @id @default(uuid())
+  phone             String        @unique
+  email             String?       @unique
+  username          String?       @unique
+  passwordHash      String?
+  name              String
+  avatarUrl         String?
+  avatarConfig      Json?
+  roles             UserRole[]    @default([player])
+  status            UserStatus    @default(active)
+  preferredLang     String        @default("ar")
+  countryCode       String        @default("EG")
+  country           CountryConfig @relation(fields: [countryCode], references: [code])
+  bioEn             String?
+  bioAr             String?
+  reputation        Int           @default(0)
+  reliabilityPct    Float         @default(100)
+  coinsBalance      Int           @default(0)
+  streakCount       Int           @default(0)
+  streakUpdatedAt   DateTime?
+  matchesPlayed     Int           @default(0)
+  mvps              Int           @default(0)
+  lastSeenAt        DateTime?
+  /// friends | teammates | everyone | nobody
+  messagePolicy     String        @default("everyone")
+  lastSeenVisible   Boolean       @default(true)
+  notificationPrefs Json?
+  referralCode      String        @unique @default(uuid())
+  referredById      String?
+  referredBy        User?         @relation("Referrals", fields: [referredById], references: [id])
+  referrals         User[]        @relation("Referrals")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   refreshTokens         RefreshToken[]
   otpCodes              OtpCode[]
-  ownedVenues           Venue[]                 @relation("VenueOwner")
-  approvedVenues        Venue[]                 @relation("VenueApprovedBy")
+  ownedVenues           Venue[]                   @relation("VenueOwner")
+  approvedVenues        Venue[]                   @relation("VenueApprovedBy")
   bookings              Booking[]
   splitShares           BookingSplitShare[]
   recurringSeries       RecurringBookingSeries[]
   venueReviews          VenueReview[]
-  ratingsGiven          PlayerRating[]          @relation("PlayerRatingRater")
-  ratingsReceived       PlayerRating[]          @relation("PlayerRatingRatee")
-  friendshipsInitiated  Friendship[]            @relation("FriendshipRequester")
-  friendshipsReceived   Friendship[]            @relation("FriendshipAddressee")
+  ratingsGiven          PlayerRating[]            @relation("PlayerRatingRater")
+  ratingsReceived       PlayerRating[]            @relation("PlayerRatingRatee")
+  friendshipsInitiated  Friendship[]              @relation("FriendshipRequester")
+  friendshipsReceived   Friendship[]              @relation("FriendshipAddressee")
   matchPosts            MatchPost[]
   matchJoinRequests     MatchPostJoinRequest[]
-  teamsCaptained        Team[]                  @relation("TeamCaptain")
+  teamsCaptained        Team[]                    @relation("TeamCaptain")
   teamMemberships       TeamMember[]
   chatParticipants      ChatThreadParticipant[]
   chatMessages          ChatMessage[]
   notifications         Notification[]
   squadMemberships      SquadMember[]
-  sentSquadInvites      SquadInvite[]           @relation("SquadInviteFrom")
-  receivedSquadInvites  SquadInvite[]           @relation("SquadInviteTo")
-  squadJoinRequestsMade SquadJoinRequest[]      @relation("SquadJoinRequestFrom")
-  squadJoinRequestsRes  SquadJoinRequest[]      @relation("SquadJoinRequestResolvedBy")
+  sentSquadInvites      SquadInvite[]             @relation("SquadInviteFrom")
+  receivedSquadInvites  SquadInvite[]             @relation("SquadInviteTo")
+  squadJoinRequestsMade SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
+  squadJoinRequestsRes  SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
   coinLedger            CoinLedgerEntry[]
   questProgress         UserQuestProgress[]
   badges                UserBadge[]
   promoCodesCreated     PromoCode[]
   promoRedemptions      PromoRedemption[]
   pulseAvailability     PulseAvailability?
-  pulseOpportunities    PulseOpportunity[]      @relation("PulseOpportunityOrganizer")
+  pulseOpportunities    PulseOpportunity[]        @relation("PulseOpportunityOrganizer")
   pulseClaims           PulseClaim[]
-  staffInvitesSent      StaffInvite[]           @relation("StaffInviteInvitedBy")
-  staffInvitesReceived  StaffInvite[]           @relation("StaffInviteInvitee")
+  staffInvitesSent      StaffInvite[]             @relation("StaffInviteInvitedBy")
+  staffInvitesReceived  StaffInvite[]             @relation("StaffInviteInvitee")
   roleAssignments       UserRoleAssignment[]
-  ownedRoles            Role[]                  @relation("RoleOwner")
-  reportsFiled          ModerationReport[]      @relation("ModerationReportReporter")
-  reportsAgainstMe      ModerationReport[]      @relation("ModerationReportReportedUser")
-  reportsReviewed       ModerationReport[]      @relation("ModerationReportReviewedBy")
+  ownedRoles            Role[]                    @relation("RoleOwner")
+  reportsFiled          ModerationReport[]        @relation("ModerationReportReporter")
+  reportsAgainstMe      ModerationReport[]        @relation("ModerationReportReportedUser")
+  reportsReviewed       ModerationReport[]        @relation("ModerationReportReviewedBy")
   auditLogEntries       AuditLogEntry[]
   sportSkills           UserSportSkill[]
   blogPosts             BlogPost[]
   supportInquiries      SupportInquiry[]
+  deviceTokens          DeviceToken[]
+  blocksMade            UserBlock[]               @relation("Blocker")
+  blocksReceived        UserBlock[]               @relation("Blocked")
+  favoriteVenues        FavoriteVenue[]
+  matchComments         MatchPostComment[]
+  matchReactions        MatchPostReaction[]
+  partnerApplications   PartnerApplication[]
+  partnerAppEvents      PartnerApplicationEvent[]
+  payoutMethods         PayoutMethod[]
+  calendarBlocksCreated CalendarBlock[]
+  membership            UserMembership?
+  tournamentEntries     TournamentParticipant[]
 
   @@index([status])
+  @@index([countryCode])
+  @@index([username])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  platform  String   @default("web") // web | ios | android
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
+}
+
+model UserBlock {
+  id        String   @id @default(uuid())
+  blockerId String
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model FavoriteVenue {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venueId   String
+  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, venueId])
 }
 
 model RefreshToken {
@@ -118,34 +191,34 @@ enum OtpPurpose {
 }
 
 model OtpCode {
-  id        String     @id @default(uuid())
-  userId    String?
-  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  target    String // phone or email the code was sent to
-  codeHash  String
-  purpose   OtpPurpose
-  attempts  Int        @default(0)
-  expiresAt DateTime
+  id         String     @id @default(uuid())
+  userId     String?
+  user       User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target     String // phone or email the code was sent to
+  codeHash   String
+  purpose    OtpPurpose
+  attempts   Int        @default(0)
+  expiresAt  DateTime
   consumedAt DateTime?
-  createdAt DateTime   @default(now())
+  createdAt  DateTime   @default(now())
 
   @@index([target, purpose])
 }
 
 model Permission {
-  id          String           @id @default(uuid())
-  key         String           @unique // e.g. "bookings.checkin", "calendar.view"
+  id            String           @id @default(uuid())
+  key           String           @unique // e.g. "bookings.checkin", "calendar.view"
   descriptionEn String?
   descriptionAr String?
-  roles       RolePermission[]
+  roles         RolePermission[]
 }
 
 model Role {
-  id          String           @id @default(uuid())
+  id          String               @id @default(uuid())
   ownerId     String // the venue-owner account this staff role belongs to
-  owner       User             @relation("RoleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User                 @relation("RoleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   name        String
-  createdAt   DateTime         @default(now())
+  createdAt   DateTime             @default(now())
   permissions RolePermission[]
   assignments UserRoleAssignment[]
 
@@ -178,25 +251,37 @@ model UserRoleAssignment {
 // ============================================================
 
 model CountryConfig {
-  code            String  @id // "EG"
-  nameEn          String
-  nameAr          String
-  currency        String  @default("EGP")
-  phoneCallingCode String
-  weekendDays     Int[]   @default([5, 6]) // Fri=5, Sat=6
-  paymentMethods  String[]
-  governorates    Governorate[]
+  code                 String        @id // ISO 3166-1 alpha-2, e.g. "EG"
+  nameEn               String
+  nameAr               String
+  currency             String
+  phoneCallingCode     String
+  timezone             String        @default("Africa/Cairo") // IANA
+  locale               String        @default("ar")
+  weekendDays          Int[]         @default([5, 6]) // 0=Sun … 6=Sat
+  paymentMethods       String[]
+  serviceFeePct        Float         @default(5)
+  coinsPerHundredMajor Int           @default(10)
+  coinToMajorRate      Float         @default(20)
+  lat                  Float?
+  lng                  Float?
+  active               Boolean       @default(true)
+  governorates         Governorate[]
+  users                User[]
+  venues               Venue[]
 }
 
 model Governorate {
   id          String        @id @default(uuid())
   countryCode String
   country     CountryConfig @relation(fields: [countryCode], references: [code])
+  slug        String?
   nameEn      String
   nameAr      String
   districts   District[]
   venues      Venue[]
 
+  @@unique([countryCode, slug])
   @@index([countryCode])
 }
 
@@ -204,30 +289,41 @@ model District {
   id            String      @id @default(uuid())
   governorateId String
   governorate   Governorate @relation(fields: [governorateId], references: [id])
+  slug          String?
   nameEn        String
   nameAr        String
+  lat           Float?
+  lng           Float?
+  polygon       Json?
   venues        Venue[]
   matchPosts    MatchPost[]
 
+  @@unique([governorateId, slug])
   @@index([governorateId])
 }
 
 model SportCategory {
-  id            String   @id @default(uuid())
-  slug          String   @unique
-  nameEn        String
-  nameAr        String
-  icon          String
-  accentColor   String?
-  createdAt     DateTime @default(now())
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  nameEn       String
+  nameAr       String
+  icon         String
+  accentColor  String?
+  // 'field-sport' | 'racket-court' | 'gaming-station' | 'table-game'
+  // Drives which UI affordances render (skill-tier chip, "players needed"
+  // wording, mega-menu grouping). Nullable for backward compatibility with
+  // any row created before this field existed.
+  activityKind String?
+  createdAt    DateTime @default(now())
 
-  courts       Court[]
-  matchPosts   MatchPost[]
-  promoCodes   PromoCode[]
-  userSkills   UserSportSkill[]
-  pulseAvail   PulseAvailability[]
-  pulseOpps    PulseOpportunity[]
-  venueSports  VenueSport[]
+  courts      Court[]
+  matchPosts  MatchPost[]
+  promoCodes  PromoCode[]
+  userSkills  UserSportSkill[]
+  pulseAvail  PulseAvailability[]
+  pulseOpps   PulseOpportunity[]
+  venueSports VenueSport[]
+  teams       Team[]
 }
 
 enum SkillTier {
@@ -252,8 +348,8 @@ model UserSportSkill {
 }
 
 model Amenity {
-  id     String        @id @default(uuid())
-  key    String        @unique
+  id     String         @id @default(uuid())
+  key    String         @unique
   nameEn String
   nameAr String
   icon   String
@@ -270,52 +366,93 @@ enum VenueStatus {
   suspended
 }
 
-model Venue {
-  id              String       @id @default(uuid())
-  slug            String       @unique
-  ownerId         String
-  owner           User         @relation("VenueOwner", fields: [ownerId], references: [id])
-  nameEn          String
-  nameAr          String
-  descriptionEn   String?      @db.Text
-  descriptionAr   String?      @db.Text
-  governorateId   String?
-  governorate     Governorate? @relation(fields: [governorateId], references: [id])
-  districtId      String?
-  district        District?    @relation(fields: [districtId], references: [id])
-  address         String?
-  lat             Float
-  lng             Float
-  geohash         String
-  surface         String?
-  instantBook     Boolean      @default(true)
-  cancellationPolicy String?  @db.Text
-  status          VenueStatus  @default(pending)
-  featured        Boolean      @default(false)
-  approvedById    String?
-  approvedBy      User?        @relation("VenueApprovedBy", fields: [approvedById], references: [id])
-  approvedAt      DateTime?
-  ratingAvg       Float        @default(0)
-  ratingCount     Int          @default(0)
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+enum PartnerApplicationStatus {
+  draft
+  pending
+  changes_requested
+  approved
+  rejected
+  suspended
+}
 
-  courts          Court[]
-  photos          VenuePhoto[]
-  amenities       VenueAmenity[]
-  sports          VenueSport[]
-  reviews         VenueReview[]
-  bookings        Booking[]
-  matchPosts      MatchPost[]
-  promoCodes      PromoCode[]
-  commissionSetting CommissionSetting?
-  payouts         Payout[]
-  staffInvites    StaffInvite[]
-  roleAssignments UserRoleAssignment[]
+enum CalendarBlockKind {
+  maintenance
+  private
+}
+
+enum PayoutMethodKind {
+  bank
+  instapay
+  wallet
+}
+
+model Venue {
+  id                 String        @id @default(uuid())
+  slug               String        @unique
+  ownerId            String
+  owner              User          @relation("VenueOwner", fields: [ownerId], references: [id])
+  countryCode        String        @default("EG")
+  country            CountryConfig @relation(fields: [countryCode], references: [code])
+  nameEn             String
+  nameAr             String
+  descriptionEn      String?       @db.Text
+  descriptionAr      String?       @db.Text
+  governorateId      String?
+  governorate        Governorate?  @relation(fields: [governorateId], references: [id])
+  districtId         String?
+  district           District?     @relation(fields: [districtId], references: [id])
+  address            String?
+  lat                Float
+  lng                Float
+  geohash            String
+  surface            String?
+  instantBook        Boolean       @default(true)
+  cancellationPolicy String?       @db.Text
+  weeklyHours        Json?
+  contactPhone       String?
+  legalBusinessName  String?
+  registrationNumber String?
+  houseRules         String?       @db.Text
+  status             VenueStatus   @default(pending)
+  featured           Boolean       @default(false)
+  approvedById       String?
+  approvedBy         User?         @relation("VenueApprovedBy", fields: [approvedById], references: [id])
+  approvedAt         DateTime?
+  ratingAvg          Float         @default(0)
+  ratingCount        Int           @default(0)
+  priceFromAmount    Int?
+  priceFromCurrency  String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  courts             Court[]
+  photos             VenuePhoto[]
+  amenities          VenueAmenity[]
+  sports             VenueSport[]
+  reviews            VenueReview[]
+  bookings           Booking[]
+  matchPosts         MatchPost[]
+  promoCodes         PromoCode[]
+  commissionSetting  CommissionSetting?
+  payouts            Payout[]
+  staffInvites       StaffInvite[]
+  roleAssignments    UserRoleAssignment[]
+  favorites          FavoriteVenue[]
+  partnerApplication PartnerApplication?
+  calendarBlocks     CalendarBlock[]
+  bundles            Bundle[]
+  tournaments        Tournament[]
 
   @@index([geohash])
   @@index([lat, lng])
   @@index([status])
+  @@index([countryCode, status])
+  @@index([status, districtId])
+  @@index([status, governorateId])
+  @@index([status, geohash])
+  @@index([status, ratingAvg])
+  @@index([nameEn(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([nameAr(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 model VenueSport {
@@ -347,37 +484,48 @@ model VenuePhoto {
 }
 
 model Court {
-  id              String   @id @default(uuid())
-  venueId         String
-  venue           Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  sportId         String
-  sport           SportCategory @relation(fields: [sportId], references: [id])
-  name            String
-  surface         String?
-  indoor          Boolean  @default(false)
-  format          String? // "5v5", "7v7"...
-  slotDurationMins Int     @default(60)
-  createdAt       DateTime @default(now())
+  id               String        @id @default(uuid())
+  venueId          String
+  venue            Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  sportId          String
+  sport            SportCategory @relation(fields: [sportId], references: [id])
+  name             String
+  surface          String?
+  indoor           Boolean       @default(false)
+  format           String? // "5v5", "7v7"...
+  slotDurationMins Int           @default(60)
+  spec             Json?
+  // Present only when sport.activityKind === 'gaming-station':
+  // { consoleType: 'ps4'|'ps5'|'xbox-series'|'pc'|'vr'; seats: number; roomTier: 'standard'|'vip-big-screen'|'vr-booth'; gameIds?: string[] }
+  gamingConfig     Json?
+  // Present only when sport.activityKind === 'table-game':
+  // { tableType?: 'american-8-ball'|'snooker'|'carom'; rentalAvailable: boolean; rentalPrice?: { amount: number; currency: string } }
+  tableConfig      Json?
+  // 'everyone' | 'teen' | 'mature' — informational badge only, not an enforced age-gate
+  ageRating        String?
+  createdAt        DateTime      @default(now())
 
-  pricingRules PricingRule[]
-  bookings     Booking[]
-  recurring    RecurringBookingSeries[]
-  matchPosts   MatchPost[]
+  pricingRules   PricingRule[]
+  bookings       Booking[]
+  recurring      RecurringBookingSeries[]
+  matchPosts     MatchPost[]
+  calendarBlocks CalendarBlock[]
+  bundleItems    BundleItem[]
 
   @@index([venueId])
 }
 
 model PricingRule {
-  id            String   @id @default(uuid())
-  courtId       String
-  court         Court    @relation(fields: [courtId], references: [id], onDelete: Cascade)
-  label         String // "base" | "peak" | "weekend" | custom
-  daysOfWeek    Int[] // 0=Sun..6=Sat, empty = every day
-  startTime     String // "18:00"
-  endTime       String // "23:00"
-  priceAmount   Int // minor units (piasters)
-  currency      String   @default("EGP")
-  priority      Int      @default(0)
+  id          String @id @default(uuid())
+  courtId     String
+  court       Court  @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  label       String // "base" | "peak" | "weekend" | custom
+  daysOfWeek  Int[] // 0=Sun..6=Sat, empty = every day
+  startTime   String // "18:00"
+  endTime     String // "23:00"
+  priceAmount Int // minor units (piasters)
+  currency    String @default("EGP")
+  priority    Int    @default(0)
 
   @@index([courtId])
 }
@@ -390,13 +538,22 @@ enum BookingStatus {
   no_show
 }
 
-
 enum PaymentMethod {
   card
   wallet
+  apple_pay
+  google_pay
+  paypal
+  cash
+  vodafone
+  orange
+  etisalat
   fawry
   instapay
-  cash
+  mada
+  stc_pay
+  benefit
+  knet
 }
 
 enum PaymentStatus {
@@ -408,51 +565,66 @@ enum PaymentStatus {
 }
 
 model Booking {
-  id                String        @id @default(uuid())
-  code              String        @unique // human-friendly booking code
-  courtId           String
-  court             Court         @relation(fields: [courtId], references: [id])
-  venueId           String
-  venue             Venue         @relation(fields: [venueId], references: [id])
-  userId            String
-  user              User          @relation(fields: [userId], references: [id])
-  slotStart         DateTime
-  slotEnd           DateTime
-  baseAmount        Int
-  feeAmount         Int           @default(0)
-  discountAmount    Int           @default(0)
-  totalAmount       Int
-  currency          String        @default("EGP")
-  promoCodeId       String?
-  promoCode         PromoCode?    @relation(fields: [promoCodeId], references: [id])
-  coinsRedeemed     Int           @default(0)
-  paymentMethod     PaymentMethod?
-  paymentStatus     PaymentStatus @default(pending)
-  status            BookingStatus @default(held)
-  holdExpiresAt     DateTime?
-  isSplitPayment    Boolean       @default(false)
-  qrPayload         String?       @unique
-  checkedInAt       DateTime?
-  checkedInByUserId String?
-  cancelledAt       DateTime?
+  id                 String                  @id @default(uuid())
+  code               String                  @unique // human-friendly booking code
+  courtId            String
+  court              Court                   @relation(fields: [courtId], references: [id])
+  venueId            String
+  venue              Venue                   @relation(fields: [venueId], references: [id])
+  userId             String
+  user               User                    @relation(fields: [userId], references: [id])
+  slotStart          DateTime
+  slotEnd            DateTime
+  baseAmount         Int
+  feeAmount          Int                     @default(0)
+  discountAmount     Int                     @default(0)
+  totalAmount        Int
+  currency           String                  @default("EGP")
+  promoCodeId        String?
+  promoCode          PromoCode?              @relation(fields: [promoCodeId], references: [id])
+  coinsRedeemed      Int                     @default(0)
+  paymentMethod      PaymentMethod?
+  paymentStatus      PaymentStatus           @default(pending)
+  status             BookingStatus           @default(held)
+  holdExpiresAt      DateTime?
+  isSplitPayment     Boolean                 @default(false)
+  qrPayload          String?                 @unique
+  checkedInAt        DateTime?
+  checkedInByUserId  String?
+  cancelledAt        DateTime?
   cancellationReason String?
-  recurringSeriesId String?
-  recurringSeries   RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  guestName          String?
+  guestPhone         String?
+  recurringSeriesId  String?
+  recurringSeries    RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
+  // Mal3ab gaming expansion — MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.7/§7.3.
+  // Links the N linked Booking rows created atomically by a bundle purchase.
+  bundleId           String?
+  bundle             Bundle?                 @relation(fields: [bundleId], references: [id])
+  // §3.8 — true when this booking's charge was covered by an active
+  // membership's included hours instead of a real payment.
+  membershipCovered  Boolean                 @default(false)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 
-  splitShares   BookingSplitShare[]
-  payments      Payment[]
-  reviews       VenueReview[]
-  ratings       PlayerRating[]
-  promoRedemptions PromoRedemption[]
+  splitShares       BookingSplitShare[]
+  payments          Payment[]
+  reviews           VenueReview[]
+  ratings           PlayerRating[]
+  promoRedemptions  PromoRedemption[]
   coinLedgerEntries CoinLedgerEntry[]
-  pulseOpportunity PulseOpportunity?
-  pulseClaims   PulseClaim[]
+  pulseOpportunity  PulseOpportunity?
+  pulseClaims       PulseClaim[]
+  // Live-slot uniqueness is a partial unique index (courtId, slotStart) plus a
+  // GiST EXCLUDE on trigger-maintained slotRange. Prisma cannot declare either;
+  // see prisma/migrations/20260904031300_booking_slot_uniqueness and
+  // prisma/migrations/20260905090000_booking_slot_range_exclude.
 
   @@index([courtId, slotStart])
   @@index([userId])
   @@index([status])
+  @@index([venueId, slotStart])
+  @@index([venueId, status])
 }
 
 enum SplitShareStatus {
@@ -462,17 +634,17 @@ enum SplitShareStatus {
 }
 
 model BookingSplitShare {
-  id        String            @id @default(uuid())
-  bookingId String
-  booking   Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  userId    String?
-  user      User?             @relation(fields: [userId], references: [id])
-  phone     String?
-  amount    Int
-  currency  String            @default("EGP")
-  status    SplitShareStatus  @default(pending)
-  shareLinkToken String       @unique @default(uuid())
-  createdAt DateTime          @default(now())
+  id             String           @id @default(uuid())
+  bookingId      String
+  booking        Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?            @relation(fields: [userId], references: [id])
+  phone          String?
+  amount         Int
+  currency       String           @default("EGP")
+  status         SplitShareStatus @default(pending)
+  shareLinkToken String           @unique @default(uuid())
+  createdAt      DateTime         @default(now())
 
   @@index([bookingId])
 }
@@ -492,16 +664,16 @@ model Payment {
 }
 
 model RecurringBookingSeries {
-  id         String   @id @default(uuid())
-  courtId    String
-  court      Court    @relation(fields: [courtId], references: [id])
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
-  dayOfWeek  Int
-  startTime  String
+  id           String   @id @default(uuid())
+  courtId      String
+  court        Court    @relation(fields: [courtId], references: [id])
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  dayOfWeek    Int
+  startTime    String
   durationMins Int
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
 
   bookings Booking[]
 
@@ -513,41 +685,44 @@ model RecurringBookingSeries {
 // ============================================================
 
 model VenueReview {
-  id        String   @id @default(uuid())
-  venueId   String
-  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  bookingId String
-  booking   Booking  @relation(fields: [bookingId], references: [id])
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  stars     Int
-  tags      String[]
-  text      String?  @db.Text
-  photos    String[]
-  ownerReply String? @db.Text
+  id             String    @id @default(uuid())
+  venueId        String
+  venue          Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  bookingId      String
+  booking        Booking   @relation(fields: [bookingId], references: [id])
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  stars          Int
+  tags           String[]
+  text           String?   @db.Text
+  photos         String[]
+  ownerReply     String?   @db.Text
   ownerRepliedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   @@unique([bookingId, userId])
   @@index([venueId])
 }
 
 model PlayerRating {
-  id            String   @id @default(uuid())
-  bookingId     String
-  booking       Booking  @relation(fields: [bookingId], references: [id])
+  id            String     @id @default(uuid())
+  bookingId     String?
+  booking       Booking?   @relation(fields: [bookingId], references: [id])
+  matchPostId   String?
+  matchPost     MatchPost? @relation(fields: [matchPostId], references: [id])
   raterId       String
-  rater         User     @relation("PlayerRatingRater", fields: [raterId], references: [id])
+  rater         User       @relation("PlayerRatingRater", fields: [raterId], references: [id])
   rateeId       String
-  ratee         User     @relation("PlayerRatingRatee", fields: [rateeId], references: [id])
+  ratee         User       @relation("PlayerRatingRatee", fields: [rateeId], references: [id])
   sportsmanship Int
   skill         Int
   punctuality   Int
-  mvpVote       Boolean  @default(false)
-  createdAt     DateTime @default(now())
+  mvpVote       Boolean    @default(false)
+  createdAt     DateTime   @default(now())
 
-  @@unique([bookingId, raterId, rateeId])
   @@index([rateeId])
+  @@index([bookingId, raterId, rateeId])
+  @@index([matchPostId, raterId, rateeId])
 }
 
 // ============================================================
@@ -562,14 +737,14 @@ enum FriendshipStatus {
 }
 
 model Friendship {
-  id            String           @id @default(uuid())
-  requesterId   String
-  requester     User             @relation("FriendshipRequester", fields: [requesterId], references: [id])
-  addresseeId   String
-  addressee     User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id])
-  status        FriendshipStatus @default(pending)
-  createdAt     DateTime         @default(now())
-  respondedAt   DateTime?
+  id          String           @id @default(uuid())
+  requesterId String
+  requester   User             @relation("FriendshipRequester", fields: [requesterId], references: [id])
+  addresseeId String
+  addressee   User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id])
+  status      FriendshipStatus @default(pending)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
 
   @@unique([requesterId, addresseeId])
   @@index([addresseeId, status])
@@ -584,33 +759,70 @@ enum MatchPostStatus {
 }
 
 model MatchPost {
-  id             String          @id @default(uuid())
-  authorId       String
-  author         User            @relation(fields: [authorId], references: [id])
-  sportId        String
-  sport          SportCategory   @relation(fields: [sportId], references: [id])
-  venueId        String?
-  venue          Venue?          @relation(fields: [venueId], references: [id])
-  courtId        String?
-  court          Court?          @relation(fields: [courtId], references: [id])
-  districtId     String?
-  district       District?       @relation(fields: [districtId], references: [id])
-  dateTime       DateTime
-  playersNeeded  Int
-  skillTier      SkillTier?
+  id                  String            @id @default(uuid())
+  authorId            String
+  author              User              @relation(fields: [authorId], references: [id])
+  sportId             String
+  sport               SportCategory     @relation(fields: [sportId], references: [id])
+  venueId             String?
+  venue               Venue?            @relation(fields: [venueId], references: [id])
+  courtId             String?
+  court               Court?            @relation(fields: [courtId], references: [id])
+  districtId          String?
+  district            District?         @relation(fields: [districtId], references: [id])
+  dateTime            DateTime
+  playersNeeded       Int
+  skillTier           SkillTier?
   costPerPlayerAmount Int?
-  currency       String          @default("EGP")
-  notes          String?         @db.Text
-  chatThreadId   String?         @unique
-  chatThread     ChatThread?     @relation(fields: [chatThreadId], references: [id])
-  status         MatchPostStatus @default(open)
-  createdAt      DateTime        @default(now())
+  currency            String            @default("EGP")
+  notes               String?           @db.Text
+  chatThreadId        String?           @unique
+  chatThread          ChatThread?       @relation(fields: [chatThreadId], references: [id])
+  status              MatchPostStatus   @default(open)
+  // Mal3ab gaming expansion — MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.6/§3.10.
+  // Only meaningful when sport.activityKind === 'gaming-station'.
+  gameId              String?
+  game                GameCatalogEntry? @relation(fields: [gameId], references: [id])
+  // 'match' | 'watch-party' — defaults to 'match'.
+  kind                String            @default("match")
+  createdAt           DateTime          @default(now())
 
-  joinRequests MatchPostJoinRequest[]
+  joinRequests       MatchPostJoinRequest[]
   pulseOpportunities PulseOpportunity[]
+  comments           MatchPostComment[]
+  reactions          MatchPostReaction[]
+  playerRatings      PlayerRating[]
+  tournamentMatches  TournamentMatch[]
 
   @@index([sportId, status])
   @@index([districtId])
+  @@index([dateTime, status])
+}
+
+model MatchPostComment {
+  id          String    @id @default(uuid())
+  matchPostId String
+  matchPost   MatchPost @relation(fields: [matchPostId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id])
+  text        String    @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([matchPostId, createdAt])
+}
+
+model MatchPostReaction {
+  id          String    @id @default(uuid())
+  matchPostId String
+  matchPost   MatchPost @relation(fields: [matchPostId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji       String    @default("like")
+  createdAt   DateTime  @default(now())
+
+  @@unique([matchPostId, userId, emoji])
 }
 
 enum JoinRequestStatus {
@@ -620,28 +832,32 @@ enum JoinRequestStatus {
 }
 
 model MatchPostJoinRequest {
-  id          String             @id @default(uuid())
+  id          String            @id @default(uuid())
   matchPostId String
-  matchPost   MatchPost          @relation(fields: [matchPostId], references: [id], onDelete: Cascade)
+  matchPost   MatchPost         @relation(fields: [matchPostId], references: [id], onDelete: Cascade)
   userId      String
-  user        User               @relation(fields: [userId], references: [id])
-  status      JoinRequestStatus  @default(pending)
-  createdAt   DateTime           @default(now())
+  user        User              @relation(fields: [userId], references: [id])
+  status      JoinRequestStatus @default(pending)
+  createdAt   DateTime          @default(now())
 
   @@unique([matchPostId, userId])
 }
 
 model Team {
-  id        String   @id @default(uuid())
-  name      String
-  logoUrl   String?
-  captainId String
-  captain   User     @relation("TeamCaptain", fields: [captainId], references: [id])
-  createdAt DateTime @default(now())
+  id           String         @id @default(uuid())
+  name         String
+  logoUrl      String?
+  captainId    String
+  captain      User           @relation("TeamCaptain", fields: [captainId], references: [id])
+  sportId      String?
+  sport        SportCategory? @relation(fields: [sportId], references: [id])
+  chatThreadId String?        @unique
+  chatThread   ChatThread?    @relation(fields: [chatThreadId], references: [id])
+  createdAt    DateTime       @default(now())
 
   members            TeamMember[]
-  challengesMade      TeamChallenge[] @relation("TeamChallengeChallenger")
-  challengesReceived  TeamChallenge[] @relation("TeamChallengeChallenged")
+  challengesMade     TeamChallenge[] @relation("TeamChallengeChallenger")
+  challengesReceived TeamChallenge[] @relation("TeamChallengeChallenged")
 }
 
 model TeamMember {
@@ -662,14 +878,14 @@ enum ChallengeStatus {
 }
 
 model TeamChallenge {
-  id                 String          @id @default(uuid())
-  challengerTeamId   String
-  challengerTeam     Team            @relation("TeamChallengeChallenger", fields: [challengerTeamId], references: [id])
-  challengedTeamId   String
-  challengedTeam     Team            @relation("TeamChallengeChallenged", fields: [challengedTeamId], references: [id])
-  status             ChallengeStatus @default(pending)
-  proposedDateTime   DateTime?
-  createdAt          DateTime        @default(now())
+  id               String          @id @default(uuid())
+  challengerTeamId String
+  challengerTeam   Team            @relation("TeamChallengeChallenger", fields: [challengerTeamId], references: [id])
+  challengedTeamId String
+  challengedTeam   Team            @relation("TeamChallengeChallenged", fields: [challengedTeamId], references: [id])
+  status           ChallengeStatus @default(pending)
+  proposedDateTime DateTime?
+  createdAt        DateTime        @default(now())
 }
 
 enum ChatThreadType {
@@ -679,15 +895,17 @@ enum ChatThreadType {
 }
 
 model ChatThread {
-  id           String                 @id @default(uuid())
-  type         ChatThreadType
-  pairKey      String?                @unique // canonical "userIdA:userIdB" for direct find-or-create
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
+  id        String         @id @default(uuid())
+  type      ChatThreadType
+  title     String?
+  pairKey   String?        @unique // canonical "userIdA:userIdB" for direct find-or-create
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
 
   participants ChatThreadParticipant[]
   messages     ChatMessage[]
   matchPost    MatchPost?
+  team         Team?
 
   @@index([type])
 }
@@ -696,7 +914,7 @@ model ChatThreadParticipant {
   threadId          String
   thread            ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
   userId            String
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastReadMessageId String?
   joinedAt          DateTime   @default(now())
 
@@ -717,30 +935,31 @@ enum MessageDelivery {
 }
 
 model ChatMessage {
-  id              String          @id @default(uuid())
-  threadId        String
-  thread          ChatThread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  clientMessageId String?
-  senderId        String
-  sender          User            @relation(fields: [senderId], references: [id])
-  type            MessageType     @default(text)
-  text            String?         @db.Text
-  attachmentUrl   String?
-  attachmentMime  String?
-  attachmentSize  Int?
-  delivery        MessageDelivery @default(sent)
-  createdAt       DateTime        @default(now())
-  editedAt        DateTime?
-  deletedAt       DateTime?
+  id                   String          @id @default(uuid())
+  threadId             String
+  thread               ChatThread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  clientMessageId      String?
+  senderId             String
+  sender               User            @relation(fields: [senderId], references: [id])
+  type                 MessageType     @default(text)
+  text                 String?         @db.Text
+  attachmentUrl        String?
+  attachmentMime       String?
+  attachmentSize       Int?
+  attachmentDurationMs Int?
+  delivery             MessageDelivery @default(sent)
+  createdAt            DateTime        @default(now())
+  editedAt             DateTime?
+  deletedAt            DateTime?
 
   @@unique([threadId, clientMessageId])
   @@index([threadId, createdAt])
 }
 
 model Notification {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   category  String
   titleEn   String
   titleAr   String
@@ -748,10 +967,11 @@ model Notification {
   bodyAr    String?
   deepLink  String?
   payload   Json?
-  read      Boolean   @default(false)
-  createdAt DateTime  @default(now())
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
 
   @@index([userId, read])
+  @@index([userId, createdAt])
 }
 
 // ---- Squad (§13) ----
@@ -760,20 +980,20 @@ model Squad {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
 
-  members       SquadMember[]
-  invites       SquadInvite[]
-  joinRequests  SquadJoinRequest[]
+  members      SquadMember[]
+  invites      SquadInvite[]
+  joinRequests SquadJoinRequest[]
 }
 
 model SquadMember {
-  id        String   @id @default(uuid())
-  squadId   String
-  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  isLeader  Boolean  @default(false)
-  micMuted  Boolean  @default(false)
-  joinedAt  DateTime @default(now())
+  id       String   @id @default(uuid())
+  squadId  String
+  squad    Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id])
+  isLeader Boolean  @default(false)
+  micMuted Boolean  @default(false)
+  joinedAt DateTime @default(now())
 
   @@unique([squadId, userId])
 }
@@ -786,28 +1006,28 @@ enum SquadInviteStatus {
 }
 
 model SquadInvite {
-  id        String            @id @default(uuid())
-  squadId   String
-  squad     Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  id         String            @id @default(uuid())
+  squadId    String
+  squad      Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
   fromUserId String
-  fromUser  User              @relation("SquadInviteFrom", fields: [fromUserId], references: [id])
-  toUserId  String
-  toUser    User              @relation("SquadInviteTo", fields: [toUserId], references: [id])
-  status    SquadInviteStatus @default(pending)
-  createdAt DateTime          @default(now())
+  fromUser   User              @relation("SquadInviteFrom", fields: [fromUserId], references: [id])
+  toUserId   String
+  toUser     User              @relation("SquadInviteTo", fields: [toUserId], references: [id])
+  status     SquadInviteStatus @default(pending)
+  createdAt  DateTime          @default(now())
 }
 
 model SquadJoinRequest {
-  id             String            @id @default(uuid())
-  squadId        String
-  squad          Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
-  fromUserId     String
-  fromUser       User              @relation("SquadJoinRequestFrom", fields: [fromUserId], references: [id])
-  viaMemberId    String?
-  status         SquadInviteStatus @default(pending)
+  id               String            @id @default(uuid())
+  squadId          String
+  squad            Squad             @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  fromUserId       String
+  fromUser         User              @relation("SquadJoinRequestFrom", fields: [fromUserId], references: [id])
+  viaMemberId      String?
+  status           SquadInviteStatus @default(pending)
   resolvedByUserId String?
-  resolvedByUser User?             @relation("SquadJoinRequestResolvedBy", fields: [resolvedByUserId], references: [id])
-  createdAt      DateTime          @default(now())
+  resolvedByUser   User?             @relation("SquadJoinRequestResolvedBy", fields: [resolvedByUserId], references: [id])
+  createdAt        DateTime          @default(now())
 }
 
 // ============================================================
@@ -815,14 +1035,14 @@ model SquadJoinRequest {
 // ============================================================
 
 model CoinLedgerEntry {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amount        Int // positive=earn, negative=burn
-  reason        String
-  bookingId     String?
-  booking       Booking? @relation(fields: [bookingId], references: [id])
-  createdAt     DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int // positive=earn, negative=burn
+  reason    String
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }
@@ -841,12 +1061,12 @@ model Quest {
 }
 
 model UserQuestProgress {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   questId     String
-  quest       Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
-  progress    Int      @default(0)
+  quest       Quest     @relation(fields: [questId], references: [id], onDelete: Cascade)
+  progress    Int       @default(0)
   target      Int
   completedAt DateTime?
   weekKey     String // ISO week for weekly quests
@@ -855,11 +1075,12 @@ model UserQuestProgress {
 }
 
 model Badge {
-  id          String   @id @default(uuid())
-  key         String   @unique
-  nameEn      String
-  nameAr      String
-  icon        String
+  id            String  @id @default(uuid())
+  key           String  @unique
+  nameEn        String
+  nameAr        String
+  icon          String
+  iconKey       String?
   descriptionEn String?
   descriptionAr String?
 
@@ -867,11 +1088,11 @@ model Badge {
 }
 
 model UserBadge {
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  badgeId   String
-  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
-  earnedAt  DateTime @default(now())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId  String
+  badge    Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  earnedAt DateTime @default(now())
 
   @@id([userId, badgeId])
 }
@@ -882,26 +1103,27 @@ enum PromoType {
 }
 
 model PromoCode {
-  id                 String    @id @default(uuid())
-  code               String    @unique
+  id                 String         @id @default(uuid())
+  code               String         @unique
   type               PromoType
   value              Int // percentage points OR minor-unit amount depending on type
-  currency           String    @default("EGP")
+  currency           String         @default("EGP")
   sportId            String?
   sport              SportCategory? @relation(fields: [sportId], references: [id])
   venueId            String?
-  venue              Venue?    @relation(fields: [venueId], references: [id])
-  firstBookingOnly   Boolean   @default(false)
-  offPeakOnly        Boolean   @default(false)
+  venue              Venue?         @relation(fields: [venueId], references: [id])
+  firstBookingOnly   Boolean        @default(false)
+  offPeakOnly        Boolean        @default(false)
   minBookingAmount   Int?
   usageLimitTotal    Int?
-  usageLimitPerUser  Int       @default(1)
-  stackableWithCoins Boolean   @default(true)
+  usageLimitPerUser  Int            @default(1)
+  stackableWithCoins Boolean        @default(true)
+  active             Boolean        @default(true)
   validFrom          DateTime
   validUntil         DateTime
   createdById        String?
-  createdBy          User?     @relation(fields: [createdById], references: [id])
-  createdAt          DateTime  @default(now())
+  createdBy          User?          @relation(fields: [createdById], references: [id])
+  createdAt          DateTime       @default(now())
 
   bookings    Booking[]
   redemptions PromoRedemption[]
@@ -938,22 +1160,22 @@ enum PulseMode {
 }
 
 model PulseAvailability {
-  id             String        @id @default(uuid())
-  userId         String        @unique
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  window         PulseWindow
-  sportId        String
-  sport          SportCategory @relation(fields: [sportId], references: [id])
-  mode           PulseMode
-  radiusKm       Float
+  id              String        @id @default(uuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  window          PulseWindow
+  sportId         String
+  sport           SportCategory @relation(fields: [sportId], references: [id])
+  mode            PulseMode
+  radiusKm        Float
   maxBudgetAmount Int
-  currency       String        @default("EGP")
-  districtId     String?
-  startsAt       DateTime
-  expiresAt      DateTime
-  status         String        @default("active") // active|expired|cancelled
-  version        Int           @default(1)
-  createdAt      DateTime      @default(now())
+  currency        String        @default("EGP")
+  districtId      String?
+  startsAt        DateTime
+  expiresAt       DateTime
+  status          String        @default("active") // active|expired|cancelled
+  version         Int           @default(1)
+  createdAt       DateTime      @default(now())
 }
 
 enum PulseOpportunityKind {
@@ -973,30 +1195,30 @@ enum PulseOpportunityStatus {
 }
 
 model PulseOpportunity {
-  id                     String                  @id @default(uuid())
-  kind                   PulseOpportunityKind
-  status                 PulseOpportunityStatus  @default(open)
-  sportId                String
-  sport                  SportCategory           @relation(fields: [sportId], references: [id])
-  mode                   PulseMode
-  skillTier              SkillTier?
-  organizerUserId        String?
-  organizer              User?                   @relation("PulseOpportunityOrganizer", fields: [organizerUserId], references: [id])
-  matchPostId            String?
-  matchPost              MatchPost?              @relation(fields: [matchPostId], references: [id])
-  bookingId              String?                 @unique
-  booking                Booking?                @relation(fields: [bookingId], references: [id])
-  districtId             String?
-  startsAt               DateTime
-  expiresAt              DateTime
-  costPerPlayerAmount    Int
+  id                          String                 @id @default(uuid())
+  kind                        PulseOpportunityKind
+  status                      PulseOpportunityStatus @default(open)
+  sportId                     String
+  sport                       SportCategory          @relation(fields: [sportId], references: [id])
+  mode                        PulseMode
+  skillTier                   SkillTier?
+  organizerUserId             String?
+  organizer                   User?                  @relation("PulseOpportunityOrganizer", fields: [organizerUserId], references: [id])
+  matchPostId                 String?
+  matchPost                   MatchPost?             @relation(fields: [matchPostId], references: [id])
+  bookingId                   String?                @unique
+  booking                     Booking?               @relation(fields: [bookingId], references: [id])
+  districtId                  String?
+  startsAt                    DateTime
+  expiresAt                   DateTime
+  costPerPlayerAmount         Int
   originalCostPerPlayerAmount Int?
-  currency               String                  @default("EGP")
-  capacity               Int
-  reliabilityFloor       Float                   @default(0)
-  urgent                 Boolean                 @default(false)
-  version                Int                     @default(1)
-  createdAt              DateTime                @default(now())
+  currency                    String                 @default("EGP")
+  capacity                    Int
+  reliabilityFloor            Float                  @default(0)
+  urgent                      Boolean                @default(false)
+  version                     Int                    @default(1)
+  createdAt                   DateTime               @default(now())
 
   claims PulseClaim[]
 
@@ -1011,16 +1233,16 @@ enum PulseClaimState {
 }
 
 model PulseClaim {
-  id             String          @id @default(uuid())
-  opportunityId  String
-  opportunity    PulseOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User            @relation(fields: [userId], references: [id])
-  state          PulseClaimState @default(held)
-  holdExpiresAt  DateTime?
-  bookingId      String?
-  booking        Booking?        @relation(fields: [bookingId], references: [id])
-  createdAt      DateTime        @default(now())
+  id            String           @id @default(uuid())
+  opportunityId String
+  opportunity   PulseOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+  state         PulseClaimState  @default(held)
+  holdExpiresAt DateTime?
+  bookingId     String?
+  booking       Booking?         @relation(fields: [bookingId], references: [id])
+  createdAt     DateTime         @default(now())
 
   @@unique([opportunityId, userId])
 }
@@ -1030,24 +1252,24 @@ model PulseClaim {
 // ============================================================
 
 model CommissionSetting {
-  id             String  @id @default(uuid())
-  venueId        String? @unique
-  venue          Venue?  @relation(fields: [venueId], references: [id])
-  percentageBps  Int // basis points, null venueId = global default
-  createdAt      DateTime @default(now())
+  id            String   @id @default(uuid())
+  venueId       String?  @unique
+  venue         Venue?   @relation(fields: [venueId], references: [id])
+  percentageBps Int // basis points, null venueId = global default
+  createdAt     DateTime @default(now())
 }
 
 model Payout {
-  id         String   @id @default(uuid())
-  venueId    String
-  venue      Venue    @relation(fields: [venueId], references: [id])
-  amount     Int
-  currency   String   @default("EGP")
+  id          String    @id @default(uuid())
+  venueId     String
+  venue       Venue     @relation(fields: [venueId], references: [id])
+  amount      Int
+  currency    String    @default("EGP")
   periodStart DateTime
   periodEnd   DateTime
-  status     String   @default("pending") // pending|paid
-  paidAt     DateTime?
-  createdAt  DateTime @default(now())
+  status      String    @default("pending") // pending|paid
+  paidAt      DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([venueId])
 }
@@ -1057,33 +1279,111 @@ enum StaffInviteStatus {
   accepted
   declined
   revoked
+  suspended
 }
 
 model StaffInvite {
-  id             String            @id @default(uuid())
-  venueId        String
-  venue          Venue             @relation(fields: [venueId], references: [id])
-  invitedById    String
-  invitedBy      User              @relation("StaffInviteInvitedBy", fields: [invitedById], references: [id])
-  inviteePhone   String
-  inviteeUserId  String?
-  inviteeUser    User?             @relation("StaffInviteInvitee", fields: [inviteeUserId], references: [id])
-  roleId         String?
-  status         StaffInviteStatus @default(pending)
-  createdAt      DateTime          @default(now())
+  id              String            @id @default(uuid())
+  venueId         String
+  venue           Venue             @relation(fields: [venueId], references: [id])
+  invitedById     String
+  invitedBy       User              @relation("StaffInviteInvitedBy", fields: [invitedById], references: [id])
+  inviteePhone    String?
+  inviteeEmail    String?
+  inviteeUserId   String?
+  inviteeUser     User?             @relation("StaffInviteInvitee", fields: [inviteeUserId], references: [id])
+  roleId          String?
+  operationalRole String? // reception | manager | accountant
+  status          StaffInviteStatus @default(pending)
+  createdAt       DateTime          @default(now())
 
   @@index([venueId])
 }
 
+model PartnerApplication {
+  id            String                   @id @default(uuid())
+  ownerId       String
+  owner         User                     @relation(fields: [ownerId], references: [id])
+  venueId       String?                  @unique
+  venue         Venue?                   @relation(fields: [venueId], references: [id])
+  status        PartnerApplicationStatus @default(draft)
+  version       Int                      @default(1)
+  payload       Json
+  publicNameEn  String
+  publicNameAr  String
+  contactPhone  String
+  countryCode   String                   @default("EG")
+  governorateId String?
+  districtId    String?
+  lat           Float?
+  lng           Float?
+  submittedAt   DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  events PartnerApplicationEvent[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+}
+
+model PartnerApplicationEvent {
+  id            String                   @id @default(uuid())
+  applicationId String
+  application   PartnerApplication       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  actorUserId   String
+  actor         User                     @relation(fields: [actorUserId], references: [id])
+  fromStatus    PartnerApplicationStatus
+  toStatus      PartnerApplicationStatus
+  note          String?                  @db.Text
+  createdAt     DateTime                 @default(now())
+
+  @@index([applicationId, createdAt])
+}
+
+model CalendarBlock {
+  id          String            @id @default(uuid())
+  venueId     String
+  venue       Venue             @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  courtId     String?
+  court       Court?            @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  kind        CalendarBlockKind
+  startsAt    DateTime
+  endsAt      DateTime
+  note        String?
+  createdById String
+  createdBy   User              @relation(fields: [createdById], references: [id])
+  createdAt   DateTime          @default(now())
+
+  @@index([venueId, startsAt])
+  @@index([courtId, startsAt])
+}
+
+model PayoutMethod {
+  id               String           @id @default(uuid())
+  ownerId          String
+  owner            User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  kind             PayoutMethodKind
+  accountHolder    String
+  identifierMasked String
+  bankName         String?
+  details          Json?
+  isDefault        Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([ownerId])
+}
+
 model AuditLogEntry {
-  id           String   @id @default(uuid())
-  actorUserId  String
-  actor        User     @relation(fields: [actorUserId], references: [id])
-  action       String
-  targetType   String?
-  targetId     String?
-  metadata     Json?
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid())
+  actorUserId String
+  actor       User     @relation(fields: [actorUserId], references: [id])
+  action      String
+  targetType  String?
+  targetId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
 
   @@index([actorUserId, createdAt])
 }
@@ -1096,11 +1396,11 @@ model FeatureFlag {
 }
 
 model PlatformSetting {
-  id                  Int      @id @default(1)
-  serviceFeePct       Float    @default(5)
-  coinsPerHundredEgp  Int      @default(10)
-  coinToEgpRate       Float    @default(20) // 500 coins = 25 EGP -> 20 coins/EGP
-  updatedAt           DateTime @updatedAt
+  id                 Int      @id @default(1)
+  serviceFeePct      Float    @default(5)
+  coinsPerHundredEgp Int      @default(10) // global fallback; CountryConfig.coinsPerHundredMajor wins
+  coinToEgpRate      Float    @default(20)
+  updatedAt          DateTime @updatedAt
 }
 
 enum ReportEntityType {
@@ -1118,19 +1418,19 @@ enum ReportStatus {
 }
 
 model ModerationReport {
-  id              String           @id @default(uuid())
-  entityType      ReportEntityType
-  entityId        String
-  reporterId      String
-  reporter        User             @relation("ModerationReportReporter", fields: [reporterId], references: [id])
-  reportedUserId  String?
-  reportedUser    User?            @relation("ModerationReportReportedUser", fields: [reportedUserId], references: [id])
-  reason          String
-  status          ReportStatus     @default(open)
-  reviewedById    String?
-  reviewedBy      User?            @relation("ModerationReportReviewedBy", fields: [reviewedById], references: [id])
-  resolutionNote  String?
-  createdAt       DateTime         @default(now())
+  id             String           @id @default(uuid())
+  entityType     ReportEntityType
+  entityId       String
+  reporterId     String
+  reporter       User             @relation("ModerationReportReporter", fields: [reporterId], references: [id])
+  reportedUserId String?
+  reportedUser   User?            @relation("ModerationReportReportedUser", fields: [reportedUserId], references: [id])
+  reason         String
+  status         ReportStatus     @default(open)
+  reviewedById   String?
+  reviewedBy     User?            @relation("ModerationReportReviewedBy", fields: [reviewedById], references: [id])
+  resolutionNote String?
+  createdAt      DateTime         @default(now())
 
   @@index([status])
 }
@@ -1146,7 +1446,7 @@ enum PublishStatus {
 }
 
 model BlogCategory {
-  id     String @id @default(uuid())
+  id     String     @id @default(uuid())
   nameEn String
   nameAr String
   posts  BlogPost[]
@@ -1154,6 +1454,7 @@ model BlogCategory {
 
 model BlogPost {
   id            String        @id @default(uuid())
+  slug          String        @unique
   titleEn       String
   titleAr       String
   subtitleEn    String?
@@ -1186,24 +1487,24 @@ model Banner {
 }
 
 model FaqEntry {
-  id        String   @id @default(uuid())
+  id         String @id @default(uuid())
   questionEn String
   questionAr String
-  answerEn   String  @db.Text
-  answerAr   String  @db.Text
-  position   Int     @default(0)
+  answerEn   String @db.Text
+  answerAr   String @db.Text
+  position   Int    @default(0)
 }
 
 model SupportInquiry {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   fullName  String
   email     String
   phone     String
   userId    String?
-  user      User?    @relation(fields: [userId], references: [id])
-  message   String   @db.Text
-  status    String   @default("new") // new|read
-  createdAt DateTime @default(now())
+  user      User?     @relation(fields: [userId], references: [id])
+  message   String    @db.Text
+  status    String    @default("new") // new|read
+  createdAt DateTime  @default(now())
   readAt    DateTime?
 }
 
@@ -1212,11 +1513,157 @@ model SupportInquiry {
 // ============================================================
 
 model IdempotencyKey {
-  key         String   @id
-  userId      String
+  key          String   @id
+  userId       String
   responseBody Json?
   statusCode   Int?
   createdAt    DateTime @default(now())
 
   @@index([userId])
+}
+
+// ============================================================
+// Mal3ab gaming expansion — see MAL3AB_GAMING_EXPANSION_BLUEPRINT.md
+// §3.6-3.9, §7.3-7.4. Game catalog, multi-activity bundles, paid
+// membership, lightweight esports tournaments.
+// ============================================================
+
+model GameCatalogEntry {
+  id                      String   @id @default(uuid())
+  slug                    String   @unique
+  nameEn                  String
+  nameAr                  String
+  iconUrl                 String?
+  genre                   String // sports | shooter | racing | fighting | other
+  supportsCompetitiveTier Boolean  @default(true)
+  ageRating               String   @default("everyone") // everyone | teen | mature
+  active                  Boolean  @default(true)
+  createdAt               DateTime @default(now())
+
+  matchPosts MatchPost[]
+}
+
+model Bundle {
+  id              String   @id @default(uuid())
+  venueId         String
+  venue           Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  nameEn          String
+  nameAr          String
+  discountPercent Int // applied to the combined base price of all items
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items    BundleItem[]
+  bookings Booking[]
+
+  @@index([venueId])
+}
+
+model BundleItem {
+  id            String @id @default(uuid())
+  bundleId      String
+  bundle        Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  courtId       String
+  court         Court  @relation(fields: [courtId], references: [id])
+  durationUnits Int    @default(1)
+
+  @@index([bundleId])
+}
+
+model MembershipPlan {
+  id                     String   @id @default(uuid())
+  slug                   String   @unique
+  nameEn                 String
+  nameAr                 String
+  scope                  String // gaming | all-activities
+  priceAmount            Int
+  priceCurrency          String   @default("EGP")
+  includedHours          Int
+  overageDiscountPercent Int      @default(0)
+  perksEn                String[] @default([])
+  perksAr                String[] @default([])
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  memberships UserMembership[]
+}
+
+model UserMembership {
+  id                  String         @id @default(uuid())
+  userId              String         @unique
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId              String
+  plan                MembershipPlan @relation(fields: [planId], references: [id])
+  status              String         @default("active") // active | past_due | cancelled
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  hoursUsedThisPeriod Float          @default(0)
+  // §7.6 — the mock/manual-renewal path: real recurring billing needs a
+  // PSP subscription object as source of truth (see payments module TODO).
+  cancelledAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+}
+
+model Tournament {
+  id                   String   @id @default(uuid())
+  venueId              String?
+  venue                Venue?   @relation(fields: [venueId], references: [id])
+  activityId           String // a SportCategory id or GameCatalogEntry id
+  nameEn               String
+  nameAr               String
+  format               String   @default("single-elimination")
+  entryFeeAmount       Int?
+  entryFeeCurrency     String?
+  maxParticipants      Int // 8 | 16 | 32
+  registrationDeadline DateTime
+  startsAt             DateTime
+  status               String   @default("open") // open | full | in-progress | completed | cancelled
+  createdById          String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  participants TournamentParticipant[]
+  matches      TournamentMatch[]
+
+  @@index([activityId, status])
+  @@index([status, registrationDeadline])
+}
+
+model TournamentParticipant {
+  id           String     @id @default(uuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seed         Int?
+  registeredAt DateTime   @default(now())
+
+  @@unique([tournamentId, userId])
+}
+
+model TournamentMatch {
+  id                 String     @id @default(uuid())
+  tournamentId       String
+  tournament         Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  round              Int
+  // Stable position within its round (0-based) — winner of matchIndex i in
+  // round r feeds slotA (if i even) / slotB (if i odd) of match
+  // floor(i/2) in round r+1. Avoids relying on createdAt ordering.
+  matchIndex         Int        @default(0)
+  slotAId            String?
+  slotBId            String?
+  winnerId           String?
+  scheduledAt        DateTime?
+  matchPostId        String?
+  matchPost          MatchPost? @relation(fields: [matchPostId], references: [id])
+  resultConfirmedByA Boolean    @default(false)
+  resultConfirmedByB Boolean    @default(false)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([tournamentId, round, matchIndex])
+  @@index([tournamentId, round])
 }

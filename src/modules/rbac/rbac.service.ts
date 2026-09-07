@@ -15,7 +15,10 @@ export class RbacService {
     { key: 'bookings.view', descriptionEn: 'View bookings' },
     { key: 'bookings.checkin', descriptionEn: 'Check in a booking via QR' },
     { key: 'calendar.view', descriptionEn: 'View the venue calendar' },
-    { key: 'calendar.manage', descriptionEn: 'Block slots / create walk-in bookings' },
+    {
+      key: 'calendar.manage',
+      descriptionEn: 'Block slots / create walk-in bookings',
+    },
     { key: 'venue.manage', descriptionEn: 'Edit venue/court/pricing' },
     { key: 'promotions.manage', descriptionEn: 'Create/edit promotions' },
     { key: 'finance.view', descriptionEn: 'View earnings/payouts' },
@@ -42,7 +45,9 @@ export class RbacService {
       data: {
         ownerId,
         name: dto.name,
-        permissions: { create: permissions.map((p) => ({ permissionId: p.id })) },
+        permissions: {
+          create: permissions.map((p) => ({ permissionId: p.id })),
+        },
       },
       include: { permissions: { include: { permission: true } } },
     });
@@ -56,8 +61,11 @@ export class RbacService {
   }
 
   async assignRole(ownerId: string, dto: AssignRoleDto) {
-    const role = await this.prisma.role.findFirst({ where: { id: dto.roleId, ownerId } });
-    if (!role) throw new NotFoundException('Role not found for this owner account');
+    const role = await this.prisma.role.findFirst({
+      where: { id: dto.roleId, ownerId },
+    });
+    if (!role)
+      throw new NotFoundException('Role not found for this owner account');
     return this.prisma.userRoleAssignment.create({
       data: { userId: dto.userId, roleId: dto.roleId, venueId: dto.venueId },
     });
@@ -71,7 +79,9 @@ export class RbacService {
     if (!assignment || assignment.role.ownerId !== ownerId) {
       throw new NotFoundException('Assignment not found');
     }
-    return this.prisma.userRoleAssignment.delete({ where: { id: assignmentId } });
+    return this.prisma.userRoleAssignment.delete({
+      where: { id: assignmentId },
+    });
   }
 
   listPermissions() {

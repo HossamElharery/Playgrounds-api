@@ -1,4 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -27,7 +35,10 @@ export class RbacController {
   }
 
   @Post('roles')
-  createRole(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateRoleDto) {
+  createRole(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateRoleDto,
+  ) {
     return this.rbac.createRole(user.id, dto);
   }
 

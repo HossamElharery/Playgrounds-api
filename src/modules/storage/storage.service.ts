@@ -1,11 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { STORAGE_PROVIDER, StorageProvider, UploadResult } from './storage.interface';
+import {
+  STORAGE_PROVIDER,
+  StorageProvider,
+  UploadResult,
+} from './storage.interface';
 
 @Injectable()
 export class StorageService {
-  constructor(@Inject(STORAGE_PROVIDER) private readonly provider: StorageProvider) {}
+  constructor(
+    @Inject(STORAGE_PROVIDER) private readonly provider: StorageProvider,
+  ) {}
 
-  uploadBuffer(buffer: Buffer, originalName: string, mimeType: string, prefix?: string): Promise<UploadResult> {
+  uploadBuffer(
+    buffer: Buffer,
+    originalName: string,
+    mimeType: string,
+    prefix?: string,
+  ): Promise<UploadResult> {
     return this.provider.uploadBuffer(buffer, originalName, mimeType, prefix);
   }
 
@@ -15,5 +26,9 @@ export class StorageService {
 
   urlFor(key: string): string {
     return this.provider.urlFor(key);
+  }
+
+  keyFromUrl(url: string): string | undefined {
+    return this.provider.keyFromUrl(url);
   }
 }

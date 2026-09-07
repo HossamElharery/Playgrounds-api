@@ -1,5 +1,12 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
@@ -9,26 +16,12 @@ import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthAppleDto } from './dto/oauth-apple.dto';
-import { IsPhoneNumber, IsString, Length, MinLength } from 'class-validator';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
-
-class ForgotPasswordDto {
-  @IsPhoneNumber()
-  phone!: string;
-}
-
-class ResetPasswordDto extends ForgotPasswordDto {
-  @IsString()
-  @Length(4, 4)
-  code!: string;
-
-  @IsString()
-  @MinLength(8)
-  newPassword!: string;
-}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -58,7 +51,26 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
+  @ApiOperation({
+    summary: 'Login with email + password (start here)',
+    description:
+      'Use seed admin admin@mal3ab.app / Password123! then copy result.accessToken and click Authorize.',
+  })
+  @ApiBody({
+    type: LoginEmailDto,
+    examples: {
+      admin: {
+        summary: 'Admin (seed)',
+        value: { email: 'admin@mal3ab.app', password: 'Password123!' },
+      },
+      owner: {
+        summary: 'Venue owner (seed)',
+        value: { email: 'owner@mal3ab.app', password: 'Password123!' },
+      },
+    },
+  })
   async login(@Body() dto: LoginEmailDto) {
     const result = await this.authService.loginEmail(dto);
     return { message: 'authenticated', result };

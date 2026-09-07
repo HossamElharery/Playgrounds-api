@@ -6,4 +6,5 @@ export interface AuthenticatedUser {
   email?: string | null;
   name: string;
   roles: UserRole[];
+  countryCode?: string;
 }

@@ -1,98 +1,56 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Mal3ab API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend for **Mal3ab** — a bilingual (Arabic/English) sports venue booking and social play platform. NestJS 11 + Prisma 6 + PostgreSQL.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+For the full architecture, data model, endpoint catalog, and realtime contract, see **[MAL3AB_BACKEND.md](./MAL3AB_BACKEND.md)** — written for any AI assistant, mobile developer, or frontend developer picking this up with zero prior context.
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Quick start
 
 ```bash
-$ npm install
+# 1. Install dependencies
+npm install
+
+# 2. Copy the env template and fill in secrets
+cp .env.example .env
+# Generate JWT/QR secrets with: openssl rand -hex 32
+
+# 3. Create the local database (Postgres must be running)
+createdb mal3ab_dev
+
+# 4. Run migrations
+npm run prisma:migrate
+
+# 5. Seed reference + demo data (sports, Egypt districts, sample venues/users)
+npm run seed
+
+# 6. Start the dev server
+npm run start:dev
 ```
 
-## Compile and run the project
+The API listens on `http://localhost:3000/api/v1`. Interactive docs (Swagger) at `http://localhost:3000/api/docs`.
 
-```bash
-# development
-$ npm run start
+Seeded logins (after `npm run seed`):
+- **Admin:** `admin@mal3ab.app` / `Password123!`
+- **Owner:** `owner@mal3ab.app` / `Password123!`
+- **Players:** phone `+2010000010X` (X = 0-9) — OTP is printed to the server console, never returned in any API response
 
-# watch mode
-$ npm run start:dev
+## Scripts
 
-# production mode
-$ npm run start:prod
-```
+| Script | Purpose |
+|---|---|
+| `npm run start:dev` | Dev server with watch mode |
+| `npm run build` | Production build (`dist/`) |
+| `npm run start:prod` | Run the production build |
+| `npm run prisma:migrate` | Apply/create migrations |
+| `npm run prisma:studio` | Browse the database visually |
+| `npm run seed` | Populate reference + demo data |
+| `npm test` | Unit tests |
+| `npm run lint` | ESLint |
 
-## Run tests
+## Environment
 
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+See `.env.example` for the full list. Nothing requires a paid third-party account to run locally:
+- **Database:** local Postgres, no extensions beyond `pg_trgm` (auto-enabled by migrations)
+- **File storage:** local disk by default (`STORAGE_PROVIDER=local`); flip to `s3` + AWS credentials for production
+- **OTP delivery:** logs to the console by default (`OTP_PROVIDER=console`); swap in a real SMS provider later
+- **Payments:** mock checkout provider (instant success except cash-at-venue)

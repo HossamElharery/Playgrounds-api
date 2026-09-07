@@ -40,22 +40,24 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required');
     }
 
-    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
     if (requiredRoles?.length) {
-      const hasRole = (user.roles ?? []).some((r: UserRole) => requiredRoles.includes(r));
+      const hasRole = (user.roles ?? []).some((r: UserRole) =>
+        requiredRoles.includes(r),
+      );
       if (!hasRole) {
         throw new ForbiddenException('Insufficient role');
       }
     }
 
-    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
+      PERMISSIONS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
     if (requiredPermissions?.length) {
       // admin/owner bypass fine-grained permission checks; staff must hold them explicitly
@@ -65,10 +67,16 @@ export class AuthGuard implements CanActivate {
       if (!isPrivileged) {
         const assignments = await this.prisma.userRoleAssignment.findMany({
           where: { userId: user.id },
-          include: { role: { include: { permissions: { include: { permission: true } } } } },
+          include: {
+            role: {
+              include: { permissions: { include: { permission: true } } },
+            },
+          },
         });
         const grantedKeys = new Set(
-          assignments.flatMap((a) => a.role.permissions.map((p) => p.permission.key)),
+          assignments.flatMap((a) =>
+            a.role.permissions.map((p) => p.permission.key),
+          ),
         );
         const hasAll = requiredPermissions.every((p) => grantedKeys.has(p));
         if (!hasAll) {
