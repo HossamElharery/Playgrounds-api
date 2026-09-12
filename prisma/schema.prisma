@@ -1407,6 +1407,16 @@ model PlatformSetting {
   updatedAt          DateTime @updatedAt
 }
 
+model PageSeoOverride {
+  key           String   @id @db.VarChar(50)
+  titleAr       String   @db.VarChar(60)
+  titleEn       String   @db.VarChar(60)
+  descriptionAr String   @db.VarChar(160)
+  descriptionEn String   @db.VarChar(160)
+  updatedById   String?
+  updatedAt     DateTime @updatedAt
+}
+
 enum ReportEntityType {
   post
   review
