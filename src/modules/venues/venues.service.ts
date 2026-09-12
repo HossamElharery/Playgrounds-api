@@ -27,6 +27,17 @@ import { buildPagination } from '../../common/dto/page-query.dto';
 export class VenuesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private stripSeoOverrides<T extends Record<string, unknown>>(venue: T) {
+    const {
+      seoTitleOverrideAr: _seoTitleOverrideAr,
+      seoTitleOverrideEn: _seoTitleOverrideEn,
+      seoDescriptionOverrideAr: _seoDescriptionOverrideAr,
+      seoDescriptionOverrideEn: _seoDescriptionOverrideEn,
+      ...ownerSafeVenue
+    } = venue;
+    return ownerSafeVenue;
+  }
+
   private slugify(name: string): string {
     return (
       name
@@ -184,6 +195,8 @@ export class VenuesService {
       photos: { orderBy: { position: 'asc' as const } },
       amenities: { include: { amenity: true } },
       sports: { include: { sport: true } },
+      governorate: true,
+      district: true,
       reviews: {
         orderBy: { createdAt: 'desc' as const },
         take: 20,
@@ -206,11 +219,12 @@ export class VenuesService {
     return venue;
   }
 
-  listMine(ownerId: string) {
-    return this.prisma.venue.findMany({
+  async listMine(ownerId: string) {
+    const venues = await this.prisma.venue.findMany({
       where: { ownerId },
       include: { courts: true },
     });
+    return venues.map((venue) => this.stripSeoOverrides(venue));
   }
 
   private parseBbox(

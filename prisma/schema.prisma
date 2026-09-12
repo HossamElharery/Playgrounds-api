@@ -422,6 +422,10 @@ model Venue {
   ratingCount        Int           @default(0)
   priceFromAmount    Int?
   priceFromCurrency  String?
+  seoTitleOverrideAr       String? @db.VarChar(60)
+  seoTitleOverrideEn       String? @db.VarChar(60)
+  seoDescriptionOverrideAr String? @db.VarChar(160)
+  seoDescriptionOverrideEn String? @db.VarChar(160)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
