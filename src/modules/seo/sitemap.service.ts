@@ -26,7 +26,7 @@ export class SitemapService {
     <xhtml:link rel="alternate" hreflang="ar-EG" href="${escapeXml(ar)}"/>
     <xhtml:link rel="alternate" hreflang="en" href="${escapeXml(en)}"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(ar)}"/>
-    ${images.map((image) => `<image:image><image:loc>${escapeXml(image)}</image:loc></image:image>`).join('')}
+    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}
   </url>`).join('');
   }
 

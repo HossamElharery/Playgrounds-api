@@ -50,7 +50,7 @@ export class IndexNowService {
   }
 
   /** Safety net for mutation paths outside VenuesService (partner approval and admin management). */
-  @Interval(15_000)
+  @Interval(1_000)
   async notifyRecentlyChangedVenues(): Promise<void> {
     const until = new Date();
     const changed = await this.prisma.venue.findMany({
