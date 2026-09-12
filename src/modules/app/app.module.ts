@@ -38,6 +38,7 @@ import { GamesModule } from '../games/games.module';
 import { BundlesModule } from '../bundles/bundles.module';
 import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
+import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { TournamentsModule } from '../tournaments/tournaments.module';
     BundlesModule,
     MembershipModule,
     TournamentsModule,
+    SeoDiscoveryModule,
   ],
   controllers: [AppController],
   providers: [

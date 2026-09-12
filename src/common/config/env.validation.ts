@@ -42,6 +42,9 @@ export const envValidationSchema = Joi.object({
   QR_SIGNING_SECRET: Joi.string().min(32).required(),
 
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
+  SITE_URL: Joi.string().uri().default('https://mal3ab.app'),
+  INDEXNOW_KEY: Joi.string().allow('').optional(),
+  INDEXNOW_ENDPOINT: Joi.string().uri().default('https://api.indexnow.org/indexnow'),
 
   FCM_SERVER_KEY: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
