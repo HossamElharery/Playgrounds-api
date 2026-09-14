@@ -3,6 +3,7 @@ import {
   clusterByGeohash,
   encodeGeohash,
   haversineKm,
+  pointInPolygon,
 } from './geo.util';
 
 describe('geo.util', () => {
@@ -27,6 +28,23 @@ describe('geo.util', () => {
     expect(east).toBeGreaterThan(31.23);
     expect(south).toBeLessThan(30.05);
     expect(north).toBeGreaterThan(30.05);
+  });
+
+  it('detects a point inside a simple square polygon', () => {
+    const square = {
+      type: 'Polygon' as const,
+      coordinates: [
+        [
+          [31.0, 30.0],
+          [31.5, 30.0],
+          [31.5, 30.2],
+          [31.0, 30.2],
+          [31.0, 30.0],
+        ],
+      ],
+    };
+    expect(pointInPolygon(31.25, 30.1, square)).toBe(true);
+    expect(pointInPolygon(32.0, 30.1, square)).toBe(false);
   });
 
   it('clusters dense pins instead of returning every point past the cap', () => {

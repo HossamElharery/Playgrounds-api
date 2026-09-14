@@ -5,6 +5,7 @@ import {
   IsEmail,
   IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsPhoneNumber,
   IsString,
@@ -159,4 +160,52 @@ export class OwnerBookingActionDto {
   @IsString()
   @MaxLength(240)
   reason?: string;
+}
+
+export class InterpretScheduleCommandDto {
+  @ApiProperty()
+  @IsString()
+  venueId!: string;
+
+  @ApiProperty({ description: 'What the owner typed or said, transcribed to text.' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(400)
+  text!: string;
+}
+
+export class CreateAssistantMessageDto {
+  @ApiProperty()
+  @IsString()
+  venueId!: string;
+
+  @ApiProperty({ enum: ['owner', 'assistant', 'system'] })
+  @IsIn(['owner', 'assistant', 'system'])
+  sender!: 'owner' | 'assistant' | 'system';
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  text!: string;
+
+  @ApiPropertyOptional({ description: 'ScheduleChange this message applied, if any.' })
+  @IsOptional()
+  @IsObject()
+  appliedChange?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'ScheduleChange that would undo appliedChange.' })
+  @IsOptional()
+  @IsObject()
+  inverseChange?: Record<string, unknown>;
+}
+
+export class UndoAssistantMessageDto {
+  @ApiProperty()
+  @IsString()
+  venueId!: string;
+
+  @ApiProperty()
+  @IsString()
+  messageId!: string;
 }

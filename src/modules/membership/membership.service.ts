@@ -1,14 +1,10 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  PAYMENT_PROVIDER,
-  PaymentProvider,
-} from '../payments/payment-provider.interface';
+import { WalletService } from '../payments/wallet.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import {
   CreateMembershipPlanDto,
@@ -21,22 +17,15 @@ const PERIOD_DAYS = 30;
 /**
  * Membership / subscription tier (§3.8/§7.3), additive to the coins economy.
  *
- * §7.6 backend note, followed literally here: there is no real PSP
- * subscription/recurring-charge integration in this repo (PaymentProvider is
- * one-shot charge/refund only, see payments module). This service is the
- * documented "manually-renewed record" mock the blueprint explicitly allows
- * for now — `subscribe` does one real (mock) charge and opens a 30-day
- * period; renewal is via `POST /membership/webhooks/renewal`, a stand-in for
- * a real PSP webhook, guarded by a shared secret rather than a verified
- * signature. Swapping in a real PSP subscription object as the source of
- * truth for `status` is the TODO called out in the blueprint — do it here
- * and in payments module, BookingsService should not need to change.
+ * Player subscribe debits the prepaid EGP wallet. PSP methods are wallet
+ * top-up only. There is still no live PSP recurring-billing integration —
+ * `POST /membership/webhooks/renewal` remains the mock renewal stand-in.
  */
 @Injectable()
 export class MembershipService {
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
+    private readonly wallet: WalletService,
     private readonly emitter: RealtimeGatewayEmitter,
   ) {}
 
@@ -90,34 +79,34 @@ export class MembershipService {
       throw new BadRequestException('Already has an active membership');
     }
 
-    const charge = await this.paymentProvider.charge(
-      plan.priceAmount,
-      plan.priceCurrency,
-      dto.paymentMethod,
-    );
-    if (charge.status === 'failed')
-      throw new BadRequestException('PAYMENT_FAILED');
-
     const now = new Date();
     const periodEnd = new Date(now.getTime() + PERIOD_DAYS * 86_400_000);
-    const membership = await this.prisma.userMembership.upsert({
-      where: { userId },
-      update: {
-        planId: plan.id,
-        status: 'active',
-        currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
-        hoursUsedThisPeriod: 0,
-        cancelledAt: null,
-      },
-      create: {
+
+    const membership = await this.prisma.$transaction(async (tx) => {
+      await this.wallet.debit(tx, {
         userId,
-        planId: plan.id,
-        status: 'active',
-        currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
-      },
-      include: { plan: true },
+        amount: plan.priceAmount,
+        reason: 'membership',
+      });
+      return tx.userMembership.upsert({
+        where: { userId },
+        update: {
+          planId: plan.id,
+          status: 'active',
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+          hoursUsedThisPeriod: 0,
+          cancelledAt: null,
+        },
+        create: {
+          userId,
+          planId: plan.id,
+          status: 'active',
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+        },
+        include: { plan: true },
+      });
     });
     this.emitter.emitToUser(userId, {
       type: 'membership.status.changed',

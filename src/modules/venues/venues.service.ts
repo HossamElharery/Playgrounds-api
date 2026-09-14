@@ -141,7 +141,22 @@ export class VenuesService {
           }
         : {};
 
-    return this.prisma.venue.update({
+    return this.prisma.$transaction(async tx => {
+    if (dto.sportIds) {
+      const ids = [...new Set(dto.sportIds)];
+      if (await tx.sportCategory.count({ where: { id: { in: ids } } }) !== ids.length) throw new BadRequestException('Unknown activity');
+      if (await tx.court.count({ where: { venueId, sportId: { notIn: ids } } })) throw new BadRequestException('Cannot remove an activity used by existing courts');
+      await tx.venueSport.deleteMany({ where: { venueId } });
+      await tx.venueSport.createMany({ data: ids.map(sportId => ({ venueId, sportId })) });
+    }
+    if (dto.amenityKeys) {
+      const keys = [...new Set(dto.amenityKeys)];
+      const amenities = await tx.amenity.findMany({ where: { key: { in: keys } } });
+      if (amenities.length !== keys.length) throw new BadRequestException('Unknown amenity');
+      await tx.venueAmenity.deleteMany({ where: { venueId } });
+      await tx.venueAmenity.createMany({ data: amenities.map(a => ({ venueId, amenityId: a.id })) });
+    }
+    return tx.venue.update({
       where: { id: venueId },
       data: {
         nameEn: dto.nameEn,
@@ -156,6 +171,7 @@ export class VenuesService {
         cancellationPolicy: dto.cancellationPolicy,
         ...geo,
       },
+    });
     });
   }
 
@@ -187,6 +203,12 @@ export class VenuesService {
     });
     if (!venue) throw new NotFoundException('Venue not found');
     return venue;
+  }
+
+  async getOwnedDetail(id: string, ownerId: string, privileged: boolean) {
+    await this.assertOwnership(id, ownerId, privileged);
+    const venue = await this.getById(id);
+    return privileged ? venue : this.stripSeoOverrides(venue);
   }
 
   async getBySlug(slug: string) {
@@ -222,7 +244,7 @@ export class VenuesService {
   async listMine(ownerId: string) {
     const venues = await this.prisma.venue.findMany({
       where: { ownerId },
-      include: { courts: true },
+      include: { courts: true, photos: { orderBy: { position: 'asc' } }, sports: { include: { sport: true } }, amenities: { include: { amenity: true } } },
     });
     return venues.map((venue) => this.stripSeoOverrides(venue));
   }

@@ -17,6 +17,36 @@ describe('Notification delivery', () => {
     expect(result).toEqual({ sent: 1, recipientIds: ['a'] });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ category: 'system' }));
   });
+  it('narrows player broadcasts to a district and attaches a CTA', async () => {
+    prisma.user.findMany.mockResolvedValue([{ id: 'p1' }]);
+    const create = jest.spyOn(service, 'create').mockResolvedValue({ id: 'n1' } as never);
+    await service.broadcast({
+      audience: 'players',
+      districtId: 'nasr-city',
+      titleEn: 'Tonight at Neon',
+      titleAr: 'الليلة في نيون',
+      bodyEn: 'Book a discounted court',
+      bodyAr: 'احجز ملعب بخصم',
+      ctaLabelEn: 'Book now',
+      ctaLabelAr: 'احجز الآن',
+      ctaUrl: '/en/venues/neon-arena',
+    });
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ districtId: 'nasr-city' }),
+      }),
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deepLink: '/en/venues/neon-arena',
+        payload: {
+          ctaLabelEn: 'Book now',
+          ctaLabelAr: 'احجز الآن',
+          ctaUrl: '/en/venues/neon-arena',
+        },
+      }),
+    );
+  });
   it('excludes partner, staff and admin roles from player-only broadcasts', async () => {
     prisma.user.findMany.mockResolvedValue([]);
     await service.broadcast({ audience: 'players', titleEn: 'Notice', titleAr: 'إشعار', bodyEn: 'Details', bodyAr: 'تفاصيل' });

@@ -1,0 +1,11 @@
+.git
+.github
+dist
+node_modules
+coverage
+.env*
+uploads/*
+!uploads/.gitkeep
+npm-debug.log*
+Dockerfile*
+README.md

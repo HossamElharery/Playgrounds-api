@@ -29,6 +29,7 @@ import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserStatusDto } from './dto/update-status.dto';
 import { UpdatePrivacyDto } from './dto/block-user.dto';
 import { ListPlayersQueryDto } from './dto/list-players-query.dto';
+import { ReportLocationDto } from './dto/report-location.dto';
 
 @ApiTags('users')
 @Controller()
@@ -59,6 +60,16 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.usersService.updateProfile(user.id, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post('users/me/location')
+  reportLocation(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ReportLocationDto,
+  ) {
+    return this.usersService.reportLocation(user.id, dto);
   }
 
   @ApiBearerAuth()
@@ -146,7 +157,11 @@ export class UsersController {
   @UseGuards(AuthGuard)
   @Roles('admin')
   @Patch('users/:id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateUserStatusDto) {
-    return this.usersService.updateStatus(id, dto.status);
+  updateStatus(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserStatusDto,
+  ) {
+    return this.usersService.updateStatus(id, dto.status, actor.id);
   }
 }

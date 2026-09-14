@@ -30,7 +30,18 @@ export class PulseService {
   // ---- Availability ----
 
   async myAvailability(userId: string) {
-    return this.prisma.pulseAvailability.findUnique({ where: { userId } });
+    const availability = await this.prisma.pulseAvailability.findUnique({
+      where: { userId },
+    });
+    if (!availability || availability.status !== 'active') return null;
+    if (availability.expiresAt <= new Date()) {
+      await this.prisma.pulseAvailability.update({
+        where: { userId },
+        data: { status: 'expired' },
+      });
+      return null;
+    }
+    return availability;
   }
 
   async setAvailability(userId: string, dto: SetAvailabilityDto) {
@@ -64,7 +75,7 @@ export class PulseService {
 
     this.emitter.emitToRoom('pulse', {
       type: 'pulse.availability.changed',
-      availability,
+      userId,
     });
     return availability;
   }
@@ -74,46 +85,138 @@ export class PulseService {
       where: { userId },
       data: { status: 'cancelled' },
     });
+    this.emitter.emitToRoom('pulse', {
+      type: 'pulse.availability.changed',
+      userId,
+    });
   }
 
   // ---- Feed ----
 
   async feed(userId: string, query: PulseFeedQueryDto) {
+    const now = new Date();
+    const [currentUser, friendships, blocks] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { countryCode: true },
+      }),
+      this.prisma.friendship.findMany({
+        where: {
+          status: 'accepted',
+          OR: [{ requesterId: userId }, { addresseeId: userId }],
+        },
+        select: { requesterId: true, addresseeId: true },
+      }),
+      this.prisma.userBlock.findMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+        select: { blockerId: true, blockedId: true },
+      }),
+    ]);
+    const friendIds = friendships.map((friendship) =>
+      friendship.requesterId === userId
+        ? friendship.addresseeId
+        : friendship.requesterId,
+    );
+    const blockedIds = blocks.map((block) =>
+      block.blockerId === userId ? block.blockedId : block.blockerId,
+    );
+    const visibleReadyWhere: Prisma.PulseAvailabilityWhereInput = {
+      userId: { notIn: [userId, ...blockedIds] },
+      status: 'active',
+      expiresAt: { gt: now },
+      ...(currentUser?.countryCode
+        ? { user: { countryCode: currentUser.countryCode } }
+        : {}),
+      ...(query.sportId ? { sportId: query.sportId } : {}),
+    };
+    const readyWhere: Prisma.PulseAvailabilityWhereInput =
+      query.scope === 'friends'
+        ? { AND: [visibleReadyWhere, { userId: { in: friendIds } }] }
+        : visibleReadyWhere;
     const where: Prisma.PulseOpportunityWhereInput = {
       status: { in: ['open', 'held'] },
-      expiresAt: { gt: new Date() },
+      expiresAt: { gt: now },
       ...(query.sportId ? { sportId: query.sportId } : {}),
       ...(query.scope === 'rescue' ? { kind: 'rescue' } : {}),
     };
 
-    const page = await paginateByCursor(
-      (args) =>
-        this.prisma.pulseOpportunity.findMany({
-          where,
-          orderBy: { id: 'desc' },
-          include: { claims: true, sport: true },
-          ...args,
-        }),
-      query.limit,
-      query.cursor,
-    );
-
-    const [readyNearby, rescueSpots] = await Promise.all([
-      this.prisma.pulseAvailability.count({ where: { status: 'active' } }),
+    const [page, readyPlayers, readyNearby, rescueSpots] = await Promise.all([
+      paginateByCursor(
+        (args) =>
+          this.prisma.pulseOpportunity.findMany({
+            where,
+            orderBy: { id: 'desc' },
+            include: { claims: true, sport: true },
+            ...args,
+          }),
+        query.limit,
+        query.cursor,
+      ),
+      query.scope === 'rescue'
+        ? Promise.resolve([])
+        : this.prisma.pulseAvailability.findMany({
+            where: readyWhere,
+            orderBy: { startsAt: 'desc' },
+            take: 50,
+            include: {
+              sport: {
+                select: { id: true, slug: true, nameEn: true, nameAr: true },
+              },
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatarUrl: true,
+                  reliabilityPct: true,
+                  sportSkills: { select: { sportId: true, tier: true } },
+                },
+              },
+            },
+          }),
+      this.prisma.pulseAvailability.count({ where: visibleReadyWhere }),
       this.prisma.pulseOpportunity.count({
-        where: { kind: 'rescue', status: { in: ['open', 'held'] } },
+        where: {
+          kind: 'rescue',
+          status: { in: ['open', 'held'] },
+          expiresAt: { gt: now },
+        },
       }),
     ]);
 
     return {
-      items: page.items.map((o) => this.toDto(o, userId)),
+      items: page.items.map((o) => this.toDto(o, userId, new Set(friendIds))),
+      readyPlayers: readyPlayers.map((availability) => ({
+        userId: availability.user.id,
+        name: availability.user.name,
+        avatarUrl: availability.user.avatarUrl,
+        reliabilityPct: availability.user.reliabilityPct,
+        sportId: availability.sportId,
+        sportSlug: availability.sport.slug,
+        sportNameEn: availability.sport.nameEn,
+        sportNameAr: availability.sport.nameAr,
+        skillTier:
+          availability.user.sportSkills.find(
+            (skill) => skill.sportId === availability.sportId,
+          )?.tier ?? null,
+        window: availability.window,
+        mode: availability.mode,
+        radiusKm: availability.radiusKm,
+        maxBudgetAmount: availability.maxBudgetAmount,
+        currency: availability.currency,
+        expiresAt: availability.expiresAt,
+        isFriend: friendIds.includes(availability.userId),
+      })),
       nextCursor: page.nextCursor,
-      metrics: { readyNearby, rescueSpots, averageFillMinutes: 6 },
+      metrics: { readyNearby, rescueSpots, averageFillMinutes: null },
       serverTime: new Date().toISOString(),
     };
   }
 
-  private toDto(opportunity: any, userId: string) {
+  private toDto(
+    opportunity: any,
+    userId: string,
+    friendIds: ReadonlySet<string> = new Set(),
+  ) {
     const activeClaims = opportunity.claims.filter((c: any) =>
       ['held', 'confirmed'].includes(c.state),
     );
@@ -134,7 +237,9 @@ export class PulseService {
       reliabilityFloor: opportunity.reliabilityFloor,
       urgent: opportunity.urgent,
       claimedByMe: activeClaims.some((c: any) => c.userId === userId),
-      friendsCount: activeClaims.length,
+      friendsCount: activeClaims.filter((claim: any) =>
+        friendIds.has(claim.userId),
+      ).length,
       version: opportunity.version,
       reason:
         opportunity.kind === 'rescue'
@@ -144,12 +249,28 @@ export class PulseService {
   }
 
   async getOpportunity(userId: string, id: string) {
-    const opportunity = await this.prisma.pulseOpportunity.findUnique({
-      where: { id },
-      include: { claims: true },
-    });
+    const [opportunity, friendships] = await Promise.all([
+      this.prisma.pulseOpportunity.findUnique({
+        where: { id },
+        include: { claims: true },
+      }),
+      this.prisma.friendship.findMany({
+        where: {
+          status: 'accepted',
+          OR: [{ requesterId: userId }, { addresseeId: userId }],
+        },
+        select: { requesterId: true, addresseeId: true },
+      }),
+    ]);
     if (!opportunity) throw new NotFoundException('Opportunity not found');
-    return this.toDto(opportunity, userId);
+    const friendIds = new Set(
+      friendships.map((friendship) =>
+        friendship.requesterId === userId
+          ? friendship.addresseeId
+          : friendship.requesterId,
+      ),
+    );
+    return this.toDto(opportunity, userId, friendIds);
   }
 
   // ---- Claim state machine (§19.4) ----
@@ -236,10 +357,7 @@ export class PulseService {
         await tx.pulseOpportunity.update({
           where: { id: opportunityId },
           data: {
-            status: pulseStatusFromOccupancy(
-              opportunity.capacity,
-              activeCount,
-            ),
+            status: pulseStatusFromOccupancy(opportunity.capacity, activeCount),
             version: { increment: 1 },
           },
         });

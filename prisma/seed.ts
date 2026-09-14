@@ -276,13 +276,19 @@ async function main() {
       { key: 'parking', nameEn: 'Parking', nameAr: 'موقف سيارات', icon: 'car' },
       { key: 'showers', nameEn: 'Showers', nameAr: 'دش', icon: 'shower' },
       { key: 'lighting', nameEn: 'Floodlights', nameAr: 'إضاءة', icon: 'lightbulb' },
-      { key: 'floodlights', nameEn: 'Floodlights', nameAr: 'إضاءة', icon: 'lightbulb' },
+      { key: 'floodlights', nameEn: 'Floodlights', nameAr: 'إضاءة كاشفة', icon: 'lightbulb' },
       { key: 'cafe', nameEn: 'Cafe', nameAr: 'كافيه', icon: 'coffee' },
       { key: 'lockers', nameEn: 'Lockers', nameAr: 'خزائن', icon: 'lock' },
       { key: 'wifi', nameEn: 'Wi-Fi', nameAr: 'واي فاي', icon: 'wifi' },
       { key: 'femaleFriendly', nameEn: 'Women-friendly', nameAr: 'أوقات للنساء', icon: 'user-check' },
       { key: 'indoor', nameEn: 'Indoor', nameAr: 'مغلق', icon: 'home' },
-    ].map((a) => prisma.amenity.upsert({ where: { key: a.key }, update: {}, create: a } as any)),
+    ].map((a) =>
+      prisma.amenity.upsert({
+        where: { key: a.key },
+        update: { nameEn: a.nameEn, nameAr: a.nameAr, icon: a.icon },
+        create: a,
+      } as any),
+    ),
   );
 
   // ---- Platform settings ----
@@ -568,22 +574,103 @@ async function main() {
   });
 
   // ---- Quests & badges ----
-  await prisma.quest.upsert({
-    where: { key: 'weekly_3_bookings' },
-    update: {},
-    create: {
+  // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — `rule.event` says which
+  // event bumps this quest; `rule.scope` (omitted = every activity) narrows
+  // it to one activityKind and/or one specific sportId/gameId. Same table,
+  // same code path, for football and for a PlayStation booking alike.
+  const quests: {
+    key: string;
+    titleEn: string;
+    titleAr: string;
+    rule: Record<string, unknown>;
+    rewardCoins: number;
+  }[] = [
+    {
       key: 'weekly_3_bookings',
       titleEn: 'Play 3 times this week',
       titleAr: 'العب 3 مرات هذا الأسبوع',
-      rule: { target: 3 },
+      rule: { event: 'booking.completed', target: 3 },
       rewardCoins: 150,
     },
-  });
-  await prisma.badge.upsert({
-    where: { key: 'night_owl' },
-    update: {},
-    create: { key: 'night_owl', nameEn: 'Night Owl', nameAr: 'بومة الليل', icon: 'moon' },
-  });
+    {
+      key: 'weekly_daily_checkins',
+      titleEn: 'Open the app 5 days this week',
+      titleAr: 'افتح التطبيق 5 أيام هذا الأسبوع',
+      rule: { event: 'checkin.daily', target: 5 },
+      rewardCoins: 100,
+    },
+    {
+      key: 'weekly_gaming_station_2',
+      titleEn: 'Book a gaming station twice this week',
+      titleAr: 'احجز محطة ألعاب مرتين هذا الأسبوع',
+      rule: {
+        event: 'booking.completed',
+        target: 2,
+        scope: { activityKind: 'gaming-station' },
+      },
+      rewardCoins: 120,
+    },
+    {
+      key: 'weekly_review_with_photo',
+      titleEn: 'Leave a review with a photo',
+      titleAr: 'اكتب تقييم مع صورة',
+      rule: { event: 'review.submitted', target: 1 },
+      rewardCoins: 100,
+    },
+  ];
+  for (const q of quests) {
+    await prisma.quest.upsert({
+      where: { key: q.key },
+      update: {},
+      create: { ...q, rule: q.rule as any },
+    });
+  }
+
+  const badges: {
+    key: string;
+    nameEn: string;
+    nameAr: string;
+    icon: string;
+    descriptionEn?: string;
+    descriptionAr?: string;
+  }[] = [
+    { key: 'night_owl', nameEn: 'Night Owl', nameAr: 'بومة الليل', icon: 'moon' },
+    {
+      key: 'first-timer',
+      nameEn: 'First Timer',
+      nameAr: 'أول مرة',
+      icon: 'star-filled',
+      descriptionEn: 'Completed your first booking',
+      descriptionAr: 'أكملت أول حجز ليك',
+    },
+    {
+      key: 'week-streak',
+      nameEn: 'Week Streak',
+      nameAr: 'أسبوع متواصل',
+      icon: 'flame',
+      descriptionEn: '7-day check-in streak',
+      descriptionAr: 'استمرارية تسجيل دخول 7 أيام',
+    },
+    {
+      key: 'iron-man',
+      nameEn: 'Iron Man',
+      nameAr: 'الرجل الحديدي',
+      icon: 'flame',
+      descriptionEn: '30-day check-in streak',
+      descriptionAr: 'استمرارية تسجيل دخول 30 يوم',
+    },
+    {
+      key: 'mvp-x5',
+      nameEn: 'Fan Favorite',
+      nameAr: 'نجم الملعب',
+      icon: 'trophy',
+      descriptionEn: 'Voted MVP 5 times',
+      descriptionAr: 'اتفزت كأفضل لاعب 5 مرات',
+    },
+  ];
+  for (const b of badges) {
+    await prisma.badge.upsert({ where: { key: b.key }, update: {}, create: b });
+  }
 
   // ---- Bilingual blog (one record per post, AR + EN fields) ----
   const guides = await prisma.blogCategory.upsert({

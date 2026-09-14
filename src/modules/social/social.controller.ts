@@ -20,10 +20,7 @@ import { SendFriendRequestDto } from './dto/send-friend-request.dto';
 import { CreateMatchPostDto } from './dto/create-match-post.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
-import {
-  CreateCommentDto,
-  ToggleReactionDto,
-} from './dto/create-comment.dto';
+import { CreateCommentDto, ToggleReactionDto } from './dto/create-comment.dto';
 import {
   ListFriendRequestsQueryDto,
   ListFriendsQueryDto,
@@ -65,7 +62,7 @@ export class SocialController {
     @CurrentUser() user: AuthenticatedUser,
     @Query() q: ListFriendRequestsQueryDto,
   ) {
-    return this.friends.listIncoming(user.id, q.direction ?? 'incoming');
+    return this.friends.listRequests(user.id, q.direction ?? 'incoming');
   }
 
   @UseGuards(AuthGuard)
@@ -118,6 +115,21 @@ export class SocialController {
   @Get('matches/mine/list')
   myMatches(@CurrentUser() user: AuthenticatedUser) {
     return this.matchPosts.mine(user.id);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('matches/join-statuses/mine')
+  myMatchJoinStatuses(@CurrentUser() user: AuthenticatedUser) {
+    return this.matchPosts.myJoinStatuses(user.id);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('matches/:id/join-requests')
+  matchJoinRequests(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.matchPosts.listJoinRequests(user.id, id);
   }
 
   @Public()
@@ -247,6 +259,62 @@ export class SocialController {
   @Get('teams/:id')
   getTeam(@Param('id') id: string) {
     return this.teams.getById(id);
+  }
+
+  @Get('team-membership-requests')
+  teamRequests(@CurrentUser() user: AuthenticatedUser) {
+    return this.teams.listRequests(user.id);
+  }
+
+  @Post('teams/:id/join-requests')
+  requestTeamJoin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.teams.requestMembership(user.id, id);
+  }
+
+  @Post('team-membership-requests/:id/accept')
+  acceptTeamRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.teams.resolveRequest(user.id, id, 'accept');
+  }
+
+  @Post('team-membership-requests/:id/decline')
+  declineTeamRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.teams.resolveRequest(user.id, id, 'decline');
+  }
+
+  @Post('team-membership-requests/:id/cancel')
+  cancelTeamRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.teams.resolveRequest(user.id, id, 'cancel');
+  }
+
+  @Post('teams/:id/leave')
+  leaveTeam(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.teams.removeMember(user.id, id, user.id);
+  }
+
+  @Post('teams/:id/captain/:userId')
+  transferTeamCaptain(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.teams.transferCaptain(user.id, id, userId);
+  }
+
+  @Post('teams/:id/archive')
+  archiveTeam(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.teams.archive(user.id, id);
   }
 
   @Public()

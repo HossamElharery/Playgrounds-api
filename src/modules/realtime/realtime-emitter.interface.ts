@@ -7,6 +7,7 @@ import { Injectable } from '@nestjs/common';
  */
 @Injectable()
 export abstract class RealtimeGatewayEmitter {
+  abstract revokeRoomAccess(userId: string, room: string): void;
   abstract emitToUser(
     userId: string,
     event: { type: string; [key: string]: unknown },

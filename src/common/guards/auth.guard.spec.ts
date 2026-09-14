@@ -23,6 +23,11 @@ describe('AuthGuard', () => {
   beforeEach(() => {
     reflector = new Reflector();
     prisma = {
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'u1', status: 'active', roles: ['player'] }),
+      },
       userRoleAssignment: { findMany: jest.fn().mockResolvedValue([]) },
     };
     guard = new AuthGuard(reflector, prisma as PrismaService);
@@ -54,6 +59,11 @@ describe('AuthGuard', () => {
   });
 
   it('allows a user holding one of the required roles', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      status: 'active',
+      roles: ['owner'],
+    });
     jest
       .spyOn(reflector, 'getAllAndOverride')
       .mockReturnValueOnce(false)
@@ -63,6 +73,11 @@ describe('AuthGuard', () => {
   });
 
   it('lets admin bypass fine-grained permission checks', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      status: 'active',
+      roles: ['admin'],
+    });
     jest
       .spyOn(reflector, 'getAllAndOverride')
       .mockReturnValueOnce(false) // IS_PUBLIC_KEY
@@ -99,5 +114,26 @@ describe('AuthGuard', () => {
     ]);
     const ctx = contextWithUser({ id: 'u1', roles: ['staff'] });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('rejects a suspended account even with an unexpired administrator token', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      status: 'suspended',
+      roles: ['admin'],
+    });
+    await expect(
+      guard.canActivate(contextWithUser({ id: 'u1', roles: ['admin'] })),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('uses current database roles instead of stale administrator token claims', async () => {
+    jest
+      .spyOn(reflector, 'getAllAndOverride')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(['admin']);
+    await expect(
+      guard.canActivate(contextWithUser({ id: 'u1', roles: ['admin'] })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

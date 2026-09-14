@@ -109,6 +109,14 @@ export class VenuesController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('owner', 'admin')
+  @Get('owner/venues/:id')
+  ownedDetail(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.venues.getOwnedDetail(id, user.id, isPrivileged(user));
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('owner', 'admin')
   @Patch('owner/venues/:id')
   update(
     @CurrentUser() user: AuthenticatedUser,

@@ -31,6 +31,8 @@ import {
   PAYMENT_PROVIDER,
   PaymentProvider,
 } from '../payments/payment-provider.interface';
+import { WalletService } from '../payments/wallet.service';
+import { RewardsService } from '../rewards/rewards.service';
 
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
@@ -49,6 +51,8 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
+    private readonly rewards: RewardsService,
+    private readonly wallet: WalletService,
   ) {}
 
   // ---------- Slot grid ----------
@@ -340,13 +344,6 @@ export class BookingsService {
       throw new ConflictException('PULSE_EXPIRED');
     }
 
-    const allowed = booking.venue.country.paymentMethods;
-    if (!allowed.includes(dto.paymentMethod)) {
-      throw new BadRequestException(
-        `Payment method not available in ${booking.venue.country.code}`,
-      );
-    }
-
     const isSplit = !!dto.splitShares?.length;
     let chargeAmount = booking.totalAmount;
     if (isSplit) {
@@ -369,23 +366,13 @@ export class BookingsService {
       chargeAmount = organizerShare.amount;
     }
 
-    const charge = await this.paymentProvider.charge(
-      chargeAmount,
-      booking.currency,
-      dto.paymentMethod,
-    );
-    if (charge.status === 'failed') {
-      throw new BadRequestException('PAYMENT_FAILED');
-    }
-    const paymentStatus =
-      charge.status === 'pending' ? 'pending' : isSplit ? 'partial' : 'paid';
+    const paymentStatus = isSplit ? 'partial' : 'paid';
     const qrPayload = signQrPayload(
       bookingId,
       this.config.get<string>('QR_SIGNING_SECRET')!,
     );
 
-    try {
-      return await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
         if (booking.coinsRedeemed > 0) {
           const spent = await tx.user.updateMany({
             where: {
@@ -407,12 +394,19 @@ export class BookingsService {
           });
         }
 
+        await this.wallet.debit(tx, {
+          userId,
+          amount: chargeAmount,
+          reason: 'booking',
+          bookingId,
+        });
+
         const confirmed = await tx.booking.updateMany({
           where: { id: bookingId, status: 'held' },
           data: {
             status: 'confirmed',
             holdExpiresAt: null,
-            paymentMethod: dto.paymentMethod,
+            paymentMethod: 'wallet',
             paymentStatus,
             isSplitPayment: isSplit,
             qrPayload,
@@ -427,9 +421,9 @@ export class BookingsService {
             bookingId,
             amount: chargeAmount,
             currency: booking.currency,
-            method: dto.paymentMethod,
-            status: charge.status,
-            providerRef: charge.providerRef,
+            method: 'wallet',
+            status: 'paid',
+            providerRef: 'wallet',
           },
         });
         if (booking.promoCodeId) {
@@ -445,30 +439,18 @@ export class BookingsService {
               phone: s.phone,
               amount: s.amount,
               currency: booking.currency,
-              status:
-                s.userId === userId && charge.status === 'paid'
-                  ? 'paid'
-                  : 'pending',
+              status: s.userId === userId ? 'paid' : 'pending',
             })),
           });
         }
         return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
-      });
-    } catch (error) {
-      if (charge.status === 'paid') {
-        await this.paymentProvider.refund(
-          chargeAmount,
-          booking.currency,
-          charge.providerRef,
-        );
-      }
-      throw error;
-    }
+    });
   }
 
   // ---------- Split payment ----------
 
   async paySplitShare(shareLinkToken: string, payerUserId?: string) {
+    if (!payerUserId) throw new BadRequestException('LOGIN_REQUIRED');
     const share = await this.prisma.bookingSplitShare.findUnique({
       where: { shareLinkToken },
       include: { booking: { select: { currency: true, paymentMethod: true } } },
@@ -477,57 +459,41 @@ export class BookingsService {
     const { booking, ...shareRow } = share;
     if (shareRow.status === 'paid') return shareRow;
 
-    const charge = await this.paymentProvider.charge(
-      shareRow.amount,
-      shareRow.currency,
-      booking.paymentMethod ?? 'card',
-    );
-    if (charge.status === 'failed') {
-      throw new BadRequestException('PAYMENT_FAILED');
-    }
-
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const updated = await tx.bookingSplitShare.update({
-          where: { id: shareRow.id },
-          data: {
-            status: charge.status === 'paid' ? 'paid' : shareRow.status,
-            userId: shareRow.userId ?? payerUserId,
-          },
-        });
-        if (charge.status === 'paid') {
-          await tx.payment.create({
-            data: {
-              bookingId: shareRow.bookingId,
-              amount: shareRow.amount,
-              currency: shareRow.currency,
-              method: booking.paymentMethod ?? 'card',
-              status: 'paid',
-              providerRef: charge.providerRef,
-            },
-          });
-          const shares = await tx.bookingSplitShare.findMany({
-            where: { bookingId: shareRow.bookingId },
-          });
-          if (shares.every((s) => s.status === 'paid')) {
-            await tx.booking.update({
-              where: { id: shareRow.bookingId },
-              data: { paymentStatus: 'paid' },
-            });
-          }
-        }
-        return updated;
+    return this.prisma.$transaction(async (tx) => {
+      await this.wallet.debit(tx, {
+        userId: payerUserId,
+        amount: shareRow.amount,
+        reason: 'booking',
+        bookingId: shareRow.bookingId,
       });
-    } catch (error) {
-      if (charge.status === 'paid') {
-        await this.paymentProvider.refund(
-          shareRow.amount,
-          shareRow.currency,
-          charge.providerRef,
-        );
+      const updated = await tx.bookingSplitShare.update({
+        where: { id: shareRow.id },
+        data: {
+          status: 'paid',
+          userId: shareRow.userId ?? payerUserId,
+        },
+      });
+      await tx.payment.create({
+        data: {
+          bookingId: shareRow.bookingId,
+          amount: shareRow.amount,
+          currency: shareRow.currency,
+          method: 'wallet',
+          status: 'paid',
+          providerRef: 'wallet',
+        },
+      });
+      const shares = await tx.bookingSplitShare.findMany({
+        where: { bookingId: shareRow.bookingId },
+      });
+      if (shares.every((s) => s.status === 'paid')) {
+        await tx.booking.update({
+          where: { id: shareRow.bookingId },
+          data: { paymentStatus: 'paid' },
+        });
       }
-      throw error;
-    }
+      return updated;
+    });
   }
 
   // ---------- Check-in / completion ----------
@@ -559,10 +525,16 @@ export class BookingsService {
       }),
     ]);
 
-    await this.awardCompletionCoins(booking);
+    const { isFirstBooking } = await this.awardCompletionCoins(booking);
     await this.prisma.user.update({
       where: { id: booking.userId },
       data: { matchesPlayed: { increment: 1 } },
+    });
+    await this.rewards.onBookingCompleted({
+      bookingId: booking.id,
+      userId: booking.userId,
+      courtId: booking.courtId,
+      isFirstBooking,
     });
     return updated;
   }
@@ -586,7 +558,17 @@ export class BookingsService {
         status: 'completed',
       },
     });
-    await this.awardCompletionCoins(booking);
+    const { isFirstBooking } = await this.awardCompletionCoins(booking);
+    await this.prisma.user.update({
+      where: { id: booking.userId },
+      data: { matchesPlayed: { increment: 1 } },
+    });
+    await this.rewards.onBookingCompleted({
+      bookingId: booking.id,
+      userId: booking.userId,
+      courtId: booking.courtId,
+      isFirstBooking,
+    });
     return updated;
   }
 
@@ -706,7 +688,8 @@ export class BookingsService {
         id: { not: booking.id },
       },
     });
-    if (priorCompleted === 0) coins += FIRST_BOOKING_BONUS_COINS;
+    const isFirstBooking = priorCompleted === 0;
+    if (isFirstBooking) coins += FIRST_BOOKING_BONUS_COINS;
 
     await this.prisma.$transaction([
       this.prisma.user.update({
@@ -722,6 +705,8 @@ export class BookingsService {
         },
       }),
     ]);
+
+    return { isFirstBooking };
   }
 
   // ---------- Cancellation ----------
@@ -731,6 +716,12 @@ export class BookingsService {
     if (hoursUntil >= 24) return 100;
     if (hoursUntil >= 2) return 50;
     return 0;
+  }
+
+  async cancelByAdmin(actorId: string, bookingId: string, reason: string) {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking) throw new NotFoundException('Booking not found');
+    return this.settleCancellation(booking, reason, actorId);
   }
 
   async cancel(userId: string, bookingId: string, reason?: string) {
@@ -746,6 +737,7 @@ export class BookingsService {
   private async settleCancellation(
     booking: Booking,
     reason?: string,
+    adminActorId?: string,
   ): Promise<Booking> {
     if (!['held', 'confirmed'].includes(booking.status)) {
       throw new BadRequestException(
@@ -761,13 +753,16 @@ export class BookingsService {
       booking.paymentStatus === 'paid' || booking.paymentStatus === 'partial';
     let refundAmount = 0;
     let refundRef: string | undefined;
+    const refundToWallet = booking.paymentMethod === 'wallet';
     if (wasPaid && refundPct > 0) {
       refundAmount = Math.round((booking.totalAmount * refundPct) / 100);
-      const refund = await this.paymentProvider.refund(
-        refundAmount,
-        booking.currency,
-      );
-      refundRef = refund.providerRef;
+      if (!refundToWallet) {
+        const refund = await this.paymentProvider.refund(
+          refundAmount,
+          booking.currency,
+        );
+        refundRef = refund.providerRef;
+      }
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -781,14 +776,24 @@ export class BookingsService {
         },
       });
       if (refundAmount > 0) {
+        if (refundToWallet) {
+          await this.wallet.credit(tx, {
+            userId: booking.userId,
+            amount: refundAmount,
+            reason: 'refund',
+            method: 'wallet',
+            bookingId: booking.id,
+            providerRef: 'wallet',
+          });
+        }
         await tx.payment.create({
           data: {
             bookingId: booking.id,
             amount: -refundAmount,
             currency: booking.currency,
-            method: booking.paymentMethod ?? 'card',
+            method: booking.paymentMethod ?? 'wallet',
             status: 'refunded',
-            providerRef: refundRef,
+            providerRef: refundRef ?? 'wallet',
           },
         });
       }
@@ -806,6 +811,10 @@ export class BookingsService {
           },
         });
       }
+      if (adminActorId) await tx.auditLogEntry.create({ data: {
+        actorUserId: adminActorId, action: 'admin.booking.cancel', targetType: 'booking', targetId: booking.id,
+        metadata: { reason: reason ?? '', previousStatus: booking.status, refundAmount },
+      } });
       return updated;
     });
   }

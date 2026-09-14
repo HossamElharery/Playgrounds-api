@@ -2,15 +2,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
+import { withRelationshipLock } from '../../common/utils/relationship-lock.util';
 
 @Injectable()
 export class FriendsService {
+  private readonly logger = new Logger(FriendsService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly presence: PresenceService,
@@ -22,69 +25,92 @@ export class FriendsService {
     if (requesterId === addresseeId)
       throw new BadRequestException('Cannot friend yourself');
 
-    const blocked = await this.prisma.userBlock.findFirst({
-      where: {
-        OR: [
-          { blockerId: requesterId, blockedId: addresseeId },
-          { blockerId: addresseeId, blockedId: requesterId },
-        ],
-      },
-    });
-    if (blocked) throw new ForbiddenException('Cannot send a request to this user');
-
-    const existing = await this.prisma.friendship.findFirst({
-      where: {
-        OR: [
-          { requesterId, addresseeId },
-          { requesterId: addresseeId, addresseeId: requesterId },
-        ],
-      },
-    });
-    if (existing) {
-      if (existing.status === 'accepted')
-        throw new BadRequestException('Already friends');
-      if (existing.status === 'pending')
-        throw new BadRequestException('Request already pending');
-      if (existing.status === 'declined' || existing.status === 'blocked') {
-        return this.prisma.friendship.update({
-          where: { id: existing.id },
-          data: {
-            requesterId,
-            addresseeId,
-            status: 'pending',
-            respondedAt: null,
+    const request = await withRelationshipLock(
+      this.prisma,
+      requesterId,
+      addresseeId,
+      async (tx) => {
+        const recipient = await tx.user.findUnique({
+          where: { id: addresseeId },
+          select: { status: true },
+        });
+        if (!recipient || recipient.status !== 'active')
+          throw new NotFoundException('Player not found');
+        const blocked = await tx.userBlock.findFirst({
+          where: {
+            OR: [
+              { blockerId: requesterId, blockedId: addresseeId },
+              { blockerId: addresseeId, blockedId: requesterId },
+            ],
           },
         });
-      }
-    }
+        if (blocked)
+          throw new ForbiddenException('Cannot send a request to this user');
 
-    const request = await this.prisma.friendship.create({
-      data: { requesterId, addresseeId },
-      include: {
-        requester: { select: { id: true, name: true, avatarUrl: true } },
+        const existing = await tx.friendship.findFirst({
+          where: {
+            OR: [
+              { requesterId, addresseeId },
+              { requesterId: addresseeId, addresseeId: requesterId },
+            ],
+          },
+        });
+        if (existing) {
+          if (existing.status === 'accepted')
+            throw new BadRequestException('Already friends');
+          if (existing.status === 'pending')
+            throw new BadRequestException('Request already pending');
+        }
+
+        // A new attempt gets a new ID: old notifications cannot accept a newer request.
+        if (existing)
+          await tx.friendship.delete({ where: { id: existing.id } });
+        return tx.friendship.create({
+          data: { requesterId, addresseeId, status: 'pending' },
+          include: {
+            requester: { select: { id: true, name: true, avatarUrl: true } },
+            addressee: { select: { id: true, name: true, avatarUrl: true } },
+          },
+        });
       },
-    });
+    );
     this.emitter.emitToUser(addresseeId, {
       type: 'friend.request.created',
       request,
     });
-    await this.notifications.create({
-      userId: addresseeId,
-      category: 'friends',
-      titleEn: `${request.requester.name} sent you a friend request`,
-      titleAr: `${request.requester.name} أرسل لك طلب صداقة`,
-      deepLink: `/app/players`,
-      payload: { requestId: request.id },
+    this.emitter.emitToUser(requesterId, {
+      type: 'friend.request.created',
+      request,
     });
+    await this.notifications
+      .create({
+        userId: addresseeId,
+        category: 'friends',
+        titleEn: `${request.requester.name} sent you a friend request`,
+        titleAr: `${request.requester.name} أرسل لك طلب صداقة`,
+        deepLink: `/app/profile/${requesterId}`,
+        payload: { requestId: request.id, requesterId, kind: 'friend.request' },
+      })
+      .catch(() =>
+        this.logger.error('Could not deliver friend-request notification'),
+      );
     return request;
   }
 
-  async listIncoming(userId: string, direction: 'incoming' | 'outgoing' = 'incoming') {
+  async listRequests(
+    userId: string,
+    direction: 'incoming' | 'outgoing' | 'all' = 'incoming',
+  ) {
     return this.prisma.friendship.findMany({
       where:
         direction === 'outgoing'
           ? { requesterId: userId, status: 'pending' }
-          : { addresseeId: userId, status: 'pending' },
+          : direction === 'all'
+            ? {
+                status: 'pending',
+                OR: [{ requesterId: userId }, { addresseeId: userId }],
+              }
+            : { addresseeId: userId, status: 'pending' },
       include: {
         requester: { select: { id: true, name: true, avatarUrl: true } },
         addressee: { select: { id: true, name: true, avatarUrl: true } },
@@ -106,27 +132,62 @@ export class FriendsService {
     if (request.status !== 'pending')
       throw new BadRequestException('Request already resolved');
 
-    const updated = await this.prisma.friendship.update({
-      where: { id: requestId },
-      data: {
-        status: accept ? 'accepted' : 'declined',
-        respondedAt: new Date(),
+    const updated = await withRelationshipLock(
+      this.prisma,
+      request.requesterId,
+      userId,
+      async (tx) => {
+        const blocked = await tx.userBlock.findFirst({
+          where: {
+            OR: [
+              { blockerId: userId, blockedId: request.requesterId },
+              { blockerId: request.requesterId, blockedId: userId },
+            ],
+          },
+        });
+        if (blocked)
+          throw new ForbiddenException('Cannot respond to this request');
+        const changed = await tx.friendship.updateMany({
+          where: { id: requestId, status: 'pending', addresseeId: userId },
+          data: {
+            status: accept ? 'accepted' : 'declined',
+            respondedAt: new Date(),
+          },
+        });
+        if (changed.count !== 1)
+          throw new BadRequestException('Request already resolved');
+        return tx.friendship.findUniqueOrThrow({ where: { id: requestId } });
       },
-    });
+    );
     this.emitter.emitToUser(request.requesterId, {
       type: 'friend.request.resolved',
       requestId,
       status: updated.status,
     });
+    this.emitter.emitToUser(request.addresseeId, {
+      type: 'friend.request.resolved',
+      requestId,
+      status: updated.status,
+    });
     if (accept) {
-      await this.notifications.create({
-        userId: request.requesterId,
-        category: 'friends',
-        titleEn: `${request.addressee.name} accepted your friend request`,
-        titleAr: `${request.addressee.name} قبل طلب صداقتك`,
-        deepLink: `/app/players`,
-        payload: { requestId },
-      });
+      await this.notifications
+        .create({
+          userId: request.requesterId,
+          category: 'friends',
+          titleEn: `${request.addressee.name} accepted your friend request`,
+          titleAr: `${request.addressee.name} قبل طلب صداقتك`,
+          deepLink: `/app/profile/${request.addresseeId}`,
+          payload: {
+            requestId,
+            requesterId: request.addresseeId,
+            kind: 'friend.accepted',
+          },
+        })
+        .catch(() =>
+          this.logger.error(
+            'Could not deliver friendship-accepted notification',
+          ),
+        );
     }
     return updated;
   }
@@ -140,7 +201,23 @@ export class FriendsService {
       throw new ForbiddenException('Not your request');
     if (request.status !== 'pending')
       throw new BadRequestException('Request already resolved');
-    await this.prisma.friendship.delete({ where: { id: requestId } });
+    await withRelationshipLock(
+      this.prisma,
+      userId,
+      request.addresseeId,
+      async (tx) => {
+        const deleted = await tx.friendship.deleteMany({
+          where: { id: requestId, requesterId: userId, status: 'pending' },
+        });
+        if (deleted.count !== 1)
+          throw new BadRequestException('Request already resolved');
+      },
+    );
+    this.emitter.emitToUser(userId, {
+      type: 'friend.request.resolved',
+      requestId,
+      status: 'cancelled',
+    });
     this.emitter.emitToUser(request.addresseeId, {
       type: 'friend.request.resolved',
       requestId,
@@ -160,10 +237,22 @@ export class FriendsService {
       },
       include: {
         requester: {
-          select: { id: true, name: true, avatarUrl: true, lastSeenAt: true, lastSeenVisible: true },
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            lastSeenAt: true,
+            lastSeenVisible: true,
+          },
         },
         addressee: {
-          select: { id: true, name: true, avatarUrl: true, lastSeenAt: true, lastSeenVisible: true },
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            lastSeenAt: true,
+            lastSeenVisible: true,
+          },
         },
       },
       orderBy: { respondedAt: 'desc' },
@@ -189,14 +278,19 @@ export class FriendsService {
   }
 
   async unfriend(userId: string, otherUserId: string) {
-    await this.prisma.friendship.deleteMany({
-      where: {
-        status: 'accepted',
-        OR: [
-          { requesterId: userId, addresseeId: otherUserId },
-          { requesterId: otherUserId, addresseeId: userId },
-        ],
-      },
-    });
+    await withRelationshipLock(this.prisma, userId, otherUserId, (tx) =>
+      tx.friendship.deleteMany({
+        where: {
+          status: 'accepted',
+          OR: [
+            { requesterId: userId, addresseeId: otherUserId },
+            { requesterId: otherUserId, addresseeId: userId },
+          ],
+        },
+      }),
+    );
+    const event = { type: 'friend.removed', userId, otherUserId };
+    this.emitter.emitToUser(userId, event);
+    this.emitter.emitToUser(otherUserId, event);
   }
 }

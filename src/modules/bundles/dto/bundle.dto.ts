@@ -92,7 +92,8 @@ export class PurchaseBundleDto {
   @IsObject()
   startTimes!: Record<string, string>;
 
-  @ApiProperty({ example: 'card', enum: PAYMENT_METHODS })
+  @ApiPropertyOptional({ example: 'wallet', enum: PAYMENT_METHODS })
+  @IsOptional()
   @IsIn([...PAYMENT_METHODS])
-  paymentMethod!: PaymentMethod;
+  paymentMethod?: PaymentMethod;
 }

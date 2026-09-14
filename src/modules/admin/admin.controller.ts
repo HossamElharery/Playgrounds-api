@@ -92,8 +92,11 @@ export class AdminController {
 
   @Roles('admin')
   @Post('admin/feature-flags')
-  upsertFlag(@Body() dto: UpsertFeatureFlagDto) {
-    return this.admin.upsertFeatureFlag(dto);
+  upsertFlag(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpsertFeatureFlagDto,
+  ) {
+    return this.admin.upsertFeatureFlag(dto, user.id);
   }
 
   @Roles('admin')

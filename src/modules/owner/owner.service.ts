@@ -9,17 +9,34 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStaffInviteDto } from './dto/staff-invite.dto';
 import {
+  CreateAssistantMessageDto,
   CreateCalendarBlockDto,
   CreatePayoutMethodDto,
   CreateWalkInDto,
 } from './dto/owner-operations.dto';
 import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
+import { zonedDayBounds } from '../../common/utils/timezone.util';
+import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
+import { BookingsService } from '../bookings/bookings.service';
+import { GeminiNluService, NluResult } from './gemini-nlu.service';
 
 const MAX_FINANCE_RANGE_MS = 93 * 86_400_000;
 
 @Injectable()
 export class OwnerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bookings: BookingsService,
+    private readonly nlu: GeminiNluService,
+  ) {}
+
+  private async venueTimeZone(venueId: string): Promise<string> {
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: venueId },
+      select: { country: { select: { timezone: true } } },
+    });
+    return venue?.country?.timezone ?? 'UTC';
+  }
 
   private async assertVenueOwnership(venueId: string, ownerId: string) {
     const venue = await this.prisma.venue.findUnique({
@@ -34,6 +51,7 @@ export class OwnerService {
   private parseFinanceRange(from: string, to: string): { start: Date; end: Date } {
     const start = new Date(from);
     const end = new Date(to);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) end.setUTCHours(23, 59, 59, 999);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       throw new BadRequestException('Invalid from/to date');
     }
@@ -57,7 +75,7 @@ export class OwnerService {
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
     const weekStart = new Date(todayStart);
-    weekStart.setDate(weekStart.getDate() - 7);
+    weekStart.setDate(weekStart.getDate() - 6);
 
     const [
       todaySchedule,
@@ -66,6 +84,7 @@ export class OwnerService {
       weekBookings,
       totalCourts,
       latestApplication,
+      revenueByCurrency,
     ] = await Promise.all([
       this.prisma.booking.findMany({
         where: {
@@ -100,6 +119,7 @@ export class OwnerService {
         orderBy: { updatedAt: 'desc' },
         include: { events: { orderBy: { createdAt: 'desc' }, take: 8 } },
       }),
+      this.prisma.booking.groupBy({ by: ['currency'], where: { venueId: { in: venueIds }, status: { in: ['confirmed','completed'] }, paymentStatus: 'paid' }, _sum: { totalAmount: true } }),
     ]);
 
     const possibleSlotsPerWeek = totalCourts * 14; // rough: 14 slots/day capacity heuristic
@@ -120,6 +140,8 @@ export class OwnerService {
           }
         : null,
       todaySchedule,
+      weeklyBookingsCount: weekBookings,
+      revenueByCurrency: revenueByCurrency.map(row => ({ currency: row.currency, amount: row._sum.totalAmount ?? 0 })),
       todayRevenueAmount: todayRevenueAgg._sum.totalAmount ?? 0,
       pendingRequests: pendingCount,
       weeklyOccupancyPct,
@@ -153,9 +175,12 @@ export class OwnerService {
       throw new BadRequestException('date must be YYYY-MM-DD');
     }
     await this.assertVenueOwnership(venueId, ownerId);
-    const dayStart = new Date(`${date}T00:00:00`);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
+    // Must match the slot grid's window, or a late-evening block shows up in one
+    // view and not the other whenever the server clock is not the venue's.
+    const { start: dayStart, end: dayEnd } = zonedDayBounds(
+      date,
+      await this.venueTimeZone(venueId),
+    );
 
     const [bookings, blocks] = await Promise.all([
       this.prisma.booking.findMany({
@@ -182,6 +207,120 @@ export class OwnerService {
     ]);
 
     return { date, bookings, blocks };
+  }
+
+  /**
+   * Every court of a venue with its slot grid for one day, in a single call.
+   * The dashboard used to fetch one grid per court and trip the rate limiter.
+   */
+  async board(ownerId: string, venueId: string, date: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
+      throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+    await this.assertVenueOwnership(venueId, ownerId);
+    const courts = await this.prisma.court.findMany({
+      where: { venueId },
+      include: { pricingRules: true },
+      orderBy: { name: 'asc' },
+    });
+    const rows = await Promise.all(
+      courts.map(async (court) => ({
+        court,
+        slots: await this.bookings.getSlotGrid(court.id, date),
+      })),
+    );
+    return { venueId, date, courts: rows };
+  }
+
+  /**
+   * Turns a spoken/typed sentence into a structured schedule command. Gemini
+   * only proposes — the frontend always shows a confirm-before-execute card,
+   * and every field here is re-validated against this owner's real venue
+   * before it can reach that card (see gemini-nlu.service.ts for the rest).
+   */
+  async interpretScheduleCommand(
+    ownerId: string,
+    venueId: string,
+    text: string,
+  ): Promise<NluResult & { available: boolean }> {
+    await this.assertVenueOwnership(venueId, ownerId);
+    if (!text || text.trim().length < 2 || text.length > 400) {
+      throw new BadRequestException('text must be 2-400 characters');
+    }
+    if (!this.nlu.enabled) {
+      return {
+        intent: 'unknown', courtIds: [], allCourts: false, date: '',
+        fromMins: null, toMins: null, reason: '', confidence: 0, available: false,
+      };
+    }
+    const timeZone = await this.venueTimeZone(venueId);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+    const courts = await this.prisma.court.findMany({
+      where: { venueId },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const result = await this.nlu.interpret(text, courts, today);
+    if (!result) {
+      return {
+        intent: 'unknown', courtIds: [], allCourts: false, date: today,
+        fromMins: null, toMins: null, reason: '', confidence: 0, available: true,
+      };
+    }
+    return { ...result, available: true };
+  }
+
+  /** Newest first; the caller derives the current undo token from items[0]. */
+  async listAssistantMessages(
+    ownerId: string,
+    venueId: string,
+    limit = 30,
+    cursor?: string,
+  ) {
+    await this.assertVenueOwnership(venueId, ownerId);
+    return paginateByCursor(
+      (args) =>
+        this.prisma.assistantMessage.findMany({
+          where: { venueId },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          ...args,
+        }),
+      limit,
+      cursor,
+    );
+  }
+
+  createAssistantMessage(ownerId: string, dto: CreateAssistantMessageDto) {
+    return this.assertVenueOwnership(dto.venueId, ownerId).then((venue) =>
+      this.prisma.assistantMessage.create({
+        data: {
+          venueId: venue.id,
+          ownerId,
+          sender: dto.sender,
+          text: dto.text,
+          appliedChange: dto.appliedChange as Prisma.InputJsonValue | undefined,
+          inverseChange: dto.inverseChange as Prisma.InputJsonValue | undefined,
+        },
+      }),
+    );
+  }
+
+  /**
+   * Marks the stored inverse as consumed and hands it back so the frontend can
+   * apply it through the same /owner/calendar/blocks flow it already uses for
+   * every other change — this endpoint only guards against double-undo.
+   */
+  async undoAssistantMessage(ownerId: string, venueId: string, messageId: string) {
+    await this.assertVenueOwnership(venueId, ownerId);
+    const message = await this.prisma.assistantMessage.findUnique({ where: { id: messageId } });
+    if (!message || message.venueId !== venueId) throw new NotFoundException('Message not found');
+    if (!message.inverseChange) throw new BadRequestException('Nothing to undo');
+    if (message.consumedAt) throw new ConflictException('Already undone');
+    await this.prisma.assistantMessage.update({
+      where: { id: messageId },
+      data: { consumedAt: new Date() },
+    });
+    return message.inverseChange;
   }
 
   async createWalkInBooking(ownerId: string, dto: CreateWalkInDto) {
@@ -253,7 +392,7 @@ export class OwnerService {
   }
 
   async finance(ownerId: string, venueId: string, from: string, to: string) {
-    await this.assertVenueOwnership(venueId, ownerId);
+    const venue = await this.assertVenueOwnership(venueId, ownerId);
     const { start, end } = this.parseFinanceRange(from, to);
     const bookings = await this.prisma.booking.findMany({
       where: {
@@ -264,12 +403,15 @@ export class OwnerService {
       },
       select: {
         totalAmount: true,
+        currency: true,
         slotStart: true,
         court: { select: { name: true } },
       },
     });
 
     const byDay: Record<string, number> = {};
+    const currencies = new Set(bookings.map(b => b.currency));
+    if (currencies.size > 1) throw new BadRequestException('This period contains multiple currencies; a single-currency summary is unavailable');
     const byCourt: Record<string, number> = {};
     for (const b of bookings) {
       const day = b.slotStart.toISOString().slice(0, 10);
@@ -284,6 +426,8 @@ export class OwnerService {
     const commissionBps = commission?.percentageBps ?? 500;
 
     return {
+      currency: bookings[0]?.currency ?? venue.priceFromCurrency,
+      paidBookings: bookings.length,
       revenueByDay: byDay,
       revenueByCourt: byCourt,
       totalRevenue,
@@ -372,10 +516,9 @@ export class OwnerService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
-    if (
-      invite.inviteePhone !== user.phone &&
-      invite.inviteeEmail !== user.email
-    )
+    if (invite.status !== 'pending') throw new BadRequestException('Only pending invitations can be accepted');
+    if (!((invite.inviteePhone && invite.inviteePhone === user.phone) ||
+      (invite.inviteeEmail && user.email && invite.inviteeEmail.toLowerCase() === user.email.toLowerCase())))
       throw new ForbiddenException('This invite is not for you');
 
     await this.prisma.$transaction([
@@ -398,15 +541,7 @@ export class OwnerService {
   }
 
   async revokeStaffInvite(ownerId: string, inviteId: string) {
-    const invite = await this.prisma.staffInvite.findUnique({
-      where: { id: inviteId },
-    });
-    if (!invite) throw new NotFoundException('Invite not found');
-    await this.assertVenueOwnership(invite.venueId, ownerId);
-    return this.prisma.staffInvite.update({
-      where: { id: inviteId },
-      data: { status: 'revoked' },
-    });
+    return this.setStaffStatus(ownerId, inviteId, 'revoked');
   }
 
   async setStaffStatus(
@@ -419,14 +554,21 @@ export class OwnerService {
     });
     if (!invite) throw new NotFoundException('Invite not found');
     await this.assertVenueOwnership(invite.venueId, ownerId);
-    if (status === 'revoked' && invite.inviteeUserId) {
-      await this.prisma.userRoleAssignment.deleteMany({
+    if (status === 'accepted' && (invite.status !== 'suspended' || !invite.inviteeUserId)) throw new BadRequestException('The invited user must accept their invitation first');
+    return this.prisma.$transaction(async tx => {
+    if (status !== 'accepted' && invite.inviteeUserId) {
+      await tx.userRoleAssignment.deleteMany({
         where: { userId: invite.inviteeUserId, venueId: invite.venueId },
       });
     }
-    return this.prisma.staffInvite.update({
+    if (status === 'accepted' && invite.inviteeUserId && invite.roleId) {
+      const existing = await tx.userRoleAssignment.findFirst({ where: { userId: invite.inviteeUserId, venueId: invite.venueId, roleId: invite.roleId } });
+      if (!existing) await tx.userRoleAssignment.create({ data: { userId: invite.inviteeUserId, venueId: invite.venueId, roleId: invite.roleId } });
+    }
+    return tx.staffInvite.update({
       where: { id: inviteId },
       data: { status },
+    });
     });
   }
 
@@ -577,7 +719,11 @@ export class OwnerService {
         b.totalAmount - commission,
         b.currency,
         b.status,
-      ].join(',');
+      ].map(value => {
+        const text = String(value ?? '');
+        const safe = /^[=+@\-\t\r]/.test(text) ? "'" + text : text;
+        return '"' + safe.replace(/"/g, '""') + '"';
+      }).join(',');
     });
     const csv = `\uFEFF${header.join(',')}\n${rows.join('\n')}\n# totalRevenue,${summary.totalRevenue}\n# commissionAmount,${summary.commissionAmount}\n# netPayout,${summary.netPayout}\n`;
     return csv;

@@ -21,6 +21,11 @@ export const envValidationSchema = Joi.object({
   APPLE_CLIENT_ID: Joi.string().allow('').optional(),
   APPLE_TEAM_ID: Joi.string().allow('').optional(),
   APPLE_KEY_ID: Joi.string().allow('').optional(),
+  FACEBOOK_APP_ID: Joi.string().allow('').optional(),
+  FACEBOOK_APP_SECRET: Joi.string().allow('').optional(),
+  WEBAUTHN_RP_ID: Joi.string().allow('').optional(),
+  WEBAUTHN_RP_NAME: Joi.string().allow('').optional(),
+  WEBAUTHN_ORIGINS: Joi.string().allow('').optional(),
 
   OTP_PROVIDER: Joi.string().valid('console').default('console'),
   OTP_TTL_SECONDS: Joi.number().default(300),
@@ -51,4 +56,14 @@ export const envValidationSchema = Joi.object({
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
   TURN_CREDENTIAL: Joi.string().allow('').optional(),
+
+  GEMINI_API_KEY: Joi.string().allow('').optional(),
+  GEMINI_MODEL: Joi.string().default('gemini-3.6-flash'),
+
+  // --- OpenRouter (free-tier fallback for the AI provider layer) ---
+  OPENROUTER_API_KEY: Joi.string().allow('').optional(),
+
+  // TEST ONLY — simulates a Gemini failure to exercise the OpenRouter fallback
+  // path without waiting for a real outage. Must be unset in production.
+  AI_FORCE_FAILURE: Joi.string().allow('').optional(),
 }).unknown(true);

@@ -16,7 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
 import { generateOtp } from '../../common/utils/otp.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
-import { OtpPurpose, User } from '@prisma/client';
+import { OAuthProvider, OtpPurpose, User } from '@prisma/client';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
@@ -31,6 +31,7 @@ import {
 import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthAppleDto } from './dto/oauth-apple.dto';
+import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import * as jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 
@@ -239,12 +240,21 @@ export class AuthService {
         dto.phone,
         dto.countryCode,
       );
+      let referredById: string | undefined;
+      if (dto.referralCode) {
+        const referrer = await this.prisma.user.findUnique({
+          where: { referralCode: dto.referralCode },
+          select: { id: true },
+        });
+        referredById = referrer?.id;
+      }
       user = await this.prisma.user.create({
         data: {
           phone: dto.phone,
           name: dto.name,
           roles: ['player'],
           countryCode,
+          referredById,
         },
       });
     }
@@ -534,12 +544,50 @@ export class AuthService {
     });
   }
 
+  private sanitize(user: User): Partial<User> {
+    const { passwordHash: _passwordHash, ...rest } = user;
+    return rest;
+  }
+
+  /** Used by WebAuthn and other sibling auth flows. */
+  assertAccountActive(user: Pick<User, 'status'>): void {
+    this.assertActive(user);
+  }
+
+  issueSession(
+    user: Pick<User, 'id' | 'phone' | 'email' | 'name' | 'roles' | 'countryCode'>,
+    deviceInfo?: string,
+  ): Promise<TokenPair> {
+    return this.issueTokenPair(user, deviceInfo);
+  }
+
+  publicUser(user: User): Partial<User> {
+    return this.sanitize(user);
+  }
+
+  listLoginProviders(): {
+    google: { enabled: boolean; clientId?: string };
+    facebook: { enabled: boolean; appId?: string };
+    apple: { enabled: boolean; clientId?: string };
+    passkeys: { enabled: boolean };
+  } {
+    const google = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
+    const facebook = this.config.get<string>('FACEBOOK_APP_ID')?.trim() || '';
+    const apple = this.config.get<string>('APPLE_CLIENT_ID')?.trim() || '';
+    return {
+      google: { enabled: !!google, clientId: google || undefined },
+      facebook: { enabled: !!facebook, appId: facebook || undefined },
+      apple: { enabled: !!apple, clientId: apple || undefined },
+      passkeys: { enabled: true },
+    };
+  }
+
   // ---------- OAuth (wired, inert until client IDs are configured) ----------
 
   async oauthGoogle(
     dto: OAuthGoogleDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
-    const clientId = this.config.get<string>('GOOGLE_CLIENT_ID');
+    const clientId = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim();
     if (!clientId) {
       throw new NotImplementedException(
         'Google sign-in is not configured yet — set GOOGLE_CLIENT_ID in .env',
@@ -553,19 +601,36 @@ export class AuthService {
     const claims = (await response.json()) as {
       aud: string;
       email?: string;
+      email_verified?: string | boolean;
       name?: string;
+      picture?: string;
       sub: string;
+      nonce?: string;
     };
 
-    if (claims.aud !== clientId)
+    const allowed = clientId
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (!allowed.includes(claims.aud)) {
       throw new UnauthorizedException('Token audience mismatch');
-    if (!claims.email)
-      throw new BadRequestException('Google account has no email');
+    }
+    if (dto.nonce && claims.nonce && dto.nonce !== claims.nonce) {
+      throw new UnauthorizedException('Token nonce mismatch');
+    }
+    const verified =
+      claims.email_verified === true || claims.email_verified === 'true';
+    if (!claims.email || !verified) {
+      throw new BadRequestException('Google account has no verified email');
+    }
 
-    const user = await this.findOrCreateOAuthUser(
-      claims.email,
-      claims.name ?? 'Player',
-    );
+    const user = await this.findOrCreateOAuthUser({
+      provider: 'google',
+      providerUserId: claims.sub,
+      email: claims.email,
+      name: claims.name ?? 'Player',
+      avatarUrl: claims.picture,
+    });
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
   }
@@ -573,7 +638,7 @@ export class AuthService {
   async oauthApple(
     dto: OAuthAppleDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
-    const clientId = this.config.get<string>('APPLE_CLIENT_ID');
+    const clientId = this.config.get<string>('APPLE_CLIENT_ID')?.trim();
     if (!clientId) {
       throw new NotImplementedException(
         'Apple sign-in is not configured yet — set APPLE_CLIENT_ID/APPLE_TEAM_ID/APPLE_KEY_ID in .env',
@@ -594,30 +659,132 @@ export class AuthService {
     }) as { email?: string; sub: string };
 
     const email = claims.email ?? `${claims.sub}@appleid.private`;
-    const user = await this.findOrCreateOAuthUser(email, dto.name ?? 'Player');
+    const user = await this.findOrCreateOAuthUser({
+      provider: 'apple',
+      providerUserId: claims.sub,
+      email,
+      name: dto.name ?? 'Player',
+    });
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  private async findOrCreateOAuthUser(
-    email: string,
-    name: string,
-  ): Promise<User> {
-    const existing = await this.prisma.user.findUnique({ where: { email } });
-    if (existing) return existing;
+  async oauthFacebook(
+    dto: OAuthFacebookDto,
+  ): Promise<TokenPair & { user: Partial<User> }> {
+    const appId = this.config.get<string>('FACEBOOK_APP_ID')?.trim();
+    const appSecret = this.config.get<string>('FACEBOOK_APP_SECRET')?.trim();
+    if (!appId || !appSecret) {
+      throw new NotImplementedException(
+        'Facebook sign-in is not configured yet — set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in .env',
+      );
+    }
 
-    return this.prisma.user.create({
-      data: {
-        email,
-        phone: `pending-${crypto.randomUUID()}`, // player completes phone verification post-signup
-        name,
-        roles: ['player'],
-      },
+    const debugUrl =
+      `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(dto.accessToken)}` +
+      `&access_token=${encodeURIComponent(`${appId}|${appSecret}`)}`;
+    const debugRes = await fetch(debugUrl);
+    if (!debugRes.ok) throw new UnauthorizedException('Invalid Facebook token');
+    const debugJson = (await debugRes.json()) as {
+      data?: { app_id?: string; is_valid?: boolean; user_id?: string };
+    };
+    if (!debugJson.data?.is_valid || debugJson.data.app_id !== appId) {
+      throw new UnauthorizedException('Invalid Facebook token');
+    }
+
+    const meRes = await fetch(
+      `https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token=${encodeURIComponent(dto.accessToken)}`,
+    );
+    if (!meRes.ok) throw new UnauthorizedException('Invalid Facebook token');
+    const me = (await meRes.json()) as {
+      id: string;
+      name?: string;
+      email?: string;
+      picture?: { data?: { url?: string } };
+    };
+    if (!me.id) throw new UnauthorizedException('Invalid Facebook token');
+
+    const user = await this.findOrCreateOAuthUser({
+      provider: 'facebook',
+      providerUserId: me.id,
+      email: me.email,
+      name: me.name ?? 'Player',
+      avatarUrl: me.picture?.data?.url,
     });
+    const tokens = await this.issueTokenPair(user);
+    return { ...tokens, user: this.sanitize(user) };
   }
 
-  private sanitize(user: User): Partial<User> {
-    const { passwordHash: _passwordHash, ...rest } = user;
-    return rest;
+  private async findOrCreateOAuthUser(input: {
+    provider: OAuthProvider;
+    providerUserId: string;
+    email?: string;
+    name: string;
+    avatarUrl?: string;
+  }): Promise<User> {
+    const linked = await this.prisma.oAuthIdentity.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider: input.provider,
+          providerUserId: input.providerUserId,
+        },
+      },
+      include: { user: true },
+    });
+    if (linked?.user) {
+      this.assertActive(linked.user);
+      if (input.avatarUrl && !linked.user.avatarUrl) {
+        return this.prisma.user.update({
+          where: { id: linked.user.id },
+          data: { avatarUrl: input.avatarUrl },
+        });
+      }
+      return linked.user;
+    }
+
+    const email = input.email?.trim().toLowerCase() || undefined;
+    const existing = email
+      ? await this.prisma.user.findUnique({ where: { email } })
+      : null;
+
+    if (existing) {
+      this.assertActive(existing);
+      await this.prisma.oAuthIdentity.create({
+        data: {
+          userId: existing.id,
+          provider: input.provider,
+          providerUserId: input.providerUserId,
+          email,
+        },
+      });
+      if (input.avatarUrl && !existing.avatarUrl) {
+        return this.prisma.user.update({
+          where: { id: existing.id },
+          data: { avatarUrl: input.avatarUrl },
+        });
+      }
+      return existing;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: email ?? `${input.provider}-${input.providerUserId}@oauth.mal3ab.local`,
+          phone: `pending-${crypto.randomUUID()}`,
+          name: input.name,
+          avatarUrl: input.avatarUrl,
+          roles: ['player'],
+        },
+      });
+      await tx.oAuthIdentity.create({
+        data: {
+          userId: user.id,
+          provider: input.provider,
+          providerUserId: input.providerUserId,
+          email,
+        },
+      });
+      return user;
+    });
   }
 }

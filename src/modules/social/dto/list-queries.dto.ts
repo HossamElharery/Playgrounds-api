@@ -20,12 +20,12 @@ export class ListFriendsQueryDto {
 
 export class ListFriendRequestsQueryDto {
   @ApiPropertyOptional({
-    enum: ['incoming', 'outgoing'],
+    enum: ['incoming', 'outgoing', 'all'],
     example: 'incoming',
   })
   @IsOptional()
-  @IsIn(['incoming', 'outgoing'])
-  direction?: 'incoming' | 'outgoing';
+  @IsIn(['incoming', 'outgoing', 'all'])
+  direction?: 'incoming' | 'outgoing' | 'all';
 }
 
 export class MatchFeedQueryDto {
@@ -42,8 +42,7 @@ export class MatchFeedQueryDto {
   @ApiPropertyOptional({
     enum: ['open', 'full', 'played', 'expired', 'cancelled'],
     example: 'open',
-    description:
-      'MatchPostStatus. Default open if omitted. Never "Active".',
+    description: 'MatchPostStatus. Default open if omitted. Never "Active".',
   })
   @IsOptional()
   @IsIn(['open', 'full', 'played', 'expired', 'cancelled'])

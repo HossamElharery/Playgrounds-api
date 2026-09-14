@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -16,17 +19,29 @@ import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthAppleDto } from './dto/oauth-apple.dto';
+import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
+import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
+import { WebAuthnService } from './webauthn.service';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly webauthn: WebAuthnService,
+  ) {}
+
+  @Public()
+  @Get('providers')
+  providers() {
+    return this.authService.listLoginProviders();
+  }
 
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
@@ -77,6 +92,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('oauth/google')
   async oauthGoogle(@Body() dto: OAuthGoogleDto) {
     const result = await this.authService.oauthGoogle(dto);
@@ -84,10 +100,73 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('oauth/apple')
   async oauthApple(@Body() dto: OAuthAppleDto) {
     const result = await this.authService.oauthApple(dto);
     return { message: 'authenticated', result };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('oauth/facebook')
+  async oauthFacebook(@Body() dto: OAuthFacebookDto) {
+    const result = await this.authService.oauthFacebook(dto);
+    return { message: 'authenticated', result };
+  }
+
+  @Public()
+  @Post('webauthn/authenticate/options')
+  webauthnAuthOptions() {
+    return this.webauthn.authenticationOptions();
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('webauthn/authenticate/verify')
+  async webauthnAuthVerify(@Body() dto: WebAuthnVerifyDto) {
+    const result = await this.webauthn.verifyAuthentication(dto);
+    return { message: 'authenticated', result };
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post('webauthn/register/options')
+  webauthnRegisterOptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.webauthn.registrationOptions({
+      id: user.id,
+      email: user.email ?? null,
+      name: user.name ?? 'Player',
+      phone: user.phone ?? '',
+    });
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post('webauthn/register/verify')
+  webauthnRegisterVerify(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: WebAuthnVerifyDto,
+  ) {
+    return this.webauthn.verifyRegistration({ id: user.id }, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('webauthn/credentials')
+  listPasskeys(@CurrentUser() user: AuthenticatedUser) {
+    return this.webauthn.list(user.id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete('webauthn/credentials/:id')
+  removePasskey(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.webauthn.remove(user.id, id);
   }
 
   @Public()

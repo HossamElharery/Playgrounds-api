@@ -47,6 +47,26 @@ export class CreateBlogPostDto {
   @IsOptional()
   @IsIn(['draft', 'published', 'archived'])
   status?: string;
+
+  @ApiPropertyOptional({ example: 'Book a padel court' })
+  @IsOptional()
+  @IsString()
+  ctaLabelEn?: string;
+
+  @ApiPropertyOptional({ example: 'احجز ملعب بادل' })
+  @IsOptional()
+  @IsString()
+  ctaLabelAr?: string;
+
+  @ApiPropertyOptional({ example: '/explore?sport=padel' })
+  @IsOptional()
+  @IsString()
+  ctaHref?: string;
+
+  @ApiPropertyOptional({ example: 'padel', description: 'Sport slug this post is about (drives "From the Journal" on the sport hub page).' })
+  @IsOptional()
+  @IsString()
+  relatedSportSlug?: string;
 }
 
 export class UpdateBlogPostDto {
@@ -99,4 +119,24 @@ export class UpdateBlogPostDto {
   @IsOptional()
   @IsIn(['draft', 'published', 'archived'])
   status?: string;
+
+  @ApiPropertyOptional({ example: 'Book a padel court' })
+  @IsOptional()
+  @IsString()
+  ctaLabelEn?: string;
+
+  @ApiPropertyOptional({ example: 'احجز ملعب بادل' })
+  @IsOptional()
+  @IsString()
+  ctaLabelAr?: string;
+
+  @ApiPropertyOptional({ example: '/explore?sport=padel' })
+  @IsOptional()
+  @IsString()
+  ctaHref?: string;
+
+  @ApiPropertyOptional({ example: 'padel' })
+  @IsOptional()
+  @IsString()
+  relatedSportSlug?: string;
 }

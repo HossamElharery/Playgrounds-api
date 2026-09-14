@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateMatchPostDto } from './dto/create-match-post.dto';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Prisma } from '@prisma/client';
 
 const FIRST_JOINERS_COIN_BONUS = 30;
 const FIRST_JOINERS_COUNT = 2;
@@ -112,7 +113,7 @@ export class MatchPostsService {
     }));
   }
 
-  async getById(id: string) {
+  async getById(id: string, viewerId?: string) {
     const post = await this.prisma.matchPost.findUnique({
       where: { id },
       include: {
@@ -128,7 +129,50 @@ export class MatchPostsService {
       },
     });
     if (!post) throw new NotFoundException('Match post not found');
-    return post;
+    const viewerRequest = viewerId
+      ? post.joinRequests.find((request) => request.userId === viewerId)
+      : undefined;
+    const { joinRequests, ...safePost } = post;
+    return {
+      ...safePost,
+      joined: joinRequests.filter((request) => request.status === 'approved').map((request) => ({
+        userId: request.user.id,
+        name: request.user.name,
+        avatar: request.user.avatarUrl,
+        status: request.status,
+      })),
+      viewerJoinStatus:
+        post.authorId === viewerId ? 'organizer' : (viewerRequest?.status ?? 'none'),
+    };
+  }
+
+  async myJoinStatuses(userId: string) {
+    const [requests, authored] = await Promise.all([
+      this.prisma.matchPostJoinRequest.findMany({
+        where: { userId },
+        select: { matchPostId: true, status: true },
+      }),
+      this.prisma.matchPost.findMany({ where: { authorId: userId }, select: { id: true } }),
+    ]);
+    return [
+      ...requests.map((request) => ({ matchPostId: request.matchPostId, status: request.status })),
+      ...authored.map((post) => ({ matchPostId: post.id, status: 'organizer' })),
+    ];
+  }
+
+  async listJoinRequests(organizerId: string, matchPostId: string) {
+    const post = await this.prisma.matchPost.findUnique({
+      where: { id: matchPostId },
+      select: { authorId: true },
+    });
+    if (!post) throw new NotFoundException('Match post not found');
+    if (post.authorId !== organizerId)
+      throw new ForbiddenException('Not your match post');
+    return this.prisma.matchPostJoinRequest.findMany({
+      where: { matchPostId, status: 'pending' },
+      include: { user: { select: { id: true, name: true, avatarUrl: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 
   async requestJoin(userId: string, matchPostId: string) {
@@ -142,11 +186,21 @@ export class MatchPostsService {
     if (post.status !== 'open')
       throw new BadRequestException('This match is not accepting players');
 
-    const request = await this.prisma.matchPostJoinRequest.upsert({
-      where: { matchPostId_userId: { matchPostId, userId } },
-      update: { status: 'pending' },
-      create: { matchPostId, userId },
-      include: { user: { select: { id: true, name: true } } },
+    const request = await this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT 1 FROM "MatchPost" WHERE "id" = ${matchPostId} FOR UPDATE`;
+      const current = await tx.matchPost.findUnique({ where: { id: matchPostId } });
+      if (!current) throw new NotFoundException('Match post not found');
+      if (current.authorId === userId) throw new BadRequestException('You are the organizer');
+      if (current.status !== 'open') throw new BadRequestException('This match is not accepting players');
+      const existing = await tx.matchPostJoinRequest.findUnique({ where: { matchPostId_userId: { matchPostId, userId } } });
+      if (existing && existing.status !== 'declined')
+        throw new BadRequestException(existing.status === 'approved' ? 'Already a match member' : 'Join request already pending');
+      if (existing) {
+        const changed = await tx.matchPostJoinRequest.updateMany({ where: { id: existing.id, status: 'declined' }, data: { status: 'pending' } });
+        if (!changed.count) throw new BadRequestException('Request already changed');
+        return tx.matchPostJoinRequest.findUniqueOrThrow({ where: { id: existing.id }, include: { user: { select: { id: true, name: true } } } });
+      }
+      return tx.matchPostJoinRequest.create({ data: { matchPostId, userId }, include: { user: { select: { id: true, name: true } } } });
     });
     this.emitter.emitToUser(post.authorId, {
       type: 'match.join_request.created',
@@ -160,7 +214,7 @@ export class MatchPostsService {
       deepLink: `/app/matches/${matchPostId}`,
       payload: { matchPostId, requestId: request.id },
     });
-    return request;
+    return this.getById(matchPostId, userId);
   }
 
   async leave(userId: string, matchPostId: string) {
@@ -184,70 +238,59 @@ export class MatchPostsService {
         data: { status: 'open' },
       });
     }
-    return this.getById(matchPostId);
+    return this.getById(matchPostId, userId);
   }
 
   async resolveJoin(organizerId: string, requestId: string, approve: boolean) {
-    const request = await this.prisma.matchPostJoinRequest.findUnique({
+    const original = await this.prisma.matchPostJoinRequest.findUnique({
       where: { id: requestId },
       include: { matchPost: true },
     });
-    if (!request) throw new NotFoundException('Join request not found');
-    if (request.matchPost.authorId !== organizerId)
-      throw new ForbiddenException('Not your match post');
-    if (request.status !== 'pending')
-      throw new BadRequestException('Already resolved');
-
-    const updated = await this.prisma.matchPostJoinRequest.update({
-      where: { id: requestId },
-      data: { status: approve ? 'approved' : 'declined' },
-    });
-
-    if (approve) {
-      await this.addToMatchChat(
-        request.matchPost.id,
-        request.matchPost.authorId,
-        request.userId,
-        request.matchPost.chatThreadId,
-      );
-      const approvedCount = await this.prisma.matchPostJoinRequest.count({
-        where: { matchPostId: request.matchPost.id, status: 'approved' },
+    if (!original) throw new NotFoundException('Join request not found');
+    const updated = await this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT 1 FROM "MatchPost" WHERE "id" = ${original.matchPostId} FOR UPDATE`;
+      const request = await tx.matchPostJoinRequest.findUnique({ where: { id: requestId }, include: { matchPost: true } });
+      if (!request) throw new NotFoundException('Join request not found');
+      if (request.matchPost.authorId !== organizerId) throw new ForbiddenException('Not your match post');
+      if (request.status !== 'pending') throw new BadRequestException('Already resolved');
+      const changed = await tx.matchPostJoinRequest.updateMany({
+        where: { id: requestId, status: 'pending' }, data: { status: approve ? 'approved' : 'declined' },
       });
-      if (approvedCount <= FIRST_JOINERS_COUNT) {
-        await this.prisma.$transaction([
-          this.prisma.user.update({
+      if (!changed.count) throw new BadRequestException('Already resolved');
+      if (approve) {
+        await this.addToMatchChat(request.matchPost.id, request.matchPost.authorId, request.userId, request.matchPost.chatThreadId, tx);
+        const approvedCount = await tx.matchPostJoinRequest.count({ where: { matchPostId: request.matchPost.id, status: 'approved' } });
+        if (approvedCount <= FIRST_JOINERS_COUNT) {
+          await tx.user.update({
             where: { id: request.userId },
             data: { coinsBalance: { increment: FIRST_JOINERS_COIN_BONUS } },
-          }),
-          this.prisma.coinLedgerEntry.create({
+          });
+          await tx.coinLedgerEntry.create({
             data: {
               userId: request.userId,
               amount: FIRST_JOINERS_COIN_BONUS,
               reason: 'match_join_early',
             },
-          }),
-        ]);
+          });
+        }
+        if (approvedCount >= request.matchPost.playersNeeded)
+          await tx.matchPost.update({ where: { id: request.matchPost.id }, data: { status: 'full' } });
       }
-      if (approvedCount >= request.matchPost.playersNeeded) {
-        await this.prisma.matchPost.update({
-          where: { id: request.matchPost.id },
-          data: { status: 'full' },
-        });
-      }
-    }
+      return tx.matchPostJoinRequest.findUniqueOrThrow({ where: { id: requestId } });
+    });
 
-    this.emitter.emitToUser(request.userId, {
+    this.emitter.emitToUser(original.userId, {
       type: 'match.join_request.resolved',
       requestId,
       status: updated.status,
     });
     await this.notifications.create({
-      userId: request.userId,
+      userId: original.userId,
       category: 'matches',
       titleEn: approve ? 'Join request approved' : 'Join request declined',
       titleAr: approve ? 'تم قبول طلب الانضمام' : 'تم رفض طلب الانضمام',
-      deepLink: `/app/matches/${request.matchPost.id}`,
-      payload: { matchPostId: request.matchPost.id, status: updated.status },
+      deepLink: `/app/matches/${original.matchPost.id}`,
+      payload: { matchPostId: original.matchPost.id, status: updated.status },
     });
     return updated;
   }
@@ -257,10 +300,11 @@ export class MatchPostsService {
     authorId: string,
     joinerId: string,
     existingThreadId: string | null,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
   ) {
     let threadId = existingThreadId;
     if (!threadId) {
-      const thread = await this.prisma.chatThread.create({
+      const thread = await db.chatThread.create({
         data: {
           type: 'match',
           title: 'Match chat',
@@ -268,12 +312,12 @@ export class MatchPostsService {
         },
       });
       threadId = thread.id;
-      await this.prisma.matchPost.update({
+      await db.matchPost.update({
         where: { id: matchPostId },
         data: { chatThreadId: threadId },
       });
     }
-    await this.prisma.chatThreadParticipant.upsert({
+    await db.chatThreadParticipant.upsert({
       where: { threadId_userId: { threadId, userId: joinerId } },
       update: {},
       create: { threadId, userId: joinerId },
@@ -292,13 +336,19 @@ export class MatchPostsService {
       post.authorId,
       ...post.joinRequests.map((j) => j.userId),
     ];
-    await this.prisma.matchPost.update({
-      where: { id },
-      data: { status: 'played' },
-    });
-    await this.prisma.user.updateMany({
-      where: { id: { in: playerIds } },
-      data: { matchesPlayed: { increment: 1 } },
+    await this.prisma.$transaction(async tx => {
+      const changed = await tx.matchPost.updateMany({
+        where: { id, status: { in: ['open', 'full'] } },
+        data: { status: 'played' },
+      });
+      if (!changed.count) {
+        if (post.status === 'played') return;
+        throw new BadRequestException('Match already closed');
+      }
+      await tx.user.updateMany({
+        where: { id: { in: playerIds } },
+        data: { matchesPlayed: { increment: 1 } },
+      });
     });
     return this.getById(id);
   }

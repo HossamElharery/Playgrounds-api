@@ -38,6 +38,7 @@ import { GamesModule } from '../games/games.module';
 import { BundlesModule } from '../bundles/bundles.module';
 import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
+import { SearchModule } from '../search/search.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 
 @Module({
@@ -60,6 +61,7 @@ import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
     ContentModule,
     GeoModule,
     VenuesModule,
+    SearchModule,
     PaymentsModule,
     BookingsModule,
     ReviewsModule,

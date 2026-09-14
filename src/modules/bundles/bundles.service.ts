@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,10 +16,7 @@ import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { ConfigService } from '@nestjs/config';
-import {
-  PAYMENT_PROVIDER,
-  PaymentProvider,
-} from '../payments/payment-provider.interface';
+import { WalletService } from '../payments/wallet.service';
 import {
   CreateBundleDto,
   PurchaseBundleDto,
@@ -41,7 +37,7 @@ export class BundlesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
+    private readonly wallet: WalletService,
   ) {}
 
   listForVenue(venueId: string) {
@@ -180,28 +176,16 @@ export class BundlesService {
     );
     const feeAmount = Math.round(combinedBase * (feePct / 100));
     const totalAmount = Math.max(0, combinedBase + feeAmount - discountAmount);
-    const currency = priced[0]?.currency ?? bundle.venue.country.currency;
-
-    const allowed = bundle.venue.country.paymentMethods;
-    if (!allowed.includes(dto.paymentMethod)) {
-      throw new BadRequestException(
-        `Payment method not available in ${bundle.venue.country.code}`,
-      );
-    }
-
-    const charge = await this.paymentProvider.charge(
-      totalAmount,
-      currency,
-      dto.paymentMethod,
-    );
-    if (charge.status === 'failed')
-      throw new BadRequestException('PAYMENT_FAILED');
-    const paymentStatus = charge.status === 'pending' ? 'pending' : 'paid';
     const qrSecret = this.config.get<string>('QR_SIGNING_SECRET')!;
 
     try {
       return await this.prisma.$transaction(
         async (tx) => {
+          await this.wallet.debit(tx, {
+            userId,
+            amount: totalAmount,
+            reason: 'bundle',
+          });
           const bookings: Booking[] = [];
           for (const p of priced) {
             const overlap = await tx.booking.findFirst({
@@ -236,8 +220,8 @@ export class BundlesService {
                 discountAmount: itemDiscount,
                 totalAmount: itemTotal,
                 currency: p.currency,
-                paymentMethod: dto.paymentMethod,
-                paymentStatus,
+                paymentMethod: 'wallet',
+                paymentStatus: 'paid',
                 status: 'confirmed',
                 bundleId: bundle.id,
               },

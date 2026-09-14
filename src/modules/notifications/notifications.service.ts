@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
 import { UpdateNotificationPrefsDto } from './dto/device-token.dto';
+import { sanitizeNotificationCtaUrl } from './cta-url';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -146,17 +147,43 @@ export class NotificationsService {
   async broadcast(input: {
     audience: 'owners' | 'players' | 'individual';
     recipientIds?: string[];
+    governorateId?: string;
+    districtId?: string;
     titleEn: string;
     titleAr: string;
     bodyEn: string;
     bodyAr: string;
+    ctaLabelEn?: string;
+    ctaLabelAr?: string;
+    ctaUrl?: string;
   }) {
+    const areaFilter: Prisma.UserWhereInput = input.districtId
+      ? { districtId: input.districtId }
+      : input.governorateId
+        ? { governorateId: input.governorateId }
+        : {};
     const where: Prisma.UserWhereInput =
       input.audience === 'owners'
-        ? { roles: { has: 'owner' as const }, status: 'active' as const }
+        ? { roles: { has: 'owner' as const }, status: 'active' as const, ...areaFilter }
         : input.audience === 'players'
-          ? { roles: { has: 'player' as const }, NOT: { roles: { hasSome: ['owner', 'staff', 'admin'] } }, status: 'active' as const }
-          : { id: { in: input.recipientIds ?? [] } };
+          ? {
+              roles: { has: 'player' as const },
+              NOT: { roles: { hasSome: ['owner', 'staff', 'admin'] } },
+              status: 'active' as const,
+              ...areaFilter,
+            }
+          : { id: { in: input.recipientIds ?? [] }, ...areaFilter };
+
+    const deepLink = sanitizeNotificationCtaUrl(input.ctaUrl);
+    const payload =
+      deepLink && input.ctaLabelEn && input.ctaLabelAr
+        ? {
+            ctaLabelEn: input.ctaLabelEn.trim(),
+            ctaLabelAr: input.ctaLabelAr.trim(),
+            ctaUrl: deepLink,
+          }
+        : undefined;
+
     const users = await this.prisma.user.findMany({
       where,
       select: { id: true },
@@ -170,6 +197,8 @@ export class NotificationsService {
         titleAr: input.titleAr,
         bodyEn: input.bodyEn,
         bodyAr: input.bodyAr,
+        deepLink,
+        payload,
       });
       if (created) recipientIds.push(userId);
     }

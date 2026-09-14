@@ -27,10 +27,12 @@ export class ContentService {
     perPage: number,
     status?: string,
     categoryId?: string,
+    relatedSportSlug?: string,
   ) {
     const where = {
       ...(status ? { status: status as PublishStatus } : {}),
       ...(categoryId ? { categoryId } : {}),
+      ...(relatedSportSlug ? { relatedSportSlug } : {}),
     };
     const [items, total] = await Promise.all([
       this.prisma.blogPost.findMany({
@@ -82,6 +84,10 @@ export class ContentService {
         authorId,
         status,
         publishedAt: status === 'published' ? new Date() : null,
+        ctaLabelEn: dto.ctaLabelEn,
+        ctaLabelAr: dto.ctaLabelAr,
+        ctaHref: dto.ctaHref,
+        relatedSportSlug: dto.relatedSportSlug,
       },
     });
   }
@@ -111,6 +117,10 @@ export class ContentService {
           status === 'published'
             ? (existing.publishedAt ?? new Date())
             : existing.publishedAt,
+        ctaLabelEn: dto.ctaLabelEn,
+        ctaLabelAr: dto.ctaLabelAr,
+        ctaHref: dto.ctaHref,
+        relatedSportSlug: dto.relatedSportSlug,
       },
     });
   }

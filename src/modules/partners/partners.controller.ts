@@ -171,6 +171,14 @@ export class PartnersController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('admin')
+  @Get('admin/partner-applications/:id')
+  adminGet(@Param('id') id: string) {
+    return this.partners.adminGet(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('admin')
   @Patch('admin/partner-applications/:id')
   adminAmend(
     @CurrentUser() user: AuthenticatedUser,

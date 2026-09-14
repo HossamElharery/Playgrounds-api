@@ -17,4 +17,14 @@ export class ListUsersQueryDto extends PageQueryDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  governorateId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  districtId?: string;
 }

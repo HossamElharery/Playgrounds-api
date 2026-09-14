@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { BookingsService } from './bookings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PAYMENT_PROVIDER } from '../payments/payment-provider.interface';
+import { RewardsService } from '../rewards/rewards.service';
+import { WalletService } from '../payments/wallet.service';
 
 describe('BookingsService', () => {
   let service: BookingsService;
@@ -19,6 +21,14 @@ describe('BookingsService', () => {
         {
           provide: PAYMENT_PROVIDER,
           useValue: { charge: jest.fn(), refund: jest.fn() },
+        },
+        {
+          provide: RewardsService,
+          useValue: { onBookingCompleted: jest.fn() },
+        },
+        {
+          provide: WalletService,
+          useValue: { debit: jest.fn(), credit: jest.fn() },
         },
       ],
     }).compile();

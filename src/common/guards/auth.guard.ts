@@ -35,10 +35,19 @@ export class AuthGuard implements CanActivate {
     if (isPublic) return true;
 
     const request = context.switchToHttp().getRequest();
-    const user = request.user;
+    let user = request.user;
     if (!user?.id) {
       throw new UnauthorizedException('Authentication required');
     }
+
+    // Roles and suspension changes must take effect even for an unexpired JWT.
+    const current = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, roles: true, status: true },
+    });
+    if (!current || current.status !== 'active')
+      throw new UnauthorizedException('Account is not active');
+    user = request.user = { ...user, roles: current.roles };
 
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,

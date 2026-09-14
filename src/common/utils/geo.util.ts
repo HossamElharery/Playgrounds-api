@@ -49,6 +49,37 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
+/** Ray-casting for a single GeoJSON linear ring (`[lng, lat][]`). */
+export function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
+  if (ring.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i]?.[0];
+    const yi = ring[i]?.[1];
+    const xj = ring[j]?.[0];
+    const yj = ring[j]?.[1];
+    if (xi == null || yi == null || xj == null || yj == null) continue;
+    const crosses = yi > lat !== yj > lat;
+    if (!crosses) continue;
+    const denom = yj - yi || Number.EPSILON;
+    if (lng < ((xj - xi) * (lat - yi)) / denom + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** True when `lng,lat` sits inside a GeoJSON Polygon (outer ring minus holes). */
+export function pointInPolygon(
+  lng: number,
+  lat: number,
+  polygon: GeoJsonPolygon | null | undefined,
+): boolean {
+  const rings = polygon?.coordinates;
+  if (!rings?.length) return false;
+  const [outer, ...holes] = rings;
+  if (!outer || !pointInRing(lng, lat, outer)) return false;
+  return !holes.some((hole) => pointInRing(lng, lat, hole));
+}
+
 /** Geohash prefixes covering a bounding box, for a coarse pre-filter before Haversine refinement. */
 export function geohashPrefixesForBbox(
   west: number,

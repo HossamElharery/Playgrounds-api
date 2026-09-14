@@ -1,7 +1,26 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeCountryCode } from '../../common/geo/country.util';
-import { toSearchBoundary } from '../../common/utils/geo.util';
+import {
+  haversineKm,
+  pointInPolygon,
+  toSearchBoundary,
+} from '../../common/utils/geo.util';
+
+/** Max distance from a district centroid when the GPS point is outside every polygon. */
+const NEAREST_DISTRICT_KM = 50;
+
+export type ResolvedArea = {
+  governorateId: string | null;
+  districtId: string | null;
+  district: { id: string; nameEn: string; nameAr: string } | null;
+  governorate: {
+    id: string;
+    nameEn: string;
+    nameAr: string;
+    countryCode: string;
+  } | null;
+};
 
 const CATALOG_TTL_MS = 60_000;
 
@@ -129,5 +148,40 @@ export class GeoService {
       ...d,
       polygon: toSearchBoundary(d.polygon),
     }));
+  }
+
+  /**
+   * Map GPS to our catalog: polygon hit first, then nearest district centroid
+   * within 50km. Unknown coordinates still return nulls so we can store lat/lng.
+   */
+  async resolveArea(lat: number, lng: number, country?: string): Promise<ResolvedArea> {
+    const countryCode = normalizeCountryCode(country) ?? 'EG';
+    const districts = await this.listDistricts(undefined, undefined, countryCode);
+
+    const inside = districts.find(
+      (d) => d.polygon && pointInPolygon(lng, lat, d.polygon),
+    );
+    const nearest = districts.reduce<{ district: (typeof districts)[number]; km: number } | null>(
+      (best, d) => {
+        if (d.lat == null || d.lng == null) return best;
+        const km = haversineKm(lat, lng, d.lat, d.lng);
+        if (km > NEAREST_DISTRICT_KM) return best;
+        if (!best || km < best.km) return { district: d, km };
+        return best;
+      },
+      null,
+    );
+    const hit = inside ?? nearest?.district;
+
+    if (!hit) {
+      return { governorateId: null, districtId: null, district: null, governorate: null };
+    }
+
+    return {
+      governorateId: hit.governorateId,
+      districtId: hit.id,
+      district: { id: hit.id, nameEn: hit.nameEn, nameAr: hit.nameAr },
+      governorate: hit.governorate,
+    };
   }
 }

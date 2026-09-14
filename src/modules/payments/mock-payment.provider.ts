@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { PaymentMethod } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { ChargeResult, PaymentProvider } from './payment-provider.interface';
@@ -18,6 +18,7 @@ export class MockPaymentProvider implements PaymentProvider {
     method: PaymentMethod,
   ): Promise<ChargeResult> {
     if (method === 'cash') return { status: 'pending' };
+    if (process.env.NODE_ENV === 'production') throw new ServiceUnavailableException('A live payment provider must be configured before accepting electronic payments');
     return { status: 'paid', providerRef: `mock_${randomUUID()}` };
   }
 
@@ -26,6 +27,7 @@ export class MockPaymentProvider implements PaymentProvider {
     _currency: string,
     providerRef?: string,
   ): Promise<ChargeResult> {
+    if (process.env.NODE_ENV === 'production') throw new ServiceUnavailableException('A live payment provider must be configured before issuing refunds');
     return {
       status: 'paid',
       providerRef: providerRef ?? `mock_refund_${randomUUID()}`,

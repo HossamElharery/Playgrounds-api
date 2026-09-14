@@ -148,11 +148,26 @@ export class AdminService {
     return this.prisma.featureFlag.findMany();
   }
 
-  upsertFeatureFlag(dto: UpsertFeatureFlagDto) {
-    return this.prisma.featureFlag.upsert({
-      where: { key: dto.key },
-      update: { enabled: dto.enabled, description: dto.description },
-      create: dto,
+  upsertFeatureFlag(dto: UpsertFeatureFlagDto, actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const before = await tx.featureFlag.findUnique({
+        where: { key: dto.key },
+      });
+      const result = await tx.featureFlag.upsert({
+        where: { key: dto.key },
+        update: { enabled: dto.enabled, description: dto.description },
+        create: dto,
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId,
+          action: 'admin.featureFlag.update',
+          targetType: 'featureFlag',
+          targetId: dto.key,
+          metadata: { before: before?.enabled ?? null, enabled: dto.enabled },
+        },
+      });
+      return result;
     });
   }
 

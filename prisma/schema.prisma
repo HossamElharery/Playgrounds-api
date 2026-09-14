@@ -52,13 +52,29 @@ model User {
   preferredLang     String        @default("ar")
   countryCode       String        @default("EG")
   country           CountryConfig @relation(fields: [countryCode], references: [code])
+  /// Home area resolved from the player's device GPS. Admin-only in the UI.
+  governorateId     String?
+  governorate       Governorate?  @relation(fields: [governorateId], references: [id])
+  districtId        String?
+  district          District?     @relation(fields: [districtId], references: [id])
+  locationLat       Float?
+  locationLng       Float?
+  locationUpdatedAt DateTime?
   bioEn             String?
   bioAr             String?
   reputation        Int           @default(0)
   reliabilityPct    Float         @default(100)
   coinsBalance      Int           @default(0)
+  /// Prepaid EGP wallet in minor units (piasters). Player bookings, bundles,
+  /// and memberships debit this — they never charge a PSP directly. Top-up
+  /// is the only player flow that uses card / Vodafone / InstaPay / Fawry.
+  walletBalance     Int           @default(0)
   streakCount       Int           @default(0)
   streakUpdatedAt   DateTime?
+  // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.3 — burnable tokens (400 coins
+  // each) that protect streakCount from resetting when a daily check-in is
+  // missed. Consumed automatically by RewardsService.dailyCheckIn.
+  streakFreezes     Int           @default(0)
   matchesPlayed     Int           @default(0)
   mvps              Int           @default(0)
   lastSeenAt        DateTime?
@@ -98,6 +114,7 @@ model User {
   squadJoinRequestsMade SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
   squadJoinRequestsRes  SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
   coinLedger            CoinLedgerEntry[]
+  walletLedger          WalletLedgerEntry[]
   questProgress         UserQuestProgress[]
   badges                UserBadge[]
   promoCodesCreated     PromoCode[]
@@ -113,6 +130,7 @@ model User {
   reportsAgainstMe      ModerationReport[]        @relation("ModerationReportReportedUser")
   reportsReviewed       ModerationReport[]        @relation("ModerationReportReviewedBy")
   auditLogEntries       AuditLogEntry[]
+  assistantMessages     AssistantMessage[]
   sportSkills           UserSportSkill[]
   blogPosts             BlogPost[]
   supportInquiries      SupportInquiry[]
@@ -128,11 +146,55 @@ model User {
   calendarBlocksCreated CalendarBlock[]
   membership            UserMembership?
   tournamentEntries     TournamentParticipant[]
+  oauthIdentities       OAuthIdentity[]
+  webauthnCredentials   WebAuthnCredential[]
+  teamMembershipRequests TeamMembershipRequest[] @relation("TeamRequestPlayer")
+  teamRequestsSent       TeamMembershipRequest[] @relation("TeamRequestSender")
 
   @@index([status])
   @@index([countryCode])
+  @@index([governorateId])
+  @@index([districtId])
   @@index([username])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+enum OAuthProvider {
+  google
+  facebook
+  apple
+}
+
+model OAuthIdentity {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       OAuthProvider
+  providerUserId String
+  email          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+/// Platform authenticators (Face ID, Touch ID, Android fingerprint, Windows Hello).
+model WebAuthnCredential {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt    @default(0)
+  deviceType   String?
+  backedUp     Boolean   @default(false)
+  transports   String[]  @default([])
+  friendlyName String?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  @@index([userId])
 }
 
 model DeviceToken {
@@ -280,6 +342,7 @@ model Governorate {
   nameAr      String
   districts   District[]
   venues      Venue[]
+  users       User[]
 
   @@unique([countryCode, slug])
   @@index([countryCode])
@@ -297,6 +360,7 @@ model District {
   polygon       Json?
   venues        Venue[]
   matchPosts    MatchPost[]
+  users         User[]
 
   @@unique([governorateId, slug])
   @@index([governorateId])
@@ -446,6 +510,7 @@ model Venue {
   calendarBlocks     CalendarBlock[]
   bundles            Bundle[]
   tournaments        Tournament[]
+  assistantMessages  AssistantMessage[]
 
   @@index([geohash])
   @@index([lat, lng])
@@ -617,6 +682,7 @@ model Booking {
   ratings           PlayerRating[]
   promoRedemptions  PromoRedemption[]
   coinLedgerEntries CoinLedgerEntry[]
+  walletLedgerEntries WalletLedgerEntry[]
   pulseOpportunity  PulseOpportunity?
   pulseClaims       PulseClaim[]
   // Live-slot uniqueness is a partial unique index (courtId, slotStart) plus a
@@ -858,10 +924,28 @@ model Team {
   chatThreadId String?        @unique
   chatThread   ChatThread?    @relation(fields: [chatThreadId], references: [id])
   createdAt    DateTime       @default(now())
+  archivedAt   DateTime?
 
   members            TeamMember[]
   challengesMade     TeamChallenge[] @relation("TeamChallengeChallenger")
   challengesReceived TeamChallenge[] @relation("TeamChallengeChallenged")
+  membershipRequests TeamMembershipRequest[]
+}
+
+model TeamMembershipRequest {
+  id            String   @id @default(uuid())
+  teamId        String
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation("TeamRequestPlayer", fields: [userId], references: [id], onDelete: Cascade)
+  requestedById String
+  requestedBy   User     @relation("TeamRequestSender", fields: [requestedById], references: [id], onDelete: Cascade)
+  status        String   @default("pending")
+  createdAt     DateTime @default(now())
+  respondedAt   DateTime?
+
+  @@index([teamId, status])
+  @@index([userId, status])
 }
 
 model TeamMember {
@@ -1047,6 +1131,23 @@ model CoinLedgerEntry {
   bookingId String?
   booking   Booking? @relation(fields: [bookingId], references: [id])
   createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Prepaid EGP wallet movements (piasters). Positive = top-up / refund credit,
+/// negative = booking / membership / bundle debit.
+model WalletLedgerEntry {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount      Int
+  reason      String
+  method      PaymentMethod?
+  bookingId   String?
+  booking     Booking?       @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  providerRef String?
+  createdAt   DateTime       @default(now())
 
   @@index([userId, createdAt])
 }
@@ -1363,6 +1464,38 @@ model CalendarBlock {
   @@index([courtId, startsAt])
 }
 
+enum AssistantSender {
+  owner
+  assistant
+  /// Non-conversational bookkeeping row (e.g. a manual tap-to-block on the
+  /// board) that only exists to anchor an undo token — never rendered as a
+  /// chat bubble on the owner side, but visible to admin oversight.
+  system
+}
+
+/// One line of the owner-facing "schedule assistant" chat (see
+/// ScheduleConsoleComponent on the frontend). appliedChange/inverseChange
+/// mirror the frontend's ScheduleChange shape ({ remove: string[], create:
+/// BlockDraft[] }) so undo never needs a second representation of a change.
+/// The latest row for a venue with inverseChange set and consumedAt null is
+/// the currently-offered undo token.
+model AssistantMessage {
+  id            String          @id @default(uuid())
+  venueId       String
+  venue         Venue           @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         User            @relation(fields: [ownerId], references: [id])
+  sender        AssistantSender
+  text          String          @db.Text
+  appliedChange Json?
+  inverseChange Json?
+  consumedAt    DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@index([venueId, createdAt])
+  @@index([ownerId, createdAt])
+}
+
 model PayoutMethod {
   id               String           @id @default(uuid())
   ownerId          String
@@ -1485,7 +1618,18 @@ model BlogPost {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
+  /// Optional in-article call-to-action (e.g. "Book a padel court" -> /en/explore?sport=padel).
+  /// Admin-set; the frontend falls back to a generic "Book now" -> /explore when unset.
+  ctaLabelEn String?
+  ctaLabelAr String?
+  ctaHref    String?
+
+  /// Tags this post to one sport slug (e.g. "padel") so the sport-hub page can surface it
+  /// in a "From the Journal" section, and so the article's default CTA can deep-link back.
+  relatedSportSlug String?
+
   @@index([status])
+  @@index([relatedSportSlug])
 }
 
 model Banner {

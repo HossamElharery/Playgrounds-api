@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -20,9 +21,12 @@ import { OwnerService } from './owner.service';
 import { CreateStaffInviteDto } from './dto/staff-invite.dto';
 import { CreateWalkInDto } from './dto/walk-in.dto';
 import {
+  CreateAssistantMessageDto,
   CreateCalendarBlockDto,
   CreatePayoutMethodDto,
+  InterpretScheduleCommandDto,
   OwnerBookingActionDto,
+  UndoAssistantMessageDto,
   VerifyVenueQrDto,
 } from './dto/owner-operations.dto';
 import { SetStaffStatusDto } from './dto/status-actions.dto';
@@ -51,6 +55,57 @@ export class OwnerController {
     @Query('date') date: string,
   ) {
     return this.owner.calendar(user.id, venueId, date);
+  }
+
+  @Get('board')
+  board(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+    @Query('date') date: string,
+  ) {
+    return this.owner.board(user.id, venueId, date);
+  }
+
+  // Costs a real Gemini call per request — throttled well under the global
+  // limit so a runaway client can't burn through the owner's AI budget.
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
+  @Post('assistant/interpret')
+  interpretAssistant(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: InterpretScheduleCommandDto,
+  ) {
+    return this.owner.interpretScheduleCommand(user.id, dto.venueId, dto.text);
+  }
+
+  @Get('assistant/messages')
+  listAssistantMessages(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.owner.listAssistantMessages(
+      user.id,
+      venueId,
+      limit ? Number(limit) : undefined,
+      cursor,
+    );
+  }
+
+  @Post('assistant/messages')
+  createAssistantMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateAssistantMessageDto,
+  ) {
+    return this.owner.createAssistantMessage(user.id, dto);
+  }
+
+  @Post('assistant/undo')
+  undoAssistantMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UndoAssistantMessageDto,
+  ) {
+    return this.owner.undoAssistantMessage(user.id, dto.venueId, dto.messageId);
   }
 
   @Post('calendar/walk-in')

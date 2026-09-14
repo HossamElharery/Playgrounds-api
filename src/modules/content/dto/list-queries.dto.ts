@@ -17,6 +17,11 @@ export class ListBlogQueryDto extends PageQueryDto {
   @IsOptional()
   @IsString()
   categoryId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by related sport slug (e.g. "padel").' })
+  @IsOptional()
+  @IsString()
+  relatedSportSlug?: string;
 }
 
 export class ListSupportQueryDto extends PageQueryDto {

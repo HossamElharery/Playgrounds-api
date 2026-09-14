@@ -49,9 +49,18 @@ export class RealtimeGateway
       const payload = await this.jwtService.verifyAsync(token, {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
       });
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.id },
+        select: { status: true },
+      });
+      if (!user || user.status !== 'active') {
+        client.disconnect(true);
+        return;
+      }
       client.data.userId = payload.id;
       await client.join(`user:${payload.id}`);
       await client.join('presence');
+      await client.join('pulse');
       this.presence.markConnected(payload.id, client.id);
       await this.prisma.user.update({
         where: { id: payload.id },
@@ -83,7 +92,8 @@ export class RealtimeGateway
       presence: this.presence.stateFor(userId),
       lastSeenAt: new Date().toISOString(),
     };
-    this.emitToRoom('presence', event);
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { lastSeenVisible: true } });
+    if (!user?.lastSeenVisible) delete (event as { lastSeenAt?: string }).lastSeenAt;
     const friends = await this.prisma.friendship.findMany({
       where: {
         status: 'accepted',
@@ -254,6 +264,10 @@ export class RealtimeGateway
     event: { type: string; [key: string]: unknown },
   ): void {
     this.server?.to(`user:${userId}`).emit(event.type, event);
+  }
+
+  revokeRoomAccess(userId: string, room: string): void {
+    this.server?.in(`user:${userId}`).socketsLeave(room);
   }
 
   emitToRoom(

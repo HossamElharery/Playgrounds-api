@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   Allow,
   IsBoolean,
@@ -16,6 +16,16 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+/**
+ * Normalizes optional free-text so that empty/whitespace strings become
+ * `undefined`. Combined with `@IsOptional()`, this lets clients send an empty
+ * note/reason (e.g. approving without feedback) without tripping `@MinLength`.
+ */
+const OptionalText = () =>
+  Transform(({ value }) =>
+    typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined,
+  );
 import { CursorPaginationQueryDto } from '../../../common/pagination/cursor-pagination.dto';
 
 export class PartnerCourtDraftDto {
@@ -247,6 +257,16 @@ export class PatchPartnerApplicationDto {
 }
 
 export class AdminAmendPartnerApplicationDto {
+  @ApiPropertyOptional({
+    description:
+      'Full listing payload. When provided, the admin can edit everything (gallery, courts, hours, policies, amenities…) — same shape owners submit.',
+    type: PartnerApplicationPayloadDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PartnerApplicationPayloadDto)
+  payload?: PartnerApplicationPayloadDto;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -277,11 +297,17 @@ export class AdminAmendPartnerApplicationDto {
   @MaxLength(240)
   address?: string;
 
-  @ApiProperty({ example: 'Corrected public address after map review' })
+  @ApiPropertyOptional({
+    description:
+      'Optional. When provided (10–1000 chars) it is recorded in the timeline and the partner is notified. Omit for silent admin curation.',
+    example: 'Corrected public address after map review',
+  })
+  @IsOptional()
+  @OptionalText()
   @IsString()
   @MinLength(10)
   @MaxLength(1000)
-  reason!: string;
+  reason?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -297,8 +323,12 @@ export class PartnerDecisionDto {
   @IsIn(['approve', 'reject', 'request_changes', 'suspend'])
   action!: 'approve' | 'reject' | 'request_changes' | 'suspend';
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Optional for approve and suspend. Required (10–1000 chars) only for reject and request_changes; enforced in the service. Admins do not need a note to publish.',
+  })
   @IsOptional()
+  @OptionalText()
   @IsString()
   @MinLength(10)
   @MaxLength(1000)

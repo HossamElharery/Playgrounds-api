@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -8,10 +12,28 @@ import { computeXp, playerLevel } from '../../common/utils/player-level.util';
 import { UpdatePrivacyDto } from './dto/block-user.dto';
 import { ListPlayersQueryDto } from './dto/list-players-query.dto';
 import { normalizeCountryCode } from '../../common/geo/country.util';
+import { withRelationshipLock } from '../../common/utils/relationship-lock.util';
+import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
+import { GeoService } from '../geo/geo.service';
+import { haversineKm } from '../../common/utils/geo.util';
+import { ReportLocationDto } from './dto/report-location.dto';
+
+const LOCATION_SELECT = {
+  id: true,
+  nameEn: true,
+  nameAr: true,
+} as const;
+
+const LOCATION_STALE_MS = 10 * 60 * 1000;
+const LOCATION_MOVE_KM = 0.25;
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emitter: RealtimeGatewayEmitter,
+    private readonly geo: GeoService,
+  ) {}
 
   async me(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -20,6 +42,8 @@ export class UsersService {
         sportSkills: { include: { sport: true } },
         badges: { include: { badge: true } },
         favoriteVenues: { select: { venueId: true } },
+        governorate: { select: LOCATION_SELECT },
+        district: { select: LOCATION_SELECT },
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -41,6 +65,56 @@ export class UsersService {
         bioEn: dto.bioEn,
         bioAr: dto.bioAr,
         ...(countryCode ? { countryCode } : {}),
+      },
+    });
+    return this.sanitize(user);
+  }
+
+  async reportLocation(userId: string, dto: ReportLocationDto) {
+    const current = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        countryCode: true,
+        locationLat: true,
+        locationLng: true,
+        locationUpdatedAt: true,
+      },
+    });
+    if (!current) throw new NotFoundException('User not found');
+
+    const recently =
+      current.locationUpdatedAt &&
+      Date.now() - current.locationUpdatedAt.getTime() < LOCATION_STALE_MS;
+    if (
+      recently &&
+      current.locationLat != null &&
+      current.locationLng != null &&
+      haversineKm(dto.lat, dto.lng, current.locationLat, current.locationLng) <
+        LOCATION_MOVE_KM
+    ) {
+      return this.me(userId);
+    }
+
+    const area = await this.geo.resolveArea(
+      dto.lat,
+      dto.lng,
+      current.countryCode,
+    );
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        locationLat: dto.lat,
+        locationLng: dto.lng,
+        locationUpdatedAt: new Date(),
+        governorateId: area.governorateId,
+        districtId: area.districtId,
+      },
+      include: {
+        sportSkills: { include: { sport: true } },
+        badges: { include: { badge: true } },
+        favoriteVenues: { select: { venueId: true } },
+        governorate: { select: LOCATION_SELECT },
+        district: { select: LOCATION_SELECT },
       },
     });
     return this.sanitize(user);
@@ -204,25 +278,45 @@ export class UsersService {
   async block(blockerId: string, blockedId: string) {
     if (blockerId === blockedId)
       throw new NotFoundException('Cannot block yourself');
-    await this.prisma.userBlock.upsert({
-      where: { blockerId_blockedId: { blockerId, blockedId } },
-      update: {},
-      create: { blockerId, blockedId },
-    });
-    await this.prisma.friendship.deleteMany({
-      where: {
-        OR: [
-          { requesterId: blockerId, addresseeId: blockedId },
-          { requesterId: blockedId, addresseeId: blockerId },
-        ],
+    await withRelationshipLock(
+      this.prisma,
+      blockerId,
+      blockedId,
+      async (tx) => {
+        if (
+          !(await tx.user.findUnique({
+            where: { id: blockedId },
+            select: { id: true },
+          }))
+        )
+          throw new NotFoundException('Player not found');
+        await tx.userBlock.upsert({
+          where: { blockerId_blockedId: { blockerId, blockedId } },
+          update: {},
+          create: { blockerId, blockedId },
+        });
+        await tx.friendship.deleteMany({
+          where: {
+            OR: [
+              { requesterId: blockerId, addresseeId: blockedId },
+              { requesterId: blockedId, addresseeId: blockerId },
+            ],
+          },
+        });
       },
-    });
+    );
+    const event = { type: 'friend.relationship.changed' };
+    this.emitter.emitToUser(blockerId, event);
+    this.emitter.emitToUser(blockedId, event);
   }
 
   async unblock(blockerId: string, blockedId: string) {
-    await this.prisma.userBlock.deleteMany({
-      where: { blockerId, blockedId },
-    });
+    await withRelationshipLock(this.prisma, blockerId, blockedId, (tx) =>
+      tx.userBlock.deleteMany({
+        where: { blockerId, blockedId },
+      }),
+    );
+    this.emitter.emitToUser(blockerId, { type: 'friend.relationship.changed' });
   }
 
   listBlocks(userId: string) {
@@ -248,6 +342,8 @@ export class UsersService {
     search?: string;
     role?: string;
     status?: string;
+    governorateId?: string;
+    districtId?: string;
   }) {
     const where: Prisma.UserWhereInput = {
       ...(query.search
@@ -261,6 +357,10 @@ export class UsersService {
         : {}),
       ...(query.role ? { roles: { has: query.role as never } } : {}),
       ...(query.status ? { status: query.status as UserStatus } : {}),
+      ...(query.districtId ? { districtId: query.districtId } : {}),
+      ...(query.governorateId && !query.districtId
+        ? { governorateId: query.governorateId }
+        : {}),
     };
 
     const [items, total] = await Promise.all([
@@ -269,6 +369,10 @@ export class UsersService {
         skip: (query.page - 1) * query.perPage,
         take: query.perPage,
         orderBy: { createdAt: 'desc' },
+        include: {
+          governorate: { select: LOCATION_SELECT },
+          district: { select: LOCATION_SELECT },
+        },
       }),
       this.prisma.user.count({ where }),
     ]);
@@ -279,18 +383,51 @@ export class UsersService {
     };
   }
 
-  async updateStatus(userId: string, status: UserStatus) {
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { status },
-    });
-    if (status !== 'active') {
-      await this.prisma.refreshToken.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-    }
-    return this.sanitize(user);
+  async updateStatus(userId: string, status: UserStatus, actorUserId: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const before = await tx.user.findUnique({
+          where: { id: userId },
+          select: { roles: true, status: true },
+        });
+        if (!before) throw new NotFoundException('User not found');
+        if (before.roles.includes('admin') && status !== 'active') {
+          if (userId === actorUserId)
+            throw new BadRequestException(
+              'You cannot remove your own administrator access',
+            );
+          if (
+            (await tx.user.count({
+              where: { roles: { has: 'admin' }, status: 'active' },
+            })) <= 1
+          )
+            throw new BadRequestException(
+              'The last active administrator must remain',
+            );
+        }
+        const user = await tx.user.update({
+          where: { id: userId },
+          data: { status },
+        });
+        if (status !== 'active') {
+          await tx.refreshToken.updateMany({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+        }
+        await tx.auditLogEntry.create({
+          data: {
+            actorUserId,
+            action: 'admin.user.status',
+            targetType: 'user',
+            targetId: userId,
+            metadata: { before: before.status, status },
+          },
+        });
+        return this.sanitize(user);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private sanitize<T extends { passwordHash?: string | null }>(user: T) {

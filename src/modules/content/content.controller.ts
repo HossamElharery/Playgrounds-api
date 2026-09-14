@@ -58,6 +58,7 @@ export class ContentController {
       q.perPage,
       'published',
       q.categoryId,
+      q.relatedSportSlug,
     );
     return { message: 'ok', result: items, pagination };
   }

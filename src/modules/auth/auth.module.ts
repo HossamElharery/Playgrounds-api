@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { WebAuthnService } from './webauthn.service';
 import { SmsModule } from '../sms/sms.module';
 
 const JwtModuleConfigured = JwtModule.registerAsync({
@@ -18,8 +19,8 @@ const JwtModuleConfigured = JwtModule.registerAsync({
 
 @Module({
   imports: [SmsModule, JwtModuleConfigured],
-  providers: [AuthService],
-  controllers: [AuthController],
-  exports: [AuthService, JwtModuleConfigured],
+    providers: [AuthService, WebAuthnService],
+    controllers: [AuthController],
+    exports: [AuthService, WebAuthnService, JwtModuleConfigured],
 })
 export class AuthModule {}

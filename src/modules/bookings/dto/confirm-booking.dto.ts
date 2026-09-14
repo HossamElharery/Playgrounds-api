@@ -47,13 +47,15 @@ const PAYMENT_METHODS = [
 ] as const satisfies readonly PaymentMethod[];
 
 export class ConfirmBookingDto {
-  @ApiProperty({
-    example: 'card',
+  @ApiPropertyOptional({
+    example: 'wallet',
     enum: PAYMENT_METHODS,
-    description: 'card/wallet settle instantly in mock; cash stays pending until check-in',
+    description:
+      'Player confirm always debits the EGP wallet. This field is ignored for player checkout (kept optional for older clients). Owner walk-in still uses calendar cash/card.',
   })
+  @IsOptional()
   @IsIn([...PAYMENT_METHODS])
-  paymentMethod!: PaymentMethod;
+  paymentMethod?: PaymentMethod;
 
   @ApiPropertyOptional({ type: [SplitShareInputDto] })
   @IsOptional()

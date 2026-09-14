@@ -10,10 +10,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateVenueReviewDto } from './dto/create-venue-review.dto';
 import { CreatePlayerRatingDto } from './dto/create-player-rating.dto';
 import { buildPagination } from '../../common/dto/page-query.dto';
+import { RewardsService } from '../rewards/rewards.service';
 
 @Injectable()
 export class ReviewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rewards: RewardsService,
+  ) {}
 
   // ---- Venue reviews (gated to a completed, checked-in booking) ----
 
@@ -42,6 +46,11 @@ export class ReviewsService {
         },
       });
       await this.recomputeVenueRating(booking.venueId);
+      await this.rewards.onReviewSubmitted(
+        userId,
+        (dto.photos?.length ?? 0) > 0,
+        booking.id,
+      );
       return review;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -164,10 +173,12 @@ export class ReviewsService {
     });
 
     if (dto.mvpVote) {
-      await this.prisma.user.update({
+      const updated = await this.prisma.user.update({
         where: { id: dto.rateeId },
         data: { mvps: { increment: 1 } },
+        select: { mvps: true },
       });
+      await this.rewards.onMvpAwarded(dto.rateeId, updated.mvps);
     }
 
     await this.recomputeReliability(dto.rateeId);

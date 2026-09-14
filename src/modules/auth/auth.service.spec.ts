@@ -78,4 +78,22 @@ describe('AuthService', () => {
 
     await expect(service.requestOtp('+201001234567')).rejects.toThrow(/wait/i);
   });
+
+  it('refuses Google and Facebook until client credentials are configured', async () => {
+    await expect(service.oauthGoogle({ idToken: 'x' })).rejects.toThrow(
+      /not configured/i,
+    );
+    await expect(
+      service.oauthFacebook({ accessToken: 'x' }),
+    ).rejects.toThrow(/not configured/i);
+  });
+
+  it('lists only configured social providers', () => {
+    expect(service.listLoginProviders()).toEqual({
+      google: { enabled: false, clientId: undefined },
+      facebook: { enabled: false, appId: undefined },
+      apple: { enabled: false, clientId: undefined },
+      passkeys: { enabled: true },
+    });
+  });
 });

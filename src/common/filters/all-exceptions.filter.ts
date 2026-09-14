@@ -30,7 +30,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return;
       }
       const obj = (body ?? {}) as Record<string, unknown>;
-      const message = obj.message ?? 'Request failed';
+      const message = Array.isArray(obj.message)
+        ? obj.message.map((m) => String(m)).join('; ')
+        : (obj.message ?? 'Request failed');
       const codeFromBody = typeof obj.code === 'string' ? obj.code : undefined;
       const codeFromMessage =
         typeof message === 'string' && /^[A-Z][A-Z0-9_]+$/.test(message)
@@ -43,6 +45,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           ? { code: codeFromBody ?? codeFromMessage }
           : {}),
         ...(obj.error ? { error: obj.error } : {}),
+        ...(obj.result !== undefined ? { result: obj.result } : {}),
       });
       return;
     }
@@ -61,9 +64,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    if (exception instanceof Prisma.PrismaClientValidationError) {
+      response.status(HttpStatus.BAD_REQUEST).json({
+        message: this.shortenPrismaValidation(exception.message),
+        statusCode: HttpStatus.BAD_REQUEST,
+        code: 'INVALID_DATA',
+      });
+      return;
+    }
+
     this.logger.error(exception instanceof Error ? exception.stack : exception);
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
-      message: 'Internal server error',
+      message:
+        exception instanceof Error && exception.message
+          ? this.publicSafeMessage(exception.message)
+          : 'Internal server error',
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
     });
   }
@@ -90,10 +105,32 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
       case 'P2025':
         return { status: HttpStatus.NOT_FOUND, message: 'Record not found' };
-      case 'P2003':
-        return { status: HttpStatus.BAD_REQUEST, message: 'Invalid reference' };
+      case 'P2003': {
+        const field = String(error.meta?.field_name ?? 'record');
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          message: `Invalid reference (${field}). Check sports, area and related records.`,
+        };
+      }
       default:
         return { status: HttpStatus.BAD_REQUEST, message: 'Database error' };
     }
+  }
+
+  private shortenPrismaValidation(message: string): string {
+    const lines = message
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const argument = lines.find((l) => /argument|Unknown arg|Invalid value/i.test(l));
+    if (argument && argument.length < 240) return argument;
+    return 'The listing data is invalid. Review courts, photos, location and hours, then retry.';
+  }
+
+  private publicSafeMessage(message: string): string {
+    if (/prisma|invocation|postgres|sql/i.test(message) || message.length > 240) {
+      return 'The action could not be completed. Check the listing and retry.';
+    }
+    return message;
   }
 }

@@ -82,7 +82,10 @@ export class BookingsController {
   @Roles('admin')
   @Get('admin/bookings')
   async listAdmin(@Query() q: PageQueryDto) {
-    const { items, pagination } = await this.bookings.listAdmin(q.page, q.perPage);
+    const { items, pagination } = await this.bookings.listAdmin(
+      q.page,
+      q.perPage,
+    );
     return { message: 'ok', result: items, pagination };
   }
 
@@ -99,17 +102,18 @@ export class BookingsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Get('bookings/:id')
-  getById(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ) {
+  getById(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.bookings.getById(id, user);
   }
 
-  @Public()
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
   @Post('bookings/split-shares/:token/pay')
-  paySplitShare(@Param('token') token: string) {
-    return this.bookings.paySplitShare(token);
+  paySplitShare(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('token') token: string,
+  ) {
+    return this.bookings.paySplitShare(token, user.id);
   }
 
   @ApiBearerAuth()

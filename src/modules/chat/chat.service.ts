@@ -41,10 +41,13 @@ export class ChatService {
   private async canMessage(fromId: string, toId: string) {
     const to = await this.prisma.user.findUnique({
       where: { id: toId },
-      select: { messagePolicy: true },
+      select: { messagePolicy: true, status: true },
     });
+    if (!to || to.status !== 'active')
+      throw new NotFoundException('Player not found');
     const policy = to?.messagePolicy ?? 'everyone';
-    if (policy === 'nobody') throw new ForbiddenException('This user is not accepting messages');
+    if (policy === 'nobody')
+      throw new ForbiddenException('This user is not accepting messages');
     if (policy === 'everyone') return;
     const friends = await this.prisma.friendship.findFirst({
       where: {
@@ -66,7 +69,9 @@ export class ChatService {
         },
       });
       if (!friends && !teammates) {
-        throw new ForbiddenException('Only teammates or friends can message this user');
+        throw new ForbiddenException(
+          'Only teammates or friends can message this user',
+        );
       }
     }
   }
@@ -118,7 +123,8 @@ export class ChatService {
     const allowed =
       post.authorId === userId ||
       post.joinRequests.some((j) => j.userId === userId);
-    if (!allowed) throw new ForbiddenException('Not a participant of this match');
+    if (!allowed)
+      throw new ForbiddenException('Not a participant of this match');
 
     if (post.chatThreadId) {
       await this.prisma.chatThreadParticipant.upsert({
@@ -149,23 +155,28 @@ export class ChatService {
   }
 
   async findOrCreateTeamThread(userId: string, teamId: string, title?: string) {
-    const member = await this.prisma.teamMember.findUnique({
+    const threadId = await this.prisma.$transaction(async (tx) => {
+    // Use the same lock as membership changes, so opening chat cannot restore
+    // a participant concurrently removed by leaving or archiving the team.
+    await tx.$executeRaw`SELECT 1 FROM "Team" WHERE "id" = ${teamId} FOR UPDATE`;
+    const member = await tx.teamMember.findUnique({
       where: { teamId_userId: { teamId, userId } },
     });
     if (!member) throw new ForbiddenException('Not a member of this team');
-    const team = await this.prisma.team.findUniqueOrThrow({
+    const team = await tx.team.findUniqueOrThrow({
       where: { id: teamId },
       include: { members: true },
     });
+    if (team.archivedAt) throw new ForbiddenException('Team is archived');
     if (team.chatThreadId) {
-      await this.prisma.chatThreadParticipant.upsert({
+      await tx.chatThreadParticipant.upsert({
         where: { threadId_userId: { threadId: team.chatThreadId, userId } },
         update: {},
         create: { threadId: team.chatThreadId, userId },
       });
-      return this.summarize(team.chatThreadId, userId);
+      return team.chatThreadId;
     }
-    const thread = await this.prisma.chatThread.create({
+    const thread = await tx.chatThread.create({
       data: {
         type: 'team',
         title: title ?? team.name,
@@ -174,11 +185,13 @@ export class ChatService {
         },
       },
     });
-    await this.prisma.team.update({
+    await tx.team.update({
       where: { id: teamId },
       data: { chatThreadId: thread.id },
     });
-    return this.summarize(thread.id, userId);
+    return thread.id;
+    });
+    return this.getThread(userId, threadId);
   }
 
   async listMyThreads(userId: string) {
@@ -203,7 +216,15 @@ export class ChatService {
       include: {
         participants: {
           include: {
-            user: { select: { id: true, name: true, avatarUrl: true, lastSeenAt: true, lastSeenVisible: true } },
+            user: {
+              select: {
+                id: true,
+                name: true,
+                avatarUrl: true,
+                lastSeenAt: true,
+                lastSeenVisible: true,
+              },
+            },
           },
         },
         messages: {
@@ -220,11 +241,11 @@ export class ChatService {
     const me = thread.participants.find((p) => p.userId === viewerId);
     const other = thread.participants.find((p) => p.userId !== viewerId);
     const lastReadAt = me?.lastReadMessageId
-      ? (
+      ? ((
           await this.prisma.chatMessage.findUnique({
             where: { id: me.lastReadMessageId },
           })
-        )?.createdAt ?? new Date(0)
+        )?.createdAt ?? new Date(0))
       : new Date(0);
     const unreadCount = await this.prisma.chatMessage.count({
       where: {
@@ -350,6 +371,18 @@ export class ChatService {
 
   async sendMessage(userId: string, threadId: string, dto: SendMessageDto) {
     await this.assertParticipant(threadId, userId);
+    const thread = await this.prisma.chatThread.findUniqueOrThrow({
+      where: { id: threadId },
+      include: { participants: { select: { userId: true } } },
+    });
+    if (thread.type === 'direct') {
+      const recipient = thread.participants.find(
+        (participant) => participant.userId !== userId,
+      );
+      if (!recipient) throw new NotFoundException('Player not found');
+      await this.assertNotBlocked(userId, recipient.userId);
+      await this.canMessage(userId, recipient.userId);
+    }
 
     const existing = await this.prisma.chatMessage.findUnique({
       where: {
@@ -360,7 +393,11 @@ export class ChatService {
       },
       include: { sender: { select: PUBLIC_SENDER } },
     });
-    if (existing) return this.toMessageDto(existing);
+    if (existing) {
+      if (existing.senderId !== userId)
+        throw new BadRequestException('Message ID already used');
+      return this.toMessageDto(existing);
+    }
 
     if (dto.type === 'text' && !dto.text?.trim()) {
       throw new BadRequestException('text is required');
@@ -398,7 +435,9 @@ export class ChatService {
       where: { threadId, userId: { not: userId } },
       include: { user: { select: { name: true } } },
     });
-    const preview = dto.text?.slice(0, 80) ?? (dto.type === 'image' ? '📷 Photo' : '🎤 Voice note');
+    const preview =
+      dto.text?.slice(0, 80) ??
+      (dto.type === 'image' ? '📷 Photo' : '🎤 Voice note');
     for (const p of participants) {
       this.emitter.emitToUser(p.userId, {
         type: 'chat.message.created',
@@ -438,7 +477,12 @@ export class ChatService {
     });
   }
 
-  async editMessage(userId: string, threadId: string, messageId: string, text: string) {
+  async editMessage(
+    userId: string,
+    threadId: string,
+    messageId: string,
+    text: string,
+  ) {
     await this.assertParticipant(threadId, userId);
     const message = await this.prisma.chatMessage.findUnique({
       where: { id: messageId },

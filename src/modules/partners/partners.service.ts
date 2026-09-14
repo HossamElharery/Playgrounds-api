@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  HttpException,
   HttpStatus,
   Injectable,
   NotFoundException,
@@ -253,28 +254,56 @@ export class PartnersService {
   async adminList(
     status?: PartnerApplicationStatus,
     cursor?: string,
-    limit = 20,
+    limit = 50,
   ) {
     const page = await paginateByCursor(
       (args) =>
         this.prisma.partnerApplication.findMany({
-          where: status ? { status } : {},
+          where: status ? { status } : { status: { not: 'draft' } },
           orderBy: { id: 'desc' },
           include: {
             owner: {
-              select: { id: true, name: true, email: true, username: true },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                username: true,
+                phone: true,
+              },
             },
+            venue: { select: { id: true, slug: true, status: true } },
             events: { orderBy: { createdAt: 'desc' }, take: 20 },
           },
           ...args,
         }),
-      Math.min(limit, 50),
+      limit,
       cursor,
     );
     return {
       items: page.items.map((row) => this.toAdminDto(row)),
       nextCursor: page.nextCursor,
     };
+  }
+
+  async adminGet(id: string) {
+    const app = await this.prisma.partnerApplication.findUnique({
+      where: { id },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            username: true,
+            phone: true,
+          },
+        },
+        venue: { select: { id: true, slug: true, status: true } },
+        events: { orderBy: { createdAt: 'desc' }, take: 40 },
+      },
+    });
+    if (!app) throw new NotFoundException('Application not found');
+    return this.toAdminDto(app);
   }
 
   async adminAmend(
@@ -285,7 +314,8 @@ export class PartnersService {
   ) {
     const app = await this.load(id);
     this.assertVersion(app.version, dto.version, ifMatch);
-    if (!['pending', 'changes_requested', 'approved'].includes(app.status)) {
+    // Admins may curate any application except a rejected one.
+    if (app.status === 'rejected') {
       throw new ApiException(
         HttpStatus.CONFLICT,
         'APPLICATION_NOT_AMENDABLE',
@@ -293,37 +323,29 @@ export class PartnersService {
       );
     }
 
-    const payload = sanitizePayload({
-      ...(app.payload as PartnerApplicationPayload),
-      publicNameEn:
-        dto.publicNameEn ??
-        (app.payload as PartnerApplicationPayload).publicNameEn,
-      publicNameAr:
-        dto.publicNameAr ??
-        (app.payload as PartnerApplicationPayload).publicNameAr,
-      descriptionEn:
-        dto.descriptionEn ??
-        (app.payload as PartnerApplicationPayload).descriptionEn,
-      descriptionAr:
-        dto.descriptionAr ??
-        (app.payload as PartnerApplicationPayload).descriptionAr,
-      address:
-        dto.address ?? (app.payload as PartnerApplicationPayload).address,
-    });
+    const base = app.payload as PartnerApplicationPayload;
+    // A full `payload` gives the admin control over everything; otherwise fall
+    // back to the legacy field-level overrides.
+    const merged: PartnerApplicationPayload = dto.payload
+      ? { ...base, ...(dto.payload as unknown as PartnerApplicationPayload) }
+      : {
+          ...base,
+          publicNameEn: dto.publicNameEn ?? base.publicNameEn,
+          publicNameAr: dto.publicNameAr ?? base.publicNameAr,
+          descriptionEn: dto.descriptionEn ?? base.descriptionEn,
+          descriptionAr: dto.descriptionAr ?? base.descriptionAr,
+          address: dto.address ?? base.address,
+        };
+    const payload = sanitizePayload(merged);
+    const reason = dto.reason?.trim();
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Keep a published venue in sync with content the admin curated. This
+      // updates scalar fields, gallery, sports and amenities but deliberately
+      // never rebuilds courts here (they may carry live bookings) — court
+      // structure changes on live venues go through venue management.
       if (app.venueId) {
-        await tx.venue.update({
-          where: { id: app.venueId },
-          data: {
-            status: 'pending',
-            nameEn: payload.publicNameEn || app.publicNameEn,
-            nameAr: payload.publicNameAr || app.publicNameAr,
-            descriptionEn: payload.descriptionEn,
-            descriptionAr: payload.descriptionAr,
-            address: payload.address,
-          },
-        });
+        await this.syncVenueContent(tx, app.venueId, payload);
       }
       return tx.partnerApplication.update({
         where: { id },
@@ -331,36 +353,144 @@ export class PartnersService {
           payload: payload as Prisma.InputJsonValue,
           publicNameEn: payload.publicNameEn || app.publicNameEn,
           publicNameAr: payload.publicNameAr || app.publicNameAr,
-          status: 'pending',
+          contactPhone: payload.contactPhone || app.contactPhone,
+          countryCode:
+            normalizeCountryCode(payload.countryCode) ?? app.countryCode,
+          governorateId: payload.governorateId ?? app.governorateId,
+          districtId: payload.districtId ?? app.districtId,
+          lat: payload.lat ?? undefined,
+          lng: payload.lng ?? undefined,
           version: { increment: 1 },
           events: {
             create: {
               actorUserId: adminId,
               fromStatus: app.status,
-              toStatus: 'pending',
-              note: dto.reason,
+              toStatus: app.status,
+              note: reason || 'Admin edited the listing',
             },
           },
         },
         include: {
           owner: {
-            select: { id: true, name: true, email: true, username: true },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              username: true,
+              phone: true,
+            },
           },
+          venue: { select: { id: true, slug: true, status: true } },
           events: { orderBy: { createdAt: 'desc' }, take: 20 },
         },
       });
     });
 
-    await this.notifications.create({
-      userId: app.ownerId,
-      category: 'bookings',
-      titleEn: 'Your listing was updated by Mal3ab',
-      titleAr: 'تم تحديث إعلانك بواسطة ملعب',
-      bodyEn: dto.reason,
-      bodyAr: dto.reason,
-      deepLink: `/partners/join?application=${id}`,
-    });
+    if (app.venueId) {
+      await this.venues.refreshVenuePriceFrom(app.venueId);
+    }
+    // Only ping the partner when the admin actually left a message for them.
+    if (reason) {
+      await this.notifications.create({
+        userId: app.ownerId,
+        category: 'bookings',
+        titleEn: 'Your listing was updated by Mal3ab',
+        titleAr: 'تم تحديث إعلانك بواسطة ملعب',
+        bodyEn: reason,
+        bodyAr: reason,
+        deepLink: `/partners/join?application=${id}`,
+      });
+    }
     return this.toAdminDto(updated);
+  }
+
+  /**
+   * Propagates admin-curated content to a live venue without touching courts.
+   * Safe to run repeatedly: scalars are overwritten, gallery/sports/amenities
+   * are rebuilt from the payload.
+   */
+  private async syncVenueContent(
+    tx: Prisma.TransactionClient,
+    venueId: string,
+    payload: PartnerApplicationPayload,
+  ) {
+    const cancellationPolicy =
+      payload.cancellationPreset && payload.cancellationPreset !== 'custom'
+        ? CANCELLATION_PRESETS[payload.cancellationPreset]
+        : payload.cancellationPolicy;
+
+    await tx.venue.update({
+      where: { id: venueId },
+      data: {
+        ...(payload.publicNameEn ? { nameEn: payload.publicNameEn } : {}),
+        ...(payload.publicNameAr ? { nameAr: payload.publicNameAr } : {}),
+        descriptionEn: payload.descriptionEn,
+        descriptionAr: payload.descriptionAr,
+        address: payload.address,
+        ...(payload.contactPhone ? { contactPhone: payload.contactPhone } : {}),
+        ...(cancellationPolicy ? { cancellationPolicy } : {}),
+        houseRules: payload.houseRules,
+        ...(payload.weeklyHours
+          ? {
+              weeklyHours:
+                payload.weeklyHours as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
+        ...(payload.lat != null && payload.lng != null
+          ? {
+              lat: payload.lat,
+              lng: payload.lng,
+              geohash: encodeGeohash(payload.lat, payload.lng),
+            }
+          : {}),
+      },
+    });
+
+    const photos = payload.photos ?? [];
+    await tx.venuePhoto.deleteMany({ where: { venueId } });
+    if (photos.length) {
+      await tx.venuePhoto.createMany({
+        data: photos.map((photo, position) => ({
+          venueId,
+          url: photo.url!,
+          position: photo.isCover ? 0 : position + 1,
+        })),
+      });
+    }
+
+    const sportIds = Array.from(
+      new Set((payload.courts ?? []).map((c) => c.sportId).filter(Boolean)),
+    ) as string[];
+    if (sportIds.length) {
+      const inUse = await tx.court.findMany({
+        where: { venueId },
+        select: { sportId: true },
+      });
+      const required = new Set([...sportIds, ...inUse.map((c) => c.sportId)]);
+      await tx.venueSport.deleteMany({
+        where: { venueId, sportId: { notIn: [...required] } },
+      });
+      await tx.venueSport.createMany({
+        data: [...required].map((sportId) => ({ venueId, sportId })),
+        skipDuplicates: true,
+      });
+    }
+
+    const amenityKeys = Array.from(
+      new Set((payload.courts ?? []).flatMap((c) => c.amenityKeys ?? [])),
+    );
+    await tx.venueAmenity.deleteMany({ where: { venueId } });
+    if (amenityKeys.length) {
+      const amenities = await tx.amenity.findMany({
+        where: { key: { in: amenityKeys } },
+      });
+      if (amenities.length) {
+        await tx.venueAmenity.createMany({
+          data: amenities.map((a) => ({ venueId, amenityId: a.id })),
+          skipDuplicates: true,
+        });
+      }
+    }
   }
 
   async decide(
@@ -372,65 +502,102 @@ export class PartnersService {
     const app = await this.load(id);
     this.assertVersion(app.version, dto.version, ifMatch);
     this.assertDecisionAllowed(app.status, dto.action);
-    if (
-      ['reject', 'request_changes', 'suspend'].includes(dto.action) &&
-      !(dto.note && dto.note.trim().length >= 10)
-    ) {
+    const needsPartnerNote =
+      dto.action === 'reject' || dto.action === 'request_changes';
+    if (needsPartnerNote && !(dto.note && dto.note.trim().length >= 10)) {
       throw new ApiException(
         HttpStatus.BAD_REQUEST,
         'DECISION_NOTE_REQUIRED',
-        'A note of 10–1000 characters is required for this decision',
+        'A note of 10–1000 characters is required when rejecting or requesting changes',
       );
     }
 
     const nextStatus = this.statusForAction(dto.action);
     const payload = sanitizePayload(app.payload as PartnerApplicationPayload);
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      let venueId = app.venueId;
-      if (dto.action === 'approve') {
-        venueId = await this.publishVenue(
-          tx,
-          adminId,
-          app.ownerId,
-          payload,
-          venueId,
+    if (dto.action === 'approve') {
+      payload.courts = (payload.courts ?? []).map((court) => ({
+        ...court,
+        sportId: this.normalizeSportId(court.sportId),
+      }));
+      const errors = validatePartnerSubmission(payload);
+      if (errors.length) {
+        throw new ApiException(
+          HttpStatus.BAD_REQUEST,
+          'APPLICATION_INCOMPLETE',
+          errors.join('; '),
         );
-      } else if (dto.action === 'suspend' && venueId) {
-        await tx.venue.update({
-          where: { id: venueId },
-          data: { status: 'suspended' },
-        });
-      } else if (dto.action === 'request_changes' && venueId) {
-        await tx.venue.update({
-          where: { id: venueId },
-          data: { status: 'pending' },
-        });
       }
+      await this.assertGeoAndSports(payload);
+    }
 
-      return tx.partnerApplication.update({
-        where: { id },
-        data: {
-          status: nextStatus,
-          venueId,
-          version: { increment: 1 },
-          events: {
-            create: {
-              actorUserId: adminId,
-              fromStatus: app.status,
-              toStatus: nextStatus,
-              note: dto.note?.trim() || 'Approved',
+    let updated;
+    try {
+      updated = await this.prisma.$transaction(async (tx) => {
+        let venueId = app.venueId;
+        if (dto.action === 'approve') {
+          venueId = await this.publishVenue(
+            tx,
+            adminId,
+            app.ownerId,
+            payload,
+            venueId,
+          );
+        } else if (dto.action === 'suspend' && venueId) {
+          await tx.venue.update({
+            where: { id: venueId },
+            data: { status: 'suspended' },
+          });
+        } else if (dto.action === 'request_changes' && venueId) {
+          await tx.venue.update({
+            where: { id: venueId },
+            data: { status: 'pending' },
+          });
+        }
+
+        return tx.partnerApplication.update({
+          where: { id },
+          data: {
+            status: nextStatus,
+            venueId,
+            version: { increment: 1 },
+            events: {
+              create: {
+                actorUserId: adminId,
+                fromStatus: app.status,
+                toStatus: nextStatus,
+                note:
+                  dto.note?.trim() ||
+                  (dto.action === 'approve'
+                    ? 'Approved'
+                    : dto.action === 'suspend'
+                      ? 'Suspended'
+                      : null),
+              },
             },
           },
-        },
-        include: {
-          owner: {
-            select: { id: true, name: true, email: true, username: true },
+          include: {
+            owner: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                username: true,
+                phone: true,
+              },
+            },
+            venue: { select: { id: true, slug: true, status: true } },
+            events: { orderBy: { createdAt: 'desc' }, take: 20 },
           },
-          events: { orderBy: { createdAt: 'desc' }, take: 20 },
-        },
+        });
       });
-    });
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'PUBLISH_FAILED',
+        this.humanizePublishError(err),
+      );
+    }
 
     if (dto.action === 'approve' && updated.venueId) {
       await this.venues.refreshVenuePriceFrom(updated.venueId);
@@ -493,8 +660,20 @@ export class PartnersService {
     existingVenueId: string | null,
   ): Promise<string> {
     const countryCode = normalizeCountryCode(payload.countryCode) ?? 'EG';
-    const lat = payload.lat!;
-    const lng = payload.lng!;
+    const lat = payload.lat;
+    const lng = payload.lng;
+    if (
+      lat == null ||
+      lng == null ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    ) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'INVALID_LOCATION',
+        'A confirmed map location is required before publishing',
+      );
+    }
     const cancellationPolicy =
       payload.cancellationPreset && payload.cancellationPreset !== 'custom'
         ? CANCELLATION_PRESETS[payload.cancellationPreset]
@@ -544,7 +723,11 @@ export class PartnersService {
     }
 
     const sportIds = Array.from(
-      new Set((payload.courts ?? []).map((c) => c.sportId).filter(Boolean)),
+      new Set(
+        (payload.courts ?? [])
+          .map((c) => this.normalizeSportId(c.sportId))
+          .filter(Boolean),
+      ),
     ) as string[];
     if (sportIds.length) {
       await tx.venueSport.createMany({
@@ -597,14 +780,26 @@ export class PartnersService {
           })
         )?.currency ?? 'EGP';
 
-      const sportCategory = draft.sportId
-        ? await tx.sportCategory.findUnique({
-            where: { id: draft.sportId },
-            select: { activityKind: true },
-          })
+      const sportId = this.normalizeSportId(draft.sportId);
+      const sportCategory = sportId
+        ? ((await tx.sportCategory.findUnique({
+            where: { id: sportId },
+            select: { id: true, activityKind: true },
+          })) ??
+          (await tx.sportCategory.findUnique({
+            where: { slug: sportId.replace(/^sport-/, '') },
+            select: { id: true, activityKind: true },
+          })))
         : null;
+      if (!sportCategory) {
+        throw new ApiException(
+          HttpStatus.BAD_REQUEST,
+          'INVALID_SPORT',
+          `Unknown sport on court ${index + 1}`,
+        );
+      }
       const { gamingConfig, tableConfig, ageRating } = buildActivityFields(
-        sportCategory?.activityKind,
+        sportCategory.activityKind,
         draft.spec,
       );
 
@@ -614,7 +809,7 @@ export class PartnersService {
           where: { id: courtId },
           data: {
             name: draft.name || `Court ${index + 1}`,
-            sportId: draft.sportId!,
+            sportId: sportCategory.id,
             surface: draft.surface,
             indoor: draft.indoor ?? false,
             format: draft.format,
@@ -633,7 +828,7 @@ export class PartnersService {
           data: {
             venueId: venueId,
             name: draft.name || `Court ${index + 1}`,
-            sportId: draft.sportId!,
+            sportId: sportCategory.id,
             surface: draft.surface,
             indoor: draft.indoor ?? false,
             format: draft.format,
@@ -656,7 +851,7 @@ export class PartnersService {
             label: 'base',
             daysOfWeek: [],
             startTime: '00:00',
-            endTime: '24:00',
+            endTime: '23:59',
             priceAmount: pricing.base,
             currency,
             priority: 0,
@@ -789,6 +984,10 @@ export class PartnersService {
 
   private async assertGeoAndSports(payload: PartnerApplicationPayload) {
     const countryCode = normalizeCountryCode(payload.countryCode) ?? 'EG';
+    const sportIds = (payload.courts ?? [])
+      .map((c) => this.normalizeSportId(c.sportId))
+      .filter(Boolean) as string[];
+    const sportSlugs = sportIds.map((id) => id.replace(/^sport-/, ''));
     const [governorate, district, sports] = await Promise.all([
       this.prisma.governorate.findUnique({
         where: { id: payload.governorateId! },
@@ -796,9 +995,7 @@ export class PartnersService {
       this.prisma.district.findUnique({ where: { id: payload.districtId! } }),
       this.prisma.sportCategory.findMany({
         where: {
-          id: {
-            in: (payload.courts ?? []).map((c) => c.sportId!).filter(Boolean),
-          },
+          OR: [{ id: { in: sportIds } }, { slug: { in: sportSlugs } }],
         },
       }),
     ]);
@@ -817,9 +1014,12 @@ export class PartnersService {
       );
     }
     const known = new Set(sports.map((s) => s.id));
-    const missing = (payload.courts ?? []).filter(
-      (c) => !known.has(c.sportId!),
-    );
+    const slugs = new Set(sports.map((s) => s.slug));
+    const missing = (payload.courts ?? []).filter((c) => {
+      const id = this.normalizeSportId(c.sportId);
+      if (!id) return true;
+      return !known.has(id) && !slugs.has(id.replace(/^sport-/, ''));
+    });
     if (missing.length) {
       throw new ApiException(
         HttpStatus.BAD_REQUEST,
@@ -835,7 +1035,12 @@ export class PartnersService {
   ) {
     if (role === 'admin') {
       return {
-        canAmend: ['pending', 'changes_requested', 'approved'].includes(status),
+        canAmend: [
+          'pending',
+          'changes_requested',
+          'approved',
+          'suspended',
+        ].includes(status),
         canApprove: ['pending', 'suspended'].includes(status),
         canReject: status === 'pending',
         canRequestChanges: ['pending', 'suspended'].includes(status),
@@ -904,13 +1109,43 @@ export class PartnersService {
         name: string;
         email: string | null;
         username: string | null;
+        phone?: string | null;
       };
+      venue?: { id: string; slug?: string; status?: VenueStatus } | null;
     },
   ) {
     return {
       ...this.toOwnerDto(row),
       owner: row.owner,
+      venue: row.venue ?? (row.venueId ? { id: row.venueId } : null),
       allowedActions: this.allowedActions(row.status, 'admin'),
     };
+  }
+
+  private normalizeSportId(id?: string | null): string | undefined {
+    const value = (id ?? '').trim();
+    if (!value) return undefined;
+    return value.startsWith('sport-') ? value : `sport-${value}`;
+  }
+
+  private humanizePublishError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err ?? '');
+    const lower = raw.toLowerCase();
+    if (lower.includes('foreign key') || lower.includes('p2003')) {
+      return 'A court references an unknown sport, or the selected area is invalid.';
+    }
+    if (lower.includes('unique') || lower.includes('p2002')) {
+      return 'A venue with this name already exists. Rename the listing and retry.';
+    }
+    if (lower.includes('null') && (lower.includes('lat') || lower.includes('lng'))) {
+      return 'The map location is missing. Confirm the pin, then approve again.';
+    }
+    if (
+      raw.length > 220 ||
+      /prisma|invocation|postgres|sql/i.test(raw)
+    ) {
+      return 'Publishing failed because the listing data is incomplete or invalid. Review courts, photos, location and hours, then retry.';
+    }
+    return raw || 'Publishing failed. Review the listing and retry.';
   }
 }
