@@ -33,7 +33,7 @@ export class VerifyOtpDto {
   @ApiPropertyOptional({
     example: 'a1b2c3d4-...',
     description:
-      "The inviting friend's User.referralCode, captured only when this phone is creating a new account (MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1's referral.completed event). Ignored for an existing account.",
+      "The inviting friend's User.referralCode, captured only when this phone is creating a new account (MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1's referral.completed event). Ignored for an existing account.",
   })
   @IsOptional()
   @IsString()

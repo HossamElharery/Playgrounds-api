@@ -4,7 +4,7 @@ export type PresenceState = 'online' | 'offline' | 'in_squad';
 
 /**
  * In-memory presence tracker (single-instance deployment — see
- * MAL3AB_BACKEND.md for the Redis-adapter upgrade path for multi-instance).
+ * MATCHENA_BACKEND.md for the Redis-adapter upgrade path for multi-instance).
  * The realtime gateway updates this on socket connect/disconnect; the
  * social/friends module reads it for the `presence` field in DirectThreadSummary
  * and the friends list (§16.5).

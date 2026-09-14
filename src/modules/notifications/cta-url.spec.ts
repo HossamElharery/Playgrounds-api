@@ -7,8 +7,8 @@ describe('sanitizeNotificationCtaUrl', () => {
   });
 
   it('keeps https URLs', () => {
-    expect(sanitizeNotificationCtaUrl('https://mal3ab.app/ar/explore')).toBe(
-      'https://mal3ab.app/ar/explore',
+    expect(sanitizeNotificationCtaUrl('https://matchena.com/ar/explore')).toBe(
+      'https://matchena.com/ar/explore',
     );
   });
 

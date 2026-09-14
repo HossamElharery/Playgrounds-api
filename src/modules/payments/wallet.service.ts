@@ -1,12 +1,13 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { PaymentMethod, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider.interface';
 import { WALLET_TOP_UP_METHODS } from './dto/top-up-wallet.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type WalletDb = Prisma.TransactionClient | PrismaService;
 
-export type WalletDebitReason = 'booking' | 'bundle' | 'membership';
+export type WalletDebitReason = 'booking' | 'bundle' | 'membership' | 'tournament' | 'withdrawal';
 export type WalletCreditReason = 'topup' | 'refund';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class WalletService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async get(userId: string) {
@@ -149,6 +151,84 @@ export class WalletService {
         providerRef: params.providerRef,
       },
     });
+  }
+
+  /** Reserves the funds immediately (so they can't be spent twice while an
+   *  admin reviews this) and files a request. There's no payout provider
+   *  wired up yet — `resolveWithdrawal` is how an admin marks it actually
+   *  paid out, or rejects it and the funds come back. */
+  async requestWithdrawal(userId: string, amount: number, destination: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.debit(tx, { userId, amount, reason: 'withdrawal' });
+      return tx.walletWithdrawalRequest.create({
+        data: { userId, amount, destination },
+      });
+    });
+  }
+
+  listWithdrawals(status?: 'pending' | 'paid' | 'rejected') {
+    return this.prisma.walletWithdrawalRequest.findMany({
+      where: status ? { status } : undefined,
+      include: { user: { select: { id: true, name: true, phone: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  async resolveWithdrawal(
+    adminId: string,
+    id: string,
+    status: 'paid' | 'rejected',
+    note?: string,
+  ) {
+    const request = await this.prisma.walletWithdrawalRequest.findUnique({
+      where: { id },
+    });
+    if (!request) throw new NotFoundException('Withdrawal request not found');
+    if (request.status !== 'pending')
+      throw new ForbiddenException('Already resolved');
+
+    const resolved = await this.prisma.$transaction(async (tx) => {
+      // Claim the pending request before moving any money. Two admins can open
+      // the same row, but only one may transition it and (on rejection) refund
+      // the reserved balance.
+      const claimed = await tx.walletWithdrawalRequest.updateMany({
+        where: { id, status: 'pending' },
+        data: {
+          status,
+          note,
+          resolvedByUserId: adminId,
+          resolvedAt: new Date(),
+        },
+      });
+      if (claimed.count !== 1)
+        throw new ForbiddenException('Already resolved');
+
+      if (status === 'rejected') {
+        await this.credit(tx, {
+          userId: request.userId,
+          amount: request.amount,
+          reason: 'refund',
+        });
+      }
+
+      return tx.walletWithdrawalRequest.findUniqueOrThrow({ where: { id } });
+    });
+
+    await this.notifications
+      .create({
+        userId: request.userId,
+        category: 'bookings',
+        titleEn: status === 'paid' ? 'Your withdrawal was sent' : 'Your withdrawal was declined',
+        titleAr: status === 'paid' ? 'تم تحويل مبلغ السحب' : 'تم رفض طلب السحب',
+        bodyEn: status === 'rejected' ? (note || 'The amount was returned to your wallet.') : undefined,
+        bodyAr: status === 'rejected' ? (note || 'المبلغ رجع لمحفظتك.') : undefined,
+        deepLink: '/app/wallet',
+        payload: { withdrawalId: id, status },
+      })
+      .catch(() => undefined);
+
+    return resolved;
   }
 
   private topUpMethodsFor(countryMethods: string[]): PaymentMethod[] {

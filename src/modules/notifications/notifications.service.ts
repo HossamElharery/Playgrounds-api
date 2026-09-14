@@ -23,8 +23,12 @@ const DEFAULT_PREFS: Record<string, boolean> = {
   friends: true,
   matches: true,
   squad: true,
+  teams: true,
   bookings: true,
+  tournaments: true,
+  rewards: true,
   pulse: true,
+  system: true,
   marketing: false,
 };
 

@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsInt, IsString, Max, Min } from 'class-validator';
 
-/** Matches AvatarConfig in core/models/mal3ab.model.ts (§13.2). */
+/** Matches AvatarConfig in core/models/matchena.model.ts (§13.2). */
 export class UpdateAvatarConfigDto {
   @ApiProperty({ example: '#c68642' })
   @IsString()

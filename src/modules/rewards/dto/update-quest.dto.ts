@@ -15,7 +15,7 @@ export class UpdateQuestDto {
   @ApiPropertyOptional({
     example: { target: 3, event: 'booking.completed', scope: { activityKind: 'gaming-station' } },
     description:
-      'MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §3 — target count, which event bumps it, and an optional scope (activityKind and/or activityId). Omit scope to apply to every activity.',
+      'MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §3 — target count, which event bumps it, and an optional scope (activityKind and/or activityId). Omit scope to apply to every activity.',
   })
   @IsOptional()
   @IsObject()

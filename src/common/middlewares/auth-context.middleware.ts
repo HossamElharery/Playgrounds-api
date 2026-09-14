@@ -50,6 +50,6 @@ export class AuthContextMiddleware implements NestMiddleware {
   private extractTokenFromCookie(request: Request): string | undefined {
     const cookies = (request as unknown as { cookies?: Record<string, string> })
       .cookies;
-    return cookies?.['mal3ab_access_token'];
+    return cookies?.['matchena_access_token'];
   }
 }

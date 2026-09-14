@@ -5,7 +5,7 @@ export class AppService {
   health() {
     return {
       status: 'ok',
-      service: 'mal3ab-api',
+      service: 'matchena-api',
       time: new Date().toISOString(),
     };
   }

@@ -18,7 +18,6 @@ import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
-import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -71,18 +70,18 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login with email + password (start here)',
     description:
-      'Use seed admin admin@mal3ab.app / Password123! then copy result.accessToken and click Authorize.',
+      'Use seed admin admin@matchena.com / Password123! then copy result.accessToken and click Authorize.',
   })
   @ApiBody({
     type: LoginEmailDto,
     examples: {
       admin: {
         summary: 'Admin (seed)',
-        value: { email: 'admin@mal3ab.app', password: 'Password123!' },
+        value: { email: 'admin@matchena.com', password: 'Password123!' },
       },
       owner: {
         summary: 'Venue owner (seed)',
-        value: { email: 'owner@mal3ab.app', password: 'Password123!' },
+        value: { email: 'owner@matchena.com', password: 'Password123!' },
       },
     },
   })
@@ -96,14 +95,6 @@ export class AuthController {
   @Post('oauth/google')
   async oauthGoogle(@Body() dto: OAuthGoogleDto) {
     const result = await this.authService.oauthGoogle(dto);
-    return { message: 'authenticated', result };
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('oauth/apple')
-  async oauthApple(@Body() dto: OAuthAppleDto) {
-    const result = await this.authService.oauthApple(dto);
     return { message: 'authenticated', result };
   }
 

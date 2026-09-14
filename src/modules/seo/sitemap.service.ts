@@ -13,7 +13,7 @@ export class SitemapService {
     private readonly prisma: PrismaService,
     config: ConfigService,
   ) {
-    this.siteUrl = (config.get<string>('SITE_URL') || 'https://mal3ab.app').replace(/\/$/, '');
+    this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
 
   private localizedEntry(path: string, lastmod?: Date, images: string[] = []): string {

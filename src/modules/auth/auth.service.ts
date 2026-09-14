@@ -30,10 +30,7 @@ import {
 } from '../../common/utils/username.util';
 import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
-import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
-import * as jwt from 'jsonwebtoken';
-import jwksClient from 'jwks-rsa';
 
 export interface TokenPair {
   accessToken: string;
@@ -568,16 +565,13 @@ export class AuthService {
   listLoginProviders(): {
     google: { enabled: boolean; clientId?: string };
     facebook: { enabled: boolean; appId?: string };
-    apple: { enabled: boolean; clientId?: string };
     passkeys: { enabled: boolean };
   } {
     const google = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
     const facebook = this.config.get<string>('FACEBOOK_APP_ID')?.trim() || '';
-    const apple = this.config.get<string>('APPLE_CLIENT_ID')?.trim() || '';
     return {
       google: { enabled: !!google, clientId: google || undefined },
       facebook: { enabled: !!facebook, appId: facebook || undefined },
-      apple: { enabled: !!apple, clientId: apple || undefined },
       passkeys: { enabled: true },
     };
   }
@@ -630,40 +624,6 @@ export class AuthService {
       email: claims.email,
       name: claims.name ?? 'Player',
       avatarUrl: claims.picture,
-    });
-    const tokens = await this.issueTokenPair(user);
-    return { ...tokens, user: this.sanitize(user) };
-  }
-
-  async oauthApple(
-    dto: OAuthAppleDto,
-  ): Promise<TokenPair & { user: Partial<User> }> {
-    const clientId = this.config.get<string>('APPLE_CLIENT_ID')?.trim();
-    if (!clientId) {
-      throw new NotImplementedException(
-        'Apple sign-in is not configured yet — set APPLE_CLIENT_ID/APPLE_TEAM_ID/APPLE_KEY_ID in .env',
-      );
-    }
-
-    const client = jwksClient({
-      jwksUri: 'https://appleid.apple.com/auth/keys',
-    });
-
-    const decoded = jwt.decode(dto.identityToken, { complete: true });
-    if (!decoded || typeof decoded === 'string')
-      throw new UnauthorizedException('Invalid Apple token');
-    const key = await client.getSigningKey(decoded.header.kid);
-    const claims = jwt.verify(dto.identityToken, key.getPublicKey(), {
-      audience: clientId,
-      issuer: 'https://appleid.apple.com',
-    }) as { email?: string; sub: string };
-
-    const email = claims.email ?? `${claims.sub}@appleid.private`;
-    const user = await this.findOrCreateOAuthUser({
-      provider: 'apple',
-      providerUserId: claims.sub,
-      email,
-      name: dto.name ?? 'Player',
     });
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
@@ -769,7 +729,7 @@ export class AuthService {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          email: email ?? `${input.provider}-${input.providerUserId}@oauth.mal3ab.local`,
+          email: email ?? `${input.provider}-${input.providerUserId}@oauth.matchena.local`,
           phone: `pending-${crypto.randomUUID()}`,
           name: input.name,
           avatarUrl: input.avatarUrl,

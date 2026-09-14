@@ -1,4 +1,4 @@
-# Mal3ab Backend — Complete Reference
+# Matchena Backend — Complete Reference
 
 **Audience:** any AI assistant, mobile developer, or frontend developer picking this up with zero prior context. This document is self-contained — you should not need to read the source to understand what the API does, how it's shaped, and what it guarantees.
 
@@ -13,7 +13,7 @@
 1. Read **this file** for architecture, invariants, stubs, and route map.
 2. Use **`GET /api/docs`** (or `GET /api/docs-json`) for exact fields, examples, and enums.
 3. DTOs live in `src/modules/<name>/dto/*.dto.ts` with `@ApiProperty` examples — if Swagger and this file disagree, **the DTO + Prisma schema win**.
-4. Seed logins: `admin@mal3ab.app` / `owner@mal3ab.app` / username `elmalek` — password `Password123!`.
+4. Seed logins: `admin@matchena.com` / `owner@matchena.com` / username `elmalek` — password `Password123!`.
 5. Global prefix is **`/api/v1`**. Successful bodies are `{ message, result, pagination? }`. Typed failures also include `code` when the message is a stable machine token (e.g. `SLOT_ALREADY_HELD`, `APPLICATION_VERSION_CONFLICT`).
 6. Partner writes send `If-Match: <version>` or `body.version`. Stale writes return **409 `APPLICATION_VERSION_CONFLICT`**.
 
@@ -99,7 +99,7 @@ This uniformity is deliberate: adding a new module is "copy the pattern," not "i
 
 | Module | Responsibility |
 |---|---|
-| `auth` | Phone-OTP (primary) + email/password (owner/staff/admin) login, refresh/rotate, logout, Google/Apple OAuth (wired, inert until client IDs configured), password reset |
+| `auth` | Phone-OTP (primary) + email/password (owner/staff/admin) login, refresh/rotate, logout, Google/Facebook OAuth (wired, inert until client IDs configured), password reset |
 | `rbac` | Fine-grained permission table for **venue-owner staff sub-roles** (e.g. "receptionist: check-in + calendar only") — separate from the four top-level roles |
 | `users` | Profile, avatar/avatarConfig, public player profile, admin user list/suspend |
 | `venues` | Venue/court CRUD, pricing rules, amenities, photos, geo search, weekly hours, availability-aware search |
@@ -110,7 +110,7 @@ This uniformity is deliberate: adding a new module is "copy the pattern," not "i
 | `chat` | Direct/match/team threads, cursor-paginated messages, idempotent sends, read state |
 | `squad` | PUBG-style party: invites, join requests, leader actions, mic-mute signaling (no WebRTC audio — see §8) |
 | `rewards` | Coin ledger, daily streak, quests, badges, promo codes, leaderboards |
-| `pulse` | "Mal3ab Pulse" live demand network + Rescue Match claim state machine |
+| `pulse` | "Matchena Pulse" live demand network + Rescue Match claim state machine |
 | `notifications` | In-app inbox (push dispatch is a documented extension point, see §8) |
 | `partners` | Partner register/login/username, versioned applications, submit gate, admin review/decisions, atomic publish |
 | `owner` | Dashboard KPIs + application status, calendar + blocks, walk-ins, finance CSV, payouts, staff, QR verify, no-show |
@@ -181,7 +181,7 @@ Both of these are the kind of bug that's invisible in a demo and catastrophic in
 
 **Owner/staff/admin flow:** `POST /auth/register` (email+password+phone+name, `roles: ['owner']`) and `POST /auth/login` (email+password). Partners use `POST /partners/register` (username + password 10–128 with letters and numbers) and `POST /partners/login` (username **or** email). An existing player with the same phone and no password is upgraded to `owner` rather than rejected.
 
-**OAuth:** `GET /auth/providers` returns which social buttons the client should render (public client IDs only). `POST /auth/oauth/google { idToken }`, `POST /auth/oauth/facebook { accessToken }`, and `POST /auth/oauth/apple { identityToken }` verify the token with the provider, then find-or-create a player via `OAuthIdentity` (linked by verified email when the same person already exists). They throw `501` until `GOOGLE_CLIENT_ID` / `FACEBOOK_APP_ID`+`FACEBOOK_APP_SECRET` / `APPLE_CLIENT_ID` are set — no mock mode.
+**OAuth:** `GET /auth/providers` returns which social buttons the client should render (public client IDs only). `POST /auth/oauth/google { idToken }` and `POST /auth/oauth/facebook { accessToken }` verify the token with the provider, then find-or-create a player via `OAuthIdentity` (linked by verified email when the same person already exists). They throw `501` until `GOOGLE_CLIENT_ID` / `FACEBOOK_APP_ID`+`FACEBOOK_APP_SECRET` are set — no mock mode.
 
 **Passkeys (Face ID / fingerprint / Windows Hello):** WebAuthn discoverable credentials. `POST /auth/webauthn/authenticate/options` + `verify` is usernameless (the OS picker is Face ID on iPhone, fingerprint on Android). After any successful login, the client can `POST /auth/webauthn/register/options` + `verify` (authenticated) to save this device. `GET/DELETE /auth/webauthn/credentials` manages them. Challenges are short-lived JWTs, not server sessions.
 
@@ -198,7 +198,7 @@ Both of these are the kind of bug that's invisible in a demo and catastrophic in
 Full request/response DTOs are in Swagger (`/api/docs`) and `src/modules/<name>/dto/`. This is the route map.
 
 ### auth (`/auth`)
-`GET providers` · `POST otp/request` · `POST otp/verify` · `POST register` · `POST login` · `POST oauth/google` · `POST oauth/facebook` · `POST oauth/apple` · `POST webauthn/authenticate/options` · `POST webauthn/authenticate/verify` · `POST webauthn/register/options` (auth) · `POST webauthn/register/verify` (auth) · `GET/DELETE webauthn/credentials` (auth) · `POST refresh` · `POST logout` · `POST logout-all` (auth) · `POST password/forgot` · `POST password/reset`
+`GET providers` · `POST otp/request` · `POST otp/verify` · `POST register` · `POST login` · `POST oauth/google` · `POST oauth/facebook` · `POST webauthn/authenticate/options` · `POST webauthn/authenticate/verify` · `POST webauthn/register/options` (auth) · `POST webauthn/register/verify` (auth) · `GET/DELETE webauthn/credentials` (auth) · `POST refresh` · `POST logout` · `POST logout-all` (auth) · `POST password/forgot` · `POST password/reset`
 
 ### rbac (`/rbac`, owner only)
 `GET permissions` · `GET roles` · `POST roles` · `POST assignments` · `DELETE assignments/:id`
@@ -300,11 +300,11 @@ See `.env.example` for the authoritative list with inline comments. Summary:
 
 | Variable | Purpose | Dev default |
 |---|---|---|
-| `DATABASE_URL` | Postgres connection | local `mal3ab_dev` |
+| `DATABASE_URL` | Postgres connection | local `matchena_dev` |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Token signing (min 32 chars, boot fails without them) | generate with `openssl rand -hex 32` |
 | `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Token lifetimes | `15m` / `7d` |
 | `SALT_ROUNDS` | bcrypt cost | `10` |
-| `GOOGLE_CLIENT_ID` / `FACEBOOK_APP_ID`+`SECRET` / `APPLE_CLIENT_ID` | Social login | empty → that provider is hidden and its endpoint 501s |
+| `GOOGLE_CLIENT_ID` / `FACEBOOK_APP_ID`+`SECRET` | Social login | empty → that provider is hidden and its endpoint 501s |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGINS` | Passkeys (Face ID / fingerprint) | `localhost` / `http://localhost:4200` |
 | `OTP_PROVIDER` | `console` only for now | `console` |
 | `STORAGE_PROVIDER` | `local` or `s3` | `local` |
@@ -322,7 +322,7 @@ Startup fails fast with a clear message (Joi schema in `common/config/env.valida
 ## 8. What's intentionally stubbed — do not mistake these for bugs
 
 - **SMS delivery** — `OtpDelivery` logs to the console. Implement the interface (`modules/sms/otp-delivery.interface.ts`) against a real provider (Twilio etc.) and swap it in `sms.module.ts`; nothing else changes, because the OTP never touches an HTTP response.
-- **OAuth secrets** — Google/Facebook/Apple verify real tokens correctly but 501 until real client IDs/secrets are in `.env`. Passkeys (Face ID / fingerprint) work without any of those.
+- **OAuth secrets** — Google/Facebook verify real tokens correctly but 501 until real client IDs/secrets are in `.env`. Passkeys (Face ID / fingerprint) work without any of those.
 - **Payments** — `MockPaymentProvider` always "succeeds" (except cash, which stays pending). Swap `PaymentProvider` for a real PSP integration in `payments.module.ts`; `BookingsService` never changes.
 - **S3** — `StorageProvider` interface has a full working S3 implementation; it's just not the active one until `STORAGE_PROVIDER=s3` and real AWS credentials are set.
 - **Squad voice media path** — WebRTC **signaling is fully implemented** (offer/answer/ICE/speaking/hangup + `GET /squad/ice-servers`). Audio itself is peer-to-peer in the browser. A TURN server (`TURN_URLS`) is needed for players behind strict NAT; a hosted SFU (LiveKit/mediasoup) is only required if you outgrow a 7-person mesh.
@@ -338,7 +338,7 @@ Startup fails fast with a clear message (Joi schema in `common/config/env.valida
 
 ## 9. Blueprint alignment pass (2026-09-05)
 
-This pass re-read `angular/PROJECT_BLUEPRINT.md` §§1–21 and closed the gaps that the earlier backend (through §19) did not cover. Everything below is live in `mal3ab-api`.
+This pass re-read `angular/PROJECT_BLUEPRINT.md` §§1–21 and closed the gaps that the earlier backend (through §19) did not cover. Everything below is live in `matchena-api`.
 
 ### 9.1 What was missing vs the blueprint
 
@@ -453,7 +453,7 @@ src/common/uploads/document-upload.ts
 src/modules/app/app.module.ts                           — PartnersModule
 ```
 
-Verification: `tsc --noEmit -p tsconfig.build.json` passed. Jest 31/31 (auth, bookings, geo, timezone, QR, username, weekly hours, partner submit gate). Migration `20260905080000_partner_onboarding_owner_ops` applied to `mal3ab_dev`. Seed owner username is `elmalek`.
+Verification: `tsc --noEmit -p tsconfig.build.json` passed. Jest 31/31 (auth, bookings, geo, timezone, QR, username, weekly hours, partner submit gate). Migration `20260905080000_partner_onboarding_owner_ops` applied to `matchena_dev`. Seed owner username is `elmalek`.
 
 ---
 
@@ -462,13 +462,13 @@ Verification: `tsc --noEmit -p tsconfig.build.json` passed. Jest 31/31 (auth, bo
 ```bash
 npm install
 cp .env.example .env        # then fill in secrets, see §7
-createdb mal3ab_dev
+createdb matchena_dev
 npm run prisma:migrate
 npm run seed
 npm run start:dev
 ```
 
-Health check: `GET /` → `{ status: "ok", service: "mal3ab-api", time: ... }`. Swagger: `GET /api/docs`.
+Health check: `GET /` → `{ status: "ok", service: "matchena-api", time: ... }`. Swagger: `GET /api/docs`.
 
 ## 11. Verifying the money path yourself
 

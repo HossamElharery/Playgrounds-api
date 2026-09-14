@@ -78,6 +78,14 @@ export class PulseController {
     return this.pulse.releaseClaim(user.id, id);
   }
 
+  @Post('opportunities/:id/claims/me/confirm')
+  confirmClaim(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.pulse.confirmClaim(user.id, id);
+  }
+
   @UseInterceptors(IdempotencyInterceptor)
   @Post('lobbies/:id/join')
   joinLobby(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {

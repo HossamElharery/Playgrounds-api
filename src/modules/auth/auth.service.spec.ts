@@ -92,7 +92,6 @@ describe('AuthService', () => {
     expect(service.listLoginProviders()).toEqual({
       google: { enabled: false, clientId: undefined },
       facebook: { enabled: false, appId: undefined },
-      apple: { enabled: false, clientId: undefined },
       passkeys: { enabled: true },
     });
   });

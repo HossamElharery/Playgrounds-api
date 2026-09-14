@@ -50,17 +50,17 @@ export class WebAuthnService {
     if (explicit) return explicit;
     if (this.config.get<string>('NODE_ENV') === 'production') {
       try {
-        return new URL(this.config.get<string>('SITE_URL', 'https://mal3ab.app'))
+        return new URL(this.config.get<string>('SITE_URL', 'https://matchena.com'))
           .hostname.replace(/^www\./, '');
       } catch {
-        return 'mal3ab.app';
+        return 'matchena.com';
       }
     }
     return 'localhost';
   }
 
   private rpName(): string {
-    return this.config.get<string>('WEBAUTHN_RP_NAME', 'Mal3ab');
+    return this.config.get<string>('WEBAUTHN_RP_NAME', 'Matchena');
   }
 
   private origins(): string[] {

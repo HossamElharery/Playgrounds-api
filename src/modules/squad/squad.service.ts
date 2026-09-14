@@ -161,23 +161,47 @@ export class SquadService {
     if (invite.status !== 'pending')
       throw new BadRequestException('Already resolved');
 
-    await this.prisma.squadInvite.update({
-      where: { id: inviteId },
-      data: { status: accept ? 'accepted' : 'declined' },
-    });
-
     if (accept) {
+      // Switching squads has to go through leave(), not a bare member delete:
+      // deleting a leader's row directly strands their old squad with members
+      // and no leader, so nobody can ever invite, kick or approve in it again.
       const existingMembership = await this.prisma.squadMember.findFirst({
         where: { userId },
       });
+      if (existingMembership && existingMembership.squadId === invite.squadId)
+        throw new BadRequestException('Already in this squad');
       if (existingMembership)
-        await this.prisma.squadMember.delete({
-          where: { id: existingMembership.id },
+        await this.leave(userId, existingMembership.squadId);
+
+      // Seat check, seat claim and marking the invite used are one atomic step.
+      // Otherwise N pending invites all pass a stale count and overflow the
+      // lobby — and a failure here would leave the invite "accepted" for a
+      // squad the player never actually got into, with no way to retry.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT 1 FROM "Squad" WHERE "id" = ${invite.squadId} FOR UPDATE`;
+        const squad = await tx.squad.findUnique({
+          where: { id: invite.squadId },
         });
-      await this.prisma.squadMember.create({
-        data: { squadId: invite.squadId, userId },
+        if (!squad) throw new NotFoundException('Squad no longer exists');
+        const size = await tx.squadMember.count({
+          where: { squadId: invite.squadId },
+        });
+        if (size >= SQUAD_MAX_SIZE)
+          throw new BadRequestException('Squad is full');
+        await tx.squadMember.create({
+          data: { squadId: invite.squadId, userId },
+        });
+        await tx.squadInvite.update({
+          where: { id: inviteId },
+          data: { status: 'accepted' },
+        });
       });
       this.presence.setInSquad(userId, true);
+    } else {
+      await this.prisma.squadInvite.update({
+        where: { id: inviteId },
+        data: { status: 'declined' },
+      });
     }
 
     this.emitter.emitToUser(invite.fromUserId, {
@@ -199,6 +223,9 @@ export class SquadService {
     if (!request) throw new NotFoundException('Request not found');
     await this.requireLeaderOrThrow(request.squadId, leaderId);
 
+    if (request.status !== 'pending')
+      throw new BadRequestException('Request already resolved');
+
     await this.prisma.squadJoinRequest.update({
       where: { id: requestId },
       data: {
@@ -207,13 +234,45 @@ export class SquadService {
       },
     });
 
-    if (approve) {
-      await this.prisma.squadMember.create({
-        data: { squadId: request.squadId, userId: request.fromUserId },
+    if (!approve) {
+      this.emitter.emitToUser(request.fromUserId, {
+        type: 'squad.join_request.resolved',
+        requestId,
+        status: 'declined',
       });
-      this.presence.setInSquad(request.fromUserId, true);
+      return { approved: false, invited: false };
     }
-    return { approved: approve };
+
+    // A member suggested this player; the leader has now agreed to ask them.
+    // That is still only half the consent — the player themselves never asked
+    // for any of this, so they get a normal invite to accept or decline rather
+    // than being dropped straight into a live voice lobby.
+    const invite = await this.prisma.squadInvite.create({
+      data: {
+        squadId: request.squadId,
+        fromUserId: leaderId,
+        toUserId: request.fromUserId,
+      },
+    });
+    this.emitter.emitToUser(request.fromUserId, {
+      type: 'squad.invite.created',
+      invite,
+    });
+    const leader = await this.prisma.user.findUnique({
+      where: { id: leaderId },
+      select: { name: true },
+    });
+    await this.notifications
+      .create({
+        userId: request.fromUserId,
+        category: 'squad',
+        titleEn: `${leader?.name ?? 'A player'} invited you to a squad`,
+        titleAr: `${leader?.name ?? 'لاعب'} دعاك إلى سكواد`,
+        deepLink: '/app',
+        payload: { inviteId: invite.id, squadId: request.squadId },
+      })
+      .catch(() => undefined);
+    return { approved: true, invited: true };
   }
 
   async kick(leaderId: string, squadId: string, userId: string) {

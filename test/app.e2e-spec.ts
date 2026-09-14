@@ -28,7 +28,7 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect((res) => {
         expect(res.body.result.status).toBe('ok');
-        expect(res.body.result.service).toBe('mal3ab-api');
+        expect(res.body.result.service).toBe('matchena-api');
       });
   });
 
