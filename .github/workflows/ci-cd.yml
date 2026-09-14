@@ -52,5 +52,6 @@ jobs:
             exit 0
           fi
           curl --fail --silent --show-error \
+            --request POST \
             --header "Authorization: Bearer $COOLIFY_TOKEN" \
             "$COOLIFY_WEBHOOK"
