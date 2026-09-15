@@ -14,7 +14,7 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     prisma = {
-      user: { findUnique: jest.fn(), create: jest.fn() },
+      user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
       otpCode: {
         count: jest.fn().mockResolvedValue(0),
         create: jest.fn(),
@@ -115,6 +115,51 @@ describe('AuthService', () => {
     await expect(service.oauthFacebook({ accessToken: 'x' })).rejects.toThrow(
       /not configured/i,
     );
+  });
+
+  it('registers a player by email + password with no phone number', async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({
+      id: 'u2',
+      email: 'nophone@matchena.com',
+      phone: null,
+      name: 'No Phone Player',
+      roles: ['player'],
+      countryCode: 'EG',
+      status: 'active',
+    });
+
+    const result = await service.registerPlayerEmail({
+      email: 'nophone@matchena.com',
+      password: 'Password123!',
+      name: 'No Phone Player',
+    });
+
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'nophone@matchena.com',
+          phone: undefined,
+          roles: ['player'],
+          countryCode: 'EG',
+        }),
+      }),
+    );
+    expect(result.user.phone).toBeNull();
+    expect(result.accessToken).toBe('signed.jwt.token');
+  });
+
+  it('rejects email registration when the email is already in use', async () => {
+    prisma.user.findFirst.mockResolvedValue({ id: 'existing' });
+
+    await expect(
+      service.registerPlayerEmail({
+        email: 'taken@matchena.com',
+        password: 'Password123!',
+        name: 'Someone',
+      }),
+    ).rejects.toThrow(/already in use/i);
+    expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
   it('lists only configured social providers', () => {

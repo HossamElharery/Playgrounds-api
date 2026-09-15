@@ -20,6 +20,7 @@ import { OAuthProvider, OtpPurpose, User } from '@prisma/client';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
+import { RegisterEmailDto } from './dto/register-email.dto';
 import {
   PartnerLoginDto,
   PartnerRegisterDto,
@@ -288,6 +289,37 @@ export class AuthService {
         name: dto.name,
         passwordHash,
         roles: ['owner'],
+        countryCode,
+      },
+    });
+
+    const tokens = await this.issueTokenPair(user);
+    return { ...tokens, user: this.sanitize(user) };
+  }
+
+  // ---------- Email/password (player, phone optional) ----------
+
+  async registerPlayerEmail(
+    dto: RegisterEmailDto,
+  ): Promise<TokenPair & { user: Partial<User> }> {
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: dto.email }, ...(dto.phone ? [{ phone: dto.phone }] : [])],
+      },
+    });
+    if (existing) throw new ConflictException('Email or phone already in use');
+
+    const countryCode = dto.phone
+      ? await this.inferCountryFromPhone(dto.phone, dto.countryCode)
+      : normalizeCountryCode(dto.countryCode) || 'EG';
+    const passwordHash = await this.hashPassword(dto.password);
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        phone: dto.phone,
+        name: dto.name,
+        passwordHash,
+        roles: ['player'],
         countryCode,
       },
     });
