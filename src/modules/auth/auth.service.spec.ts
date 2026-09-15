@@ -4,11 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY } from '../sms/otp-delivery.interface';
+import { EmailService } from '../email/email.service';
 
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: any;
   let otpDelivery: any;
+  let email: any;
 
   beforeEach(async () => {
     prisma = {
@@ -22,6 +24,7 @@ describe('AuthService', () => {
       refreshToken: { create: jest.fn() },
     };
     otpDelivery = { send: jest.fn() };
+    email = { sendEmail: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -46,6 +49,7 @@ describe('AuthService', () => {
           },
         },
         { provide: OTP_DELIVERY, useValue: otpDelivery },
+        { provide: EmailService, useValue: email },
       ],
     }).compile();
 
@@ -79,13 +83,38 @@ describe('AuthService', () => {
     await expect(service.requestOtp('+201001234567')).rejects.toThrow(/wait/i);
   });
 
+  it('sends password-reset codes to an account email through EmailService', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      email: 'owner@matchena.com',
+    });
+
+    await service.requestPasswordReset({ email: 'OWNER@matchena.com' });
+
+    expect(prisma.otpCode.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'u1',
+          target: 'owner@matchena.com',
+          purpose: 'reset_password',
+        }),
+      }),
+    );
+    expect(email.sendEmail).toHaveBeenCalledWith(
+      'owner@matchena.com',
+      expect.stringMatching(/password reset/i),
+      expect.stringContaining('Matchena'),
+    );
+    expect(otpDelivery.send).not.toHaveBeenCalled();
+  });
+
   it('refuses Google and Facebook until client credentials are configured', async () => {
     await expect(service.oauthGoogle({ idToken: 'x' })).rejects.toThrow(
       /not configured/i,
     );
-    await expect(
-      service.oauthFacebook({ accessToken: 'x' }),
-    ).rejects.toThrow(/not configured/i);
+    await expect(service.oauthFacebook({ accessToken: 'x' })).rejects.toThrow(
+      /not configured/i,
+    );
   });
 
   it('lists only configured social providers', () => {

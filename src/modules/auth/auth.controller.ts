@@ -68,20 +68,14 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @ApiOperation({
-    summary: 'Login with email + password (start here)',
-    description:
-      'Use seed admin admin@matchena.com / Password123! then copy result.accessToken and click Authorize.',
+    summary: 'Login with email + password',
   })
   @ApiBody({
     type: LoginEmailDto,
     examples: {
-      admin: {
-        summary: 'Admin (seed)',
-        value: { email: 'admin@matchena.com', password: 'Password123!' },
-      },
-      owner: {
-        summary: 'Venue owner (seed)',
-        value: { email: 'owner@matchena.com', password: 'Password123!' },
+      account: {
+        summary: 'Registered account',
+        value: { email: 'user@example.com', password: 'YourPassword123!' },
       },
     },
   })
@@ -188,13 +182,13 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/forgot')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.requestPasswordReset(dto.phone);
+    return this.authService.requestPasswordReset(dto);
   }
 
   @Public()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/reset')
   resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto.phone, dto.code, dto.newPassword);
+    return this.authService.resetPassword(dto, dto.code, dto.newPassword);
   }
 }

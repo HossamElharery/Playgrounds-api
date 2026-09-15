@@ -24,8 +24,29 @@ export const envValidationSchema = Joi.object({
   WEBAUTHN_RP_NAME: Joi.string().allow('').optional(),
   WEBAUTHN_ORIGINS: Joi.string().allow('').optional(),
 
-  OTP_PROVIDER: Joi.string().valid('console').default('console'),
+  OTP_PROVIDER: Joi.string()
+    .valid('console', 'twilio_verify')
+    .default('console'),
   OTP_TTL_SECONDS: Joi.number().default(300),
+  TWILIO_ACCOUNT_SID: Joi.when('OTP_PROVIDER', {
+    is: 'twilio_verify',
+    then: Joi.string()
+      .pattern(/^AC[0-9a-fA-F]{32}$/)
+      .required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  TWILIO_AUTH_TOKEN: Joi.when('OTP_PROVIDER', {
+    is: 'twilio_verify',
+    then: Joi.string().min(16).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  TWILIO_VERIFY_SERVICE_SID: Joi.when('OTP_PROVIDER', {
+    is: 'twilio_verify',
+    then: Joi.string()
+      .pattern(/^VA[0-9a-fA-F]{32}$/)
+      .required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
 
   STORAGE_PROVIDER: Joi.string().valid('local', 's3').default('local'),
   STORAGE_LOCAL_PUBLIC_BASE: Joi.string().default('/uploads'),
@@ -46,7 +67,9 @@ export const envValidationSchema = Joi.object({
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
   SITE_URL: Joi.string().uri().default('https://matchena.com'),
   INDEXNOW_KEY: Joi.string().allow('').optional(),
-  INDEXNOW_ENDPOINT: Joi.string().uri().default('https://api.indexnow.org/indexnow'),
+  INDEXNOW_ENDPOINT: Joi.string()
+    .uri()
+    .default('https://api.indexnow.org/indexnow'),
 
   FCM_SERVER_KEY: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),

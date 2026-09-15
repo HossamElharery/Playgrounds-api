@@ -31,6 +31,8 @@ import {
 import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { EmailService } from '../email/email.service';
 
 export interface TokenPair {
   accessToken: string;
@@ -47,6 +49,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     @Inject(OTP_DELIVERY) private readonly otpDelivery: OtpDelivery,
+    private readonly email: EmailService,
   ) {}
 
   // ---------- password / token primitives ----------
@@ -213,7 +216,9 @@ export class AuthService {
       throw new UnauthorizedException('Too many attempts, request a new code');
     }
 
-    const isValid = await bcrypt.compare(dto.code, otp.codeHash);
+    const isValid = this.otpDelivery.verify
+      ? await this.otpDelivery.verify(dto.phone, dto.code)
+      : await bcrypt.compare(dto.code, otp.codeHash);
     if (!isValid) {
       await this.prisma.otpCode.update({
         where: { id: otp.id },
@@ -408,15 +413,18 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Password reset (phone-OTP gated, never leaks the code) ----------
+  // ---------- Password reset (email or phone OTP, never leaks the code) ----------
 
-  async requestPasswordReset(phone: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { phone } });
+  async requestPasswordReset(identifier: ForgotPasswordDto): Promise<void> {
+    const target = this.passwordResetTarget(identifier);
+    const user = await this.prisma.user.findUnique({
+      where: identifier.email ? { email: target } : { phone: target },
+    });
     if (!user) return;
 
     const recentCount = await this.prisma.otpCode.count({
       where: {
-        target: phone,
+        target,
         purpose: 'reset_password',
         createdAt: { gt: new Date(Date.now() - 60_000) },
       },
@@ -434,23 +442,32 @@ export class AuthService {
     await this.prisma.otpCode.create({
       data: {
         userId: user.id,
-        target: phone,
+        target,
         codeHash,
         purpose: 'reset_password',
         expiresAt: new Date(Date.now() + ttlSeconds * 1000),
       },
     });
-    await this.otpDelivery.send(phone, code);
+    if (identifier.email) {
+      await this.email.sendEmail(
+        target,
+        'Matchena password reset code',
+        `<p>Your Matchena password reset code is:</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>This code expires in ${Math.ceil(ttlSeconds / 60)} minutes.</p><hr><p dir="rtl">رمز إعادة تعيين كلمة مرور ماتشنا هو: <strong>${code}</strong></p>`,
+      );
+    } else {
+      await this.otpDelivery.send(target, code);
+    }
   }
 
   async resetPassword(
-    phone: string,
+    identifier: ForgotPasswordDto,
     code: string,
     newPassword: string,
   ): Promise<void> {
+    const target = this.passwordResetTarget(identifier);
     const otp = await this.prisma.otpCode.findFirst({
       where: {
-        target: phone,
+        target,
         purpose: 'reset_password',
         consumedAt: null,
         expiresAt: { gt: new Date() },
@@ -462,7 +479,10 @@ export class AuthService {
       throw new UnauthorizedException('Too many attempts, request a new code');
     }
 
-    const isValid = await bcrypt.compare(code, otp.codeHash);
+    const isValid =
+      identifier.phone && this.otpDelivery.verify
+        ? await this.otpDelivery.verify(identifier.phone, code)
+        : await bcrypt.compare(code, otp.codeHash);
     if (!isValid) {
       await this.prisma.otpCode.update({
         where: { id: otp.id },
@@ -471,7 +491,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid code');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { phone } });
+    const user = await this.prisma.user.findUnique({
+      where: identifier.email ? { email: target } : { phone: target },
+    });
     if (!user) throw new BadRequestException('Account not found');
 
     const passwordHash = await this.hashPassword(newPassword);
@@ -489,6 +511,15 @@ export class AuthService {
         data: { revokedAt: new Date() },
       }),
     ]);
+  }
+
+  private passwordResetTarget(identifier: ForgotPasswordDto): string {
+    if (!!identifier.phone === !!identifier.email) {
+      throw new BadRequestException('Provide exactly one of phone or email');
+    }
+    return identifier.email
+      ? identifier.email.trim().toLowerCase()
+      : identifier.phone!;
   }
 
   // ---------- Refresh / logout ----------
@@ -569,9 +600,14 @@ export class AuthService {
   } {
     const google = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
     const facebook = this.config.get<string>('FACEBOOK_APP_ID')?.trim() || '';
+    const facebookSecret =
+      this.config.get<string>('FACEBOOK_APP_SECRET')?.trim() || '';
     return {
       google: { enabled: !!google, clientId: google || undefined },
-      facebook: { enabled: !!facebook, appId: facebook || undefined },
+      facebook: {
+        enabled: !!facebook && !!facebookSecret,
+        appId: facebook || undefined,
+      },
       passkeys: { enabled: true },
     };
   }
