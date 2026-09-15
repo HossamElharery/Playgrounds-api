@@ -40,7 +40,7 @@ enum UserStatus {
 
 model User {
   id                String        @id @default(uuid())
-  phone             String        @unique
+  phone             String?       @unique
   email             String?       @unique
   username          String?       @unique
   passwordHash      String?
