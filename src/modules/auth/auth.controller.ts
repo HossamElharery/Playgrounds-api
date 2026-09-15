@@ -16,6 +16,7 @@ import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
+import { RegisterEmailDto } from './dto/register-email.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
@@ -61,6 +62,15 @@ export class AuthController {
   @Post('register')
   async register(@Body() dto: RegisterOwnerDto) {
     const result = await this.authService.registerOwner(dto);
+    return { message: 'account created', result };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('register/email')
+  @ApiOperation({ summary: 'Player signup by email + password (phone optional)' })
+  async registerEmail(@Body() dto: RegisterEmailDto) {
+    const result = await this.authService.registerPlayerEmail(dto);
     return { message: 'account created', result };
   }
 
