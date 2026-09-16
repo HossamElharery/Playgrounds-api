@@ -61,6 +61,7 @@ export const envValidationSchema = Joi.object({
   SMTP_USER: Joi.string().allow('').optional(),
   SMTP_PASS: Joi.string().allow('').optional(),
   MAIL_FROM: Joi.string().default('no-reply@matchena.com'),
+  MAIL_REPLY_TO: Joi.string().email().allow('').optional(),
 
   QR_SIGNING_SECRET: Joi.string().min(32).required(),
 

@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
   NotImplementedException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -45,6 +46,8 @@ const OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -299,29 +302,100 @@ export class AuthService {
 
   // ---------- Email/password (player, phone optional) ----------
 
+  async requestEmailRegistrationOtp(rawEmail: string): Promise<void> {
+    const email = rawEmail.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) throw new ConflictException('Email already in use');
+
+    const recentCount = await this.prisma.otpCode.count({
+      where: {
+        target: email,
+        purpose: OtpPurpose.register,
+        createdAt: { gt: new Date(Date.now() - 60_000) },
+      },
+    });
+    if (recentCount >= 1) {
+      throw new BadRequestException(
+        'Please wait before requesting another code',
+      );
+    }
+
+    const code = generateOtp();
+    const codeHash = await bcrypt.hash(code, 10);
+    const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS', 300);
+    await this.prisma.otpCode.create({
+      data: {
+        target: email,
+        codeHash,
+        purpose: OtpPurpose.register,
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+      },
+    });
+    await this.email.sendVerificationCode(
+      email,
+      code,
+      Math.ceil(ttlSeconds / 60),
+    );
+  }
+
   async registerPlayerEmail(
     dto: RegisterEmailDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
+    const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.user.findFirst({
       where: {
-        OR: [{ email: dto.email }, ...(dto.phone ? [{ phone: dto.phone }] : [])],
+        OR: [{ email }, ...(dto.phone ? [{ phone: dto.phone }] : [])],
       },
     });
     if (existing) throw new ConflictException('Email or phone already in use');
+
+    const otp = await this.prisma.otpCode.findFirst({
+      where: {
+        target: email,
+        purpose: OtpPurpose.register,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!otp) throw new UnauthorizedException('Code expired or not found');
+    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+      throw new UnauthorizedException('Too many attempts, request a new code');
+    }
+    if (!(await bcrypt.compare(dto.code, otp.codeHash))) {
+      await this.prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException('Invalid code');
+    }
 
     const countryCode = dto.phone
       ? await this.inferCountryFromPhone(dto.phone, dto.countryCode)
       : normalizeCountryCode(dto.countryCode) || 'EG';
     const passwordHash = await this.hashPassword(dto.password);
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        phone: dto.phone,
-        name: dto.name,
-        passwordHash,
-        roles: ['player'],
-        countryCode,
-      },
+    const [user] = await this.prisma.$transaction([
+      this.prisma.user.create({
+        data: {
+          email,
+          emailVerifiedAt: new Date(),
+          phone: dto.phone,
+          name: dto.name,
+          passwordHash,
+          roles: ['player'],
+          countryCode,
+        },
+      }),
+      this.prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { consumedAt: new Date() },
+      }),
+    ]);
+
+    await this.email.sendWelcome(email, dto.name).catch((error: unknown) => {
+      this.logger.warn(
+        `Account created but welcome email failed for ${email}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
     });
 
     const tokens = await this.issueTokenPair(user);
@@ -481,10 +555,10 @@ export class AuthService {
       },
     });
     if (identifier.email) {
-      await this.email.sendEmail(
+      await this.email.sendPasswordResetCode(
         target,
-        'Matchena password reset code',
-        `<p>Your Matchena password reset code is:</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>This code expires in ${Math.ceil(ttlSeconds / 60)} minutes.</p><hr><p dir="rtl">رمز إعادة تعيين كلمة مرور ماتشنا هو: <strong>${code}</strong></p>`,
+        code,
+        Math.ceil(ttlSeconds / 60),
       );
     } else {
       await this.otpDelivery.send(target, code);
@@ -543,6 +617,14 @@ export class AuthService {
         data: { revokedAt: new Date() },
       }),
     ]);
+
+    if (user.email) {
+      await this.email.sendPasswordChanged(user.email).catch((error: unknown) => {
+        this.logger.warn(
+          `Password changed but security email failed for ${user.email}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      });
+    }
   }
 
   private passwordResetTarget(identifier: ForgotPasswordDto): string {
@@ -761,10 +843,20 @@ export class AuthService {
     });
     if (linked?.user) {
       this.assertActive(linked.user);
-      if (input.avatarUrl && !linked.user.avatarUrl) {
+      if (
+        (input.avatarUrl && !linked.user.avatarUrl) ||
+        (input.email && !linked.user.emailVerifiedAt)
+      ) {
         return this.prisma.user.update({
           where: { id: linked.user.id },
-          data: { avatarUrl: input.avatarUrl },
+          data: {
+            ...(input.avatarUrl && !linked.user.avatarUrl
+              ? { avatarUrl: input.avatarUrl }
+              : {}),
+            ...(input.email && !linked.user.emailVerifiedAt
+              ? { emailVerifiedAt: new Date() }
+              : {}),
+          },
         });
       }
       return linked.user;
@@ -785,10 +877,20 @@ export class AuthService {
           email,
         },
       });
-      if (input.avatarUrl && !existing.avatarUrl) {
+      if (
+        (input.avatarUrl && !existing.avatarUrl) ||
+        (email && !existing.emailVerifiedAt)
+      ) {
         return this.prisma.user.update({
           where: { id: existing.id },
-          data: { avatarUrl: input.avatarUrl },
+          data: {
+            ...(input.avatarUrl && !existing.avatarUrl
+              ? { avatarUrl: input.avatarUrl }
+              : {}),
+            ...(email && !existing.emailVerifiedAt
+              ? { emailVerifiedAt: new Date() }
+              : {}),
+          },
         });
       }
       return existing;
@@ -798,6 +900,7 @@ export class AuthService {
       const user = await tx.user.create({
         data: {
           email: email ?? `${input.provider}-${input.providerUserId}@oauth.matchena.local`,
+          emailVerifiedAt: email ? new Date() : undefined,
           phone: `pending-${crypto.randomUUID()}`,
           name: input.name,
           avatarUrl: input.avatarUrl,

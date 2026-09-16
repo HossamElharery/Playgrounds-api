@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY } from '../sms/otp-delivery.interface';
 import { EmailService } from '../email/email.service';
+import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -14,7 +15,11 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     prisma = {
-      user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+      user: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+      },
       otpCode: {
         count: jest.fn().mockResolvedValue(0),
         create: jest.fn(),
@@ -22,9 +27,17 @@ describe('AuthService', () => {
         update: jest.fn(),
       },
       refreshToken: { create: jest.fn() },
+      $transaction: jest.fn((operations: Promise<unknown>[]) =>
+        Promise.all(operations),
+      ),
     };
     otpDelivery = { send: jest.fn() };
-    email = { sendEmail: jest.fn() };
+    email = {
+      sendVerificationCode: jest.fn(),
+      sendPasswordResetCode: jest.fn(),
+      sendWelcome: jest.fn().mockResolvedValue(undefined),
+      sendPasswordChanged: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -100,10 +113,10 @@ describe('AuthService', () => {
         }),
       }),
     );
-    expect(email.sendEmail).toHaveBeenCalledWith(
+    expect(email.sendPasswordResetCode).toHaveBeenCalledWith(
       'owner@matchena.com',
-      expect.stringMatching(/password reset/i),
-      expect.stringContaining('Matchena'),
+      expect.stringMatching(/^\d{4}$/),
+      5,
     );
     expect(otpDelivery.send).not.toHaveBeenCalled();
   });
@@ -119,9 +132,16 @@ describe('AuthService', () => {
 
   it('registers a player by email + password with no phone number', async () => {
     prisma.user.findFirst.mockResolvedValue(null);
+    prisma.otpCode.findFirst.mockResolvedValue({
+      id: 'otp1',
+      codeHash: await bcrypt.hash('1234', 4),
+      attempts: 0,
+    });
+    prisma.otpCode.update.mockResolvedValue({});
     prisma.user.create.mockResolvedValue({
       id: 'u2',
       email: 'nophone@matchena.com',
+      emailVerifiedAt: new Date(),
       phone: null,
       name: 'No Phone Player',
       roles: ['player'],
@@ -133,12 +153,14 @@ describe('AuthService', () => {
       email: 'nophone@matchena.com',
       password: 'Password123!',
       name: 'No Phone Player',
+      code: '1234',
     });
 
     expect(prisma.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           email: 'nophone@matchena.com',
+          emailVerifiedAt: expect.any(Date),
           phone: undefined,
           roles: ['player'],
           countryCode: 'EG',
@@ -147,6 +169,53 @@ describe('AuthService', () => {
     );
     expect(result.user.phone).toBeNull();
     expect(result.accessToken).toBe('signed.jwt.token');
+    expect(email.sendWelcome).toHaveBeenCalledWith(
+      'nophone@matchena.com',
+      'No Phone Player',
+    );
+  });
+
+  it('sends a single-use registration code to the normalized email', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+
+    await service.requestEmailRegistrationOtp(' NEW@Example.com ');
+
+    expect(prisma.otpCode.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          target: 'new@example.com',
+          purpose: 'register',
+        }),
+      }),
+    );
+    expect(email.sendVerificationCode).toHaveBeenCalledWith(
+      'new@example.com',
+      expect.stringMatching(/^\d{4}$/),
+      5,
+    );
+  });
+
+  it('rejects email registration with an invalid verification code', async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.otpCode.findFirst.mockResolvedValue({
+      id: 'otp2',
+      codeHash: await bcrypt.hash('1234', 4),
+      attempts: 0,
+    });
+
+    await expect(
+      service.registerPlayerEmail({
+        email: 'player@example.com',
+        password: 'Password123!',
+        name: 'Player',
+        code: '9999',
+      }),
+    ).rejects.toThrow(/invalid code/i);
+    expect(prisma.otpCode.update).toHaveBeenCalledWith({
+      where: { id: 'otp2' },
+      data: { attempts: { increment: 1 } },
+    });
+    expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
   it('rejects email registration when the email is already in use', async () => {
@@ -157,6 +226,7 @@ describe('AuthService', () => {
         email: 'taken@matchena.com',
         password: 'Password123!',
         name: 'Someone',
+        code: '1234',
       }),
     ).rejects.toThrow(/already in use/i);
     expect(prisma.user.create).not.toHaveBeenCalled();
