@@ -11,6 +11,6 @@ async function bootstrap() {
   const port = config.get<number>('PORT', 3000);
   await app.listen(port);
 
-  console.log(`Mal3ab API listening on :${port} — docs at /api/docs`);
+  console.log(`Matchena API listening on :${port} — docs at /api/docs`);
 }
 bootstrap();

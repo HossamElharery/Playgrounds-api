@@ -3,7 +3,7 @@ import { IsEmail, IsOptional, IsPhoneNumber, IsString, MinLength } from 'class-v
 
 /** Venue-owner / staff-facing signup (email+password), separate from the phone-OTP player flow. */
 export class RegisterOwnerDto {
-  @ApiProperty({ example: 'new.owner@mal3ab.app' })
+  @ApiProperty({ example: 'new.owner@matchena.com' })
   @IsEmail()
   email!: string;
 

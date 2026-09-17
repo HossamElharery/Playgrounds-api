@@ -91,7 +91,7 @@ export class TeamsService {
   }
 
   async removeMember(captainId: string, teamId: string, userId: string) {
-    const threadId = await this.locked(teamId, async (tx, team) => {
+    const removed = await this.locked(teamId, async (tx, team) => {
       if (team.captainId !== captainId && captainId !== userId)
         throw new ForbiddenException('Only the captain can manage the roster');
       if (userId === team.captainId)
@@ -105,9 +105,24 @@ export class TeamsService {
         await tx.chatThreadParticipant.deleteMany({
           where: { threadId: team.chatThreadId, userId },
         });
-      return team.chatThreadId;
+      return { threadId: team.chatThreadId, teamName: team.name };
     });
-    if (threadId) this.emitter.revokeRoomAccess(userId, `thread:${threadId}`);
+    if (removed.threadId)
+      this.emitter.revokeRoomAccess(userId, `thread:${removed.threadId}`);
+    // Someone else removed them: losing a team and its chat with no explanation
+    // reads as a bug. Leaving on your own needs no announcement.
+    if (captainId !== userId) {
+      await this.notifications
+        .create({
+          userId,
+          category: 'teams',
+          titleAr: `لم تعد ضمن فريق ${removed.teamName}`,
+          titleEn: `You're no longer on ${removed.teamName}`,
+          deepLink: '/app/teams',
+          payload: { teamId },
+        })
+        .catch(() => this.logger.error('Could not deliver team notification'));
+    }
     await this.changed(teamId, [userId]);
   }
 
@@ -137,7 +152,7 @@ export class TeamsService {
   }
 
   async transferCaptain(captainId: string, teamId: string, userId: string) {
-    await this.locked(teamId, async (tx, team) => {
+    const teamName = await this.locked(teamId, async (tx, team) => {
       if (team.captainId !== captainId)
         throw new ForbiddenException(
           'Only the captain can transfer leadership',
@@ -153,7 +168,22 @@ export class TeamsService {
         where: { id: teamId },
         data: { captainId: userId },
       });
+      return team.name;
     });
+    // You've just been handed responsibility for a roster — approving joins,
+    // managing members. That can't arrive silently.
+    await this.notifications
+      .create({
+        userId,
+        category: 'teams',
+        titleAr: `أنت الآن قائد فريق ${teamName}`,
+        titleEn: `You're now the captain of ${teamName}`,
+        bodyAr: 'يمكنك إدارة اللاعبين والموافقة على طلبات الانضمام.',
+        bodyEn: 'You can manage the roster and approve join requests.',
+        deepLink: `/app/teams/${teamId}`,
+        payload: { teamId },
+      })
+      .catch(() => this.logger.error('Could not deliver team notification'));
     await this.changed(teamId);
   }
 
@@ -185,9 +215,32 @@ export class TeamsService {
         await tx.chatThreadParticipant.deleteMany({
           where: { threadId: team.chatThreadId },
         });
-      return { userIds: members.map((m) => m.userId), threadId: team.chatThreadId };
+      return {
+        userIds: members.map((m) => m.userId),
+        threadId: team.chatThreadId,
+        teamName: team.name,
+      };
     });
     if (removed.threadId) for (const userId of removed.userIds) this.emitter.revokeRoomAccess(userId, `thread:${removed.threadId}`);
+    // Archiving evicts the whole roster and kills the team chat. Tell them.
+    await Promise.all(
+      removed.userIds
+        .filter((userId) => userId !== captainId)
+        .map((userId) =>
+          this.notifications
+            .create({
+              userId,
+              category: 'teams',
+              titleAr: `تم إغلاق فريق ${removed.teamName}`,
+              titleEn: `${removed.teamName} has been disbanded`,
+              deepLink: '/app/teams',
+              payload: { teamId },
+            })
+            .catch(() =>
+              this.logger.error('Could not deliver team notification'),
+            ),
+        ),
+    );
     await this.changed(teamId, removed.userIds);
   }
 
@@ -274,7 +327,10 @@ export class TeamsService {
       where: { id: requestId },
     });
     if (!original) throw new NotFoundException('Membership request not found');
+    const wasJoinRequest = original.userId === original.requestedById;
+    let teamName = '';
     await this.locked(original.teamId, async (tx, team) => {
+      teamName = team.name;
       const request = await tx.teamMembershipRequest.findUnique({
         where: { id: requestId },
       });
@@ -331,6 +387,33 @@ export class TeamsService {
         },
       });
     });
+    // The player who has been waiting is the one who needs to hear about this.
+    // A realtime `team.changed` only refreshes whoever already has the app open
+    // on that screen — without this, an accepted player's "pending" badge just
+    // silently disappears and a declined one never learns why.
+    if (action !== 'cancel') {
+      const accepted = action === 'accept';
+      await this.notifications
+        .create({
+          userId: wasJoinRequest ? original.userId : original.requestedById,
+          category: 'teams',
+          titleAr: accepted
+            ? `تم قبولك في ${teamName}`
+            : `لم يتم قبول طلبك للانضمام إلى ${teamName}`,
+          titleEn: accepted
+            ? `You're now part of ${teamName}`
+            : `Your request to join ${teamName} wasn't accepted`,
+          bodyAr: accepted
+            ? 'يمكنك الآن الدخول على دردشة الفريق ومبارياته.'
+            : undefined,
+          bodyEn: accepted
+            ? 'You can now open the team chat and its matches.'
+            : undefined,
+          deepLink: accepted ? `/app/teams/${original.teamId}` : '/app/teams',
+          payload: { teamRequestId: requestId, action },
+        })
+        .catch(() => this.logger.error('Could not deliver team notification'));
+    }
     await this.changed(original.teamId, [
       original.userId,
       original.requestedById,

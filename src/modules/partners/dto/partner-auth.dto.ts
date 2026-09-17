@@ -25,7 +25,7 @@ export class PartnerRegisterDto {
   })
   username!: string;
 
-  @ApiProperty({ example: 'new.owner@mal3ab.app' })
+  @ApiProperty({ example: 'new.owner@matchena.com' })
   @IsEmail()
   email!: string;
 
@@ -56,7 +56,7 @@ export class PartnerLoginDto {
   @MaxLength(30)
   username?: string;
 
-  @ApiPropertyOptional({ example: 'owner@mal3ab.app' })
+  @ApiPropertyOptional({ example: 'owner@matchena.com' })
   @IsOptional()
   @IsEmail()
   email?: string;

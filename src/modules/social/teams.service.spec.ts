@@ -74,4 +74,35 @@ describe('Team membership and captaincy', () => {
     await expect(service.resolveRequest('captain', 'request', 'accept')).rejects.toThrow('no longer active');
     expect(prisma.teamMember.upsert).not.toHaveBeenCalled();
   });
+  it('tells the player when the captain accepts their join request', async () => {
+    prisma.teamMembershipRequest.findUnique.mockResolvedValue({ id: 'request', teamId: 'team', userId: 'member', requestedById: 'member', status: 'pending' });
+    await service.resolveRequest('captain', 'request', 'accept');
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'member', category: 'teams', deepLink: '/app/teams/team' }),
+    );
+  });
+  it('tells the player when the captain declines their join request', async () => {
+    prisma.teamMembershipRequest.findUnique.mockResolvedValue({ id: 'request', teamId: 'team', userId: 'member', requestedById: 'member', status: 'pending' });
+    await service.resolveRequest('captain', 'request', 'decline');
+    expect(prisma.teamMember.upsert).not.toHaveBeenCalled();
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'member', category: 'teams' }),
+    );
+  });
+  it('tells a player they were removed, but says nothing when they left on their own', async () => {
+    await service.removeMember('captain', 'team', 'member');
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'member', category: 'teams' }),
+    );
+    notifications.create.mockClear();
+    await service.removeMember('member', 'team', 'member');
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+  it('tells the new captain they now own the roster', async () => {
+    prisma.teamMember.findUnique.mockResolvedValue({ userId: 'member' });
+    await service.transferCaptain('captain', 'team', 'member');
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'member', category: 'teams' }),
+    );
+  });
 });

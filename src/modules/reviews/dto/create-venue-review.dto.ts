@@ -31,7 +31,7 @@ export class CreateVenueReviewDto {
   @IsString()
   text?: string;
 
-  @ApiPropertyOptional({ example: ['https://cdn.mal3ab.app/reviews/1.jpg'] })
+  @ApiPropertyOptional({ example: ['https://cdn.matchena.com/reviews/1.jpg'] })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)

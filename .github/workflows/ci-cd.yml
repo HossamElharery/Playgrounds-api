@@ -22,19 +22,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run tests
         run: npm test -- --runInBand
-
       - name: Build application
         run: npm run build
 
@@ -51,8 +47,11 @@ jobs:
           COOLIFY_WEBHOOK: ${{ github.ref_name == 'main' && secrets.COOLIFY_PRODUCTION_WEBHOOK || secrets.COOLIFY_TEST_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
         run: |
-          test -n "$COOLIFY_WEBHOOK"
-          test -n "$COOLIFY_TOKEN"
+          if [ -z "$COOLIFY_WEBHOOK" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "Coolify deployment is not configured for this environment yet."
+            exit 0
+          fi
           curl --fail --silent --show-error \
+            --request POST \
             --header "Authorization: Bearer $COOLIFY_TOKEN" \
             "$COOLIFY_WEBHOOK"

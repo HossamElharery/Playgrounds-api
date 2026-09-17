@@ -1,5 +1,5 @@
-// Mal3ab API — Prisma schema
-// Domain reference: PROJECT_BLUEPRINT.md §1-19. See MAL3AB_BACKEND.md for the full narrative.
+// Matchena API — Prisma schema
+// Domain reference: PROJECT_BLUEPRINT.md §1-19. See MATCHENA_BACKEND.md for the full narrative.
 
 // Default client for runtime (`require('@prisma/client')`).
 generator client {
@@ -40,8 +40,9 @@ enum UserStatus {
 
 model User {
   id                String        @id @default(uuid())
-  phone             String        @unique
+  phone             String?       @unique
   email             String?       @unique
+  emailVerifiedAt   DateTime?
   username          String?       @unique
   passwordHash      String?
   name              String
@@ -71,7 +72,7 @@ model User {
   walletBalance     Int           @default(0)
   streakCount       Int           @default(0)
   streakUpdatedAt   DateTime?
-  // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.3 — burnable tokens (400 coins
+  // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.3 — burnable tokens (400 coins
   // each) that protect streakCount from resetting when a daily check-in is
   // missed. Consumed automatically by RewardsService.dailyCheckIn.
   streakFreezes     Int           @default(0)
@@ -115,6 +116,8 @@ model User {
   squadJoinRequestsRes  SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
   coinLedger            CoinLedgerEntry[]
   walletLedger          WalletLedgerEntry[]
+  walletWithdrawals     WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
+  walletWithdrawalsResolved WalletWithdrawalRequest[] @relation("WalletWithdrawalResolvedBy")
   questProgress         UserQuestProgress[]
   badges                UserBadge[]
   promoCodesCreated     PromoCode[]
@@ -666,7 +669,7 @@ model Booking {
   guestPhone         String?
   recurringSeriesId  String?
   recurringSeries    RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
-  // Mal3ab gaming expansion — MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.7/§7.3.
+  // Matchena gaming expansion — MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.7/§7.3.
   // Links the N linked Booking rows created atomically by a bundle purchase.
   bundleId           String?
   bundle             Bundle?                 @relation(fields: [bundleId], references: [id])
@@ -791,8 +794,13 @@ model PlayerRating {
   createdAt     DateTime   @default(now())
 
   @@index([rateeId])
-  @@index([bookingId, raterId, rateeId])
-  @@index([matchPostId, raterId, rateeId])
+  // Postgres allows multiple NULLs through a unique index, so these only bite
+  // on the path they actually apply to (bookingId is null for matchPost
+  // ratings and vice versa) — exactly what's needed to stop the same rater
+  // rating the same person on the same match/booking more than once to farm
+  // the 10-coin reward repeatedly.
+  @@unique([bookingId, raterId, rateeId])
+  @@unique([matchPostId, raterId, rateeId])
 }
 
 // ============================================================
@@ -849,7 +857,7 @@ model MatchPost {
   chatThreadId        String?           @unique
   chatThread          ChatThread?       @relation(fields: [chatThreadId], references: [id])
   status              MatchPostStatus   @default(open)
-  // Mal3ab gaming expansion — MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.6/§3.10.
+  // Matchena gaming expansion — MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.6/§3.10.
   // Only meaningful when sport.activityKind === 'gaming-station'.
   gameId              String?
   game                GameCatalogEntry? @relation(fields: [gameId], references: [id])
@@ -1149,6 +1157,35 @@ model WalletLedgerEntry {
   providerRef String?
   createdAt   DateTime       @default(now())
 
+  @@index([userId, createdAt])
+}
+
+enum WalletWithdrawalStatus {
+  pending
+  paid
+  rejected
+}
+
+/// A player's cash-out request. The wallet is debited the moment the request
+/// is filed — reserving the funds so they can't be spent twice while an admin
+/// reviews it — and refunded back if the request is rejected. There is no
+/// automated payout provider wired up yet, so `paid` is set manually once the
+/// transfer has actually happened outside the app.
+model WalletWithdrawalRequest {
+  id               String                 @id @default(uuid())
+  userId           String
+  user             User                   @relation("WalletWithdrawalUser", fields: [userId], references: [id], onDelete: Cascade)
+  amount           Int
+  currency         String                 @default("EGP")
+  destination      String
+  status           WalletWithdrawalStatus @default(pending)
+  note             String?
+  resolvedByUserId String?
+  resolvedBy       User?                  @relation("WalletWithdrawalResolvedBy", fields: [resolvedByUserId], references: [id])
+  createdAt        DateTime               @default(now())
+  resolvedAt       DateTime?
+
+  @@index([status, createdAt])
   @@index([userId, createdAt])
 }
 
@@ -1681,7 +1718,7 @@ model IdempotencyKey {
 }
 
 // ============================================================
-// Mal3ab gaming expansion — see MAL3AB_GAMING_EXPANSION_BLUEPRINT.md
+// Matchena gaming expansion — see MATCHENA_GAMING_EXPANSION_BLUEPRINT.md
 // §3.6-3.9, §7.3-7.4. Game catalog, multi-activity bundles, paid
 // membership, lightweight esports tournaments.
 // ============================================================
@@ -1791,13 +1828,15 @@ model Tournament {
 }
 
 model TournamentParticipant {
-  id           String     @id @default(uuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  seed         Int?
-  registeredAt DateTime   @default(now())
+  id            String        @id @default(uuid())
+  tournamentId  String
+  tournament    Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seed          Int?
+  registeredAt  DateTime      @default(now())
+  entryFeePaid  Int           @default(0)
+  paymentStatus PaymentStatus @default(paid)
 
   @@unique([tournamentId, userId])
 }

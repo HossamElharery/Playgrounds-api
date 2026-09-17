@@ -77,6 +77,18 @@ export class BookingsController {
     return this.bookings.cancel(user.id, id, dto.reason);
   }
 
+  /** What the player gets back if they cancel right now — the sliding refund
+   *  policy is meaningless to them if they can only discover it after the fact. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('bookings/:id/refund-preview')
+  refundPreview(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.bookings.refundPreview(user.id, id);
+  }
+
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('admin')

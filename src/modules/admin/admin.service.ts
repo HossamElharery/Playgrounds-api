@@ -171,7 +171,7 @@ export class AdminService {
     });
   }
 
-  // ---- Analytics (pragmatic aggregates — see MAL3AB_BACKEND.md for scope) ----
+  // ---- Analytics (pragmatic aggregates — see MATCHENA_BACKEND.md for scope) ----
   async searchFunnel() {
     const [venueSearches, venueViews, bookingsCreated, bookingsCompleted] =
       await Promise.all([

@@ -153,7 +153,7 @@ export class OwnerController {
     const csv = await this.owner.financeCsv(user.id, venueId, from, to);
     return new StreamableFile(Buffer.from(csv, 'utf8'), {
       type: 'text/csv; charset=utf-8',
-      disposition: `attachment; filename="mal3ab-finance-${venueId}.csv"`,
+      disposition: `attachment; filename="matchena-finance-${venueId}.csv"`,
     });
   }
 

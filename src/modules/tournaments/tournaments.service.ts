@@ -9,6 +9,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MatchPostsService } from '../social/match-posts.service';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
+import { WalletService } from '../payments/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import {
   CreateTournamentDto,
@@ -49,6 +51,8 @@ export class TournamentsService {
     private readonly prisma: PrismaService,
     private readonly matchPosts: MatchPostsService,
     private readonly emitter: RealtimeGatewayEmitter,
+    private readonly wallet: WalletService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private async resolveActivity(activityId: string) {
@@ -151,24 +155,88 @@ export class TournamentsService {
     if (tournament._count.participants >= tournament.maxParticipants) {
       throw new ConflictException('Tournament is full');
     }
-    try {
-      const participant = await this.prisma.tournamentParticipant.create({
-        data: { tournamentId, userId },
-      });
-      const count = tournament._count.participants + 1;
-      if (count >= tournament.maxParticipants) {
-        await this.prisma.tournament.update({
-          where: { id: tournamentId },
-          data: { status: 'full' },
+    const entryFee = tournament.entryFeeAmount ?? 0;
+    // The entry fee shown on the tournament card was previously decorative —
+    // registering never touched the wallet. Charge it in the same transaction
+    // as the participant row so a failed debit never leaves a free entrant,
+    // and a fee-less tournament (entryFee = 0) is a no-op debit.
+    const participant = await this.prisma.$transaction(async (tx) => {
+      if (entryFee > 0) {
+        await this.wallet.debit(tx, {
+          userId,
+          amount: entryFee,
+          reason: 'tournament',
         });
       }
-      return participant;
-    } catch (error) {
-      if ((error as { code?: string }).code === 'P2002') {
-        throw new ConflictException('Already registered');
+      try {
+        return await tx.tournamentParticipant.create({
+          data: {
+            tournamentId,
+            userId,
+            entryFeePaid: entryFee,
+            paymentStatus: 'paid',
+          },
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === 'P2002') {
+          throw new ConflictException('Already registered');
+        }
+        throw error;
       }
-      throw error;
+    });
+    const count = tournament._count.participants + 1;
+    if (count >= tournament.maxParticipants) {
+      await this.prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { status: 'full' },
+      });
     }
+    await this.notifications
+      .create({
+        userId,
+        category: 'tournaments',
+        titleEn: `You're registered for ${tournament.nameEn}`,
+        titleAr: `تم تسجيلك في ${tournament.nameAr}`,
+        deepLink: `/app/tournaments/${tournamentId}`,
+        payload: { tournamentId },
+      })
+      .catch(() => undefined);
+    return participant;
+  }
+
+  /** Only before the bracket exists — once matches are generated, pulling a
+   *  seat out from under an opponent isn't something a withdrawal can undo. */
+  async withdraw(userId: string, tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+    });
+    if (!tournament) throw new NotFoundException('Tournament not found');
+    if (!['open', 'full'].includes(tournament.status)) {
+      throw new BadRequestException(
+        'Cannot withdraw once the bracket has been generated',
+      );
+    }
+    const participant = await this.prisma.tournamentParticipant.findUnique({
+      where: { tournamentId_userId: { tournamentId, userId } },
+    });
+    if (!participant) throw new NotFoundException('Not registered');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournamentParticipant.delete({ where: { id: participant.id } });
+      if (participant.entryFeePaid > 0 && participant.paymentStatus === 'paid') {
+        await this.wallet.credit(tx, {
+          userId,
+          amount: participant.entryFeePaid,
+          reason: 'refund',
+        });
+      }
+      if (tournament.status === 'full') {
+        await tx.tournament.update({
+          where: { id: tournamentId },
+          data: { status: 'open' },
+        });
+      }
+    });
   }
 
   /** Random-seeded single-elimination bracket (see class doc re: ELO TODO). */
@@ -286,6 +354,23 @@ export class TournamentsService {
       type: 'tournament.bracket.generated',
       tournamentId,
     });
+    // A "tournaments" socket room notifies only whoever happens to have the
+    // page open right now. Every entrant needs to actually be told the
+    // bracket is live and who they're facing in round one.
+    await Promise.all(
+      tournament.participants.map((p) =>
+        this.notifications
+          .create({
+            userId: p.userId,
+            category: 'tournaments',
+            titleEn: `The bracket for ${tournament.nameEn} is ready`,
+            titleAr: `تم إعداد قرعة ${tournament.nameAr}`,
+            deepLink: `/app/tournaments/${tournamentId}`,
+            payload: { tournamentId },
+          })
+          .catch(() => undefined),
+      ),
+    );
     return this.get(tournamentId);
   }
 
@@ -373,6 +458,30 @@ export class TournamentsService {
       });
     } else {
       if (dto.winnerId !== match.winnerId) {
+        const tournament = await this.prisma.tournament.findUnique({
+          where: { id: tournamentId },
+        });
+        // Nobody but an admin can resolve this, and no admin is watching a
+        // random match room — page every admin directly or the dispute just
+        // sits there with both players locked out of the next round forever.
+        const admins = await this.prisma.user.findMany({
+          where: { roles: { has: 'admin' } },
+          select: { id: true },
+        });
+        await Promise.all(
+          admins.map((admin) =>
+            this.notifications
+              .create({
+                userId: admin.id,
+                category: 'system',
+                titleEn: `Disputed result in ${tournament?.nameEn ?? 'a tournament'}`,
+                titleAr: `نتيجة متنازع عليها في ${tournament?.nameAr ?? 'بطولة'}`,
+                deepLink: `/admin/tournaments/${tournamentId}`,
+                payload: { tournamentId, matchId },
+              })
+              .catch(() => undefined),
+          ),
+        );
         throw new ConflictException(
           'RESULT_DISPUTED — the two participants reported different winners; an admin must resolve this',
         );
@@ -400,6 +509,30 @@ export class TournamentsService {
         matchId,
         winnerId: updated.winnerId,
       });
+      const loserId =
+        updated.winnerId === match.slotAId ? match.slotBId : match.slotAId;
+      await Promise.all(
+        [updated.winnerId, loserId]
+          .filter((id): id is string => !!id)
+          .map((id) =>
+            this.notifications
+              .create({
+                userId: id,
+                category: 'tournaments',
+                titleEn:
+                  id === updated.winnerId
+                    ? "You won your match — you've advanced"
+                    : 'Your match result was recorded',
+                titleAr:
+                  id === updated.winnerId
+                    ? 'فزت بالماتش — انتقلت للدور الجاي'
+                    : 'تم تسجيل نتيجة الماتش بتاعك',
+                deepLink: `/app/tournaments/${tournamentId}`,
+                payload: { tournamentId, matchId, winnerId: updated.winnerId },
+              })
+              .catch(() => undefined),
+          ),
+      );
     }
     return updated;
   }

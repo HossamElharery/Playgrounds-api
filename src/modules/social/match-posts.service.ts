@@ -71,11 +71,14 @@ export class MatchPostsService {
     });
   }
 
-  async feed(filters: {
-    sportId?: string;
-    districtId?: string;
-    status?: string;
-  }) {
+  async feed(
+    filters: {
+      sportId?: string;
+      districtId?: string;
+      status?: string;
+    },
+    viewerId?: string,
+  ) {
     const sportId = filters.sportId
       ? await this.resolveSportId(filters.sportId)
       : undefined;
@@ -90,7 +93,6 @@ export class MatchPostsService {
         sport: true,
         venue: { select: { id: true, slug: true, nameEn: true, nameAr: true } },
         joinRequests: {
-          where: { status: 'approved' },
           include: {
             user: { select: { id: true, name: true, avatarUrl: true } },
           },
@@ -100,17 +102,29 @@ export class MatchPostsService {
       orderBy: { dateTime: 'asc' },
       take: 50,
     });
-    return posts.map((p) => ({
-      ...p,
-      joined: p.joinRequests.map((j) => ({
-        userId: j.user.id,
-        name: j.user.name,
-        avatar: j.user.avatarUrl,
-        status: j.status,
-      })),
-      commentCount: p._count.comments,
-      reactionCount: p._count.reactions,
-    }));
+    // Every card needs to know "have I already asked / am I already in?" —
+    // without it the frontend was making a second round-trip per post just
+    // to patch this in after the fact.
+    return posts.map((p) => {
+      const viewerRequest = viewerId
+        ? p.joinRequests.find((j) => j.userId === viewerId)
+        : undefined;
+      return {
+        ...p,
+        joined: p.joinRequests
+          .filter((j) => j.status === 'approved')
+          .map((j) => ({
+            userId: j.user.id,
+            name: j.user.name,
+            avatar: j.user.avatarUrl,
+            status: j.status,
+          })),
+        commentCount: p._count.comments,
+        reactionCount: p._count.reactions,
+        viewerJoinStatus:
+          p.authorId === viewerId ? 'organizer' : (viewerRequest?.status ?? 'none'),
+      };
+    });
   }
 
   async getById(id: string, viewerId?: string) {
@@ -192,6 +206,10 @@ export class MatchPostsService {
       if (!current) throw new NotFoundException('Match post not found');
       if (current.authorId === userId) throw new BadRequestException('You are the organizer');
       if (current.status !== 'open') throw new BadRequestException('This match is not accepting players');
+      // Nothing flips a past match out of `open`, so without a clock check
+      // players can still request to join a game that kicked off last week.
+      if (current.dateTime.getTime() <= Date.now())
+        throw new BadRequestException('This match has already started');
       const existing = await tx.matchPostJoinRequest.findUnique({ where: { matchPostId_userId: { matchPostId, userId } } });
       if (existing && existing.status !== 'declined')
         throw new BadRequestException(existing.status === 'approved' ? 'Already a match member' : 'Join request already pending');
@@ -224,6 +242,10 @@ export class MatchPostsService {
     if (!post) throw new NotFoundException('Match post not found');
     if (post.authorId === userId)
       throw new BadRequestException('Organizer cannot leave — cancel instead');
+    const leaving = await this.prisma.matchPostJoinRequest.findUnique({
+      where: { matchPostId_userId: { matchPostId, userId } },
+      select: { status: true, user: { select: { name: true } } },
+    });
     await this.prisma.matchPostJoinRequest.deleteMany({
       where: { matchPostId, userId },
     });
@@ -237,6 +259,20 @@ export class MatchPostsService {
         where: { id: matchPostId },
         data: { status: 'open' },
       });
+    }
+    // Only worth a ping if they were actually counted in — a withdrawn
+    // pending request never showed up in the organizer's roster anyway.
+    if (leaving?.status === 'approved') {
+      await this.notifications
+        .create({
+          userId: post.authorId,
+          category: 'matches',
+          titleEn: `${leaving.user.name} dropped out of your match`,
+          titleAr: `${leaving.user.name} انسحب من الماتش بتاعك`,
+          deepLink: `/app/matches/${matchPostId}`,
+          payload: { matchPostId },
+        })
+        .catch(() => undefined);
     }
     return this.getById(matchPostId, userId);
   }
@@ -358,10 +394,35 @@ export class MatchPostsService {
     if (!post) throw new NotFoundException('Match post not found');
     if (post.authorId !== organizerId)
       throw new ForbiddenException('Not your match post');
-    return this.prisma.matchPost.update({
+    if (post.status === 'cancelled') return post;
+    const cancelled = await this.prisma.matchPost.update({
       where: { id },
       data: { status: 'cancelled' },
     });
+
+    // Everyone who was approved had this match in their plans. Cancelling it
+    // without telling them is how people show up to an empty pitch.
+    const approved = await this.prisma.matchPostJoinRequest.findMany({
+      where: { matchPostId: id, status: 'approved' },
+      select: { userId: true },
+    });
+    await Promise.all(
+      approved
+        .filter(({ userId }) => userId !== organizerId)
+        .map(({ userId }) =>
+          this.notifications
+            .create({
+              userId,
+              category: 'matches',
+              titleEn: 'A match you joined was cancelled',
+              titleAr: 'تم إلغاء ماتش كنت منضم له',
+              deepLink: `/app/matches/${id}`,
+              payload: { matchPostId: id, status: 'cancelled' },
+            })
+            .catch(() => undefined),
+        ),
+    );
+    return cancelled;
   }
 
   mine(userId: string) {

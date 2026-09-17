@@ -19,7 +19,7 @@ import { MAIL_TRANSPORT } from './email.tokens';
         return nodemailer.createTransport({
           host,
           port: config.get<number>('SMTP_PORT', 587),
-          secure: false,
+          secure: config.get<number>('SMTP_PORT', 587) === 465,
           auth: {
             user: config.get('SMTP_USER'),
             pass: config.get('SMTP_PASS'),

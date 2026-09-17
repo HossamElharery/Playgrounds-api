@@ -3,7 +3,7 @@ import { IsString } from 'class-validator';
 
 export class CheckinBookingDto {
   @ApiProperty({
-    example: 'mal3ab.booking.signed-payload',
+    example: 'matchena.booking.signed-payload',
     description: 'QR payload from the confirmed booking (booking.qrPayload)',
   })
   @IsString()

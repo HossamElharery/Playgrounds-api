@@ -20,6 +20,12 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 export function configureApp(app: INestApplication): ConfigService {
   const config = app.get(ConfigService);
 
+  // Coolify terminates TLS at its reverse proxy. Trust exactly that first hop
+  // so secure-protocol/IP-aware middleware reads X-Forwarded-* correctly.
+  if (config.get<string>('NODE_ENV') === 'production') {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -31,7 +37,9 @@ export function configureApp(app: INestApplication): ConfigService {
   app.enableCors({
     origin: config
       .get<string>('CORS_ORIGINS', 'http://localhost:4200')
-      .split(','),
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     credentials: true,
   });
 

@@ -53,6 +53,7 @@ describe('PulseService ready-player feed', () => {
         emitToUser: jest.fn(),
         emitToRoom: jest.fn(),
       } as unknown as RealtimeGatewayEmitter,
+      { requestJoin: jest.fn() } as never,
     );
   });
 

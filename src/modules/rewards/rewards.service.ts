@@ -20,7 +20,7 @@ const REFERRAL_BONUS_COINS = 300;
 const REVIEW_PHOTO_BONUS_COINS = 50;
 
 /**
- * MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — the scope/event contract
+ * MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — the scope/event contract
  * that makes one quest engine work identically across every activity family
  * (football, PlayStation, billiards, ...) instead of forking per activity.
  * Lives inside the existing `Quest.rule` Json column — no schema change.
@@ -95,7 +95,7 @@ export class RewardsService {
 
     const isConsecutiveDay =
       lastCheckIn && now.getTime() - lastCheckIn.getTime() < 48 * 3_600_000;
-    // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
+    // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
     // streak is the single canonical streak; a purchased freeze protects it
     // from resetting to 1 when exactly one day is missed.
     const canUseFreeze = !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
@@ -186,7 +186,7 @@ export class RewardsService {
   }
 
   /**
-   * The real trigger point (MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1):
+   * The real trigger point (MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1):
    * bumps every active quest whose `rule.event` matches the event that just
    * happened and whose `rule.scope` (if any) matches the activity it happened
    * on. Call this from booking completion, daily check-in, MVP awarding,

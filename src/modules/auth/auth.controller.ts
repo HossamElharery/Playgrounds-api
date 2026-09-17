@@ -16,9 +16,10 @@ import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
+import { RegisterEmailDto } from './dto/register-email.dto';
+import { RequestEmailRegistrationOtpDto } from './dto/request-email-registration-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
-import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -66,23 +67,37 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post('register/email/otp')
+  @ApiOperation({ summary: 'Send a single-use email verification code' })
+  requestEmailRegistrationOtp(@Body() dto: RequestEmailRegistrationOtpDto) {
+    return this.authService.requestEmailRegistrationOtp(dto.email);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('register/email')
+  @ApiOperation({
+    summary: 'Verify the email code and create a player account',
+  })
+  async registerEmail(@Body() dto: RegisterEmailDto) {
+    const result = await this.authService.registerPlayerEmail(dto);
+    return { message: 'account created', result };
+  }
+
+  @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @ApiOperation({
-    summary: 'Login with email + password (start here)',
-    description:
-      'Use seed admin admin@mal3ab.app / Password123! then copy result.accessToken and click Authorize.',
+    summary: 'Login with email + password',
   })
   @ApiBody({
     type: LoginEmailDto,
     examples: {
-      admin: {
-        summary: 'Admin (seed)',
-        value: { email: 'admin@mal3ab.app', password: 'Password123!' },
-      },
-      owner: {
-        summary: 'Venue owner (seed)',
-        value: { email: 'owner@mal3ab.app', password: 'Password123!' },
+      account: {
+        summary: 'Registered account',
+        value: { email: 'user@example.com', password: 'YourPassword123!' },
       },
     },
   })
@@ -96,14 +111,6 @@ export class AuthController {
   @Post('oauth/google')
   async oauthGoogle(@Body() dto: OAuthGoogleDto) {
     const result = await this.authService.oauthGoogle(dto);
-    return { message: 'authenticated', result };
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('oauth/apple')
-  async oauthApple(@Body() dto: OAuthAppleDto) {
-    const result = await this.authService.oauthApple(dto);
     return { message: 'authenticated', result };
   }
 
@@ -197,13 +204,13 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/forgot')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.requestPasswordReset(dto.phone);
+    return this.authService.requestPasswordReset(dto);
   }
 
   @Public()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/reset')
   resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto.phone, dto.code, dto.newPassword);
+    return this.authService.resetPassword(dto, dto.code, dto.newPassword);
   }
 }

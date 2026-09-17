@@ -3,9 +3,12 @@ import { IsString, Length, MinLength } from 'class-validator';
 import { ForgotPasswordDto } from './forgot-password.dto';
 
 export class ResetPasswordDto extends ForgotPasswordDto {
-  @ApiProperty({ example: '1234', description: '4-digit OTP from the server console' })
+  @ApiProperty({
+    example: '123456',
+    description: 'Verification code sent by SMS or email',
+  })
   @IsString()
-  @Length(4, 4)
+  @Length(4, 10)
   code!: string;
 
   @ApiProperty({ example: 'NewPassword123!' })
