@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
@@ -28,6 +28,7 @@ const DEFAULT_PREFS: Record<string, boolean> = {
   tournaments: true,
   rewards: true,
   pulse: true,
+  posts: true,
   system: true,
   marketing: false,
 };
@@ -161,11 +162,18 @@ export class NotificationsService {
     ctaLabelAr?: string;
     ctaUrl?: string;
   }) {
-    const areaFilter: Prisma.UserWhereInput = input.districtId
-      ? { districtId: input.districtId }
-      : input.governorateId
-        ? { governorateId: input.governorateId }
-        : {};
+    const areaFilter: Prisma.UserWhereInput =
+      input.audience === 'individual'
+        ? {}
+        : input.districtId
+          ? { districtId: input.districtId }
+          : input.governorateId
+            ? { governorateId: input.governorateId }
+            : {};
+    const pickedIds = [...new Set((input.recipientIds ?? []).map((id) => id.trim()).filter(Boolean))];
+    if (input.audience === 'individual' && !pickedIds.length) {
+      throw new BadRequestException('Select at least one recipient');
+    }
     const where: Prisma.UserWhereInput =
       input.audience === 'owners'
         ? { roles: { has: 'owner' as const }, status: 'active' as const, ...areaFilter }
@@ -176,7 +184,7 @@ export class NotificationsService {
               status: 'active' as const,
               ...areaFilter,
             }
-          : { id: { in: input.recipientIds ?? [] }, ...areaFilter };
+          : { id: { in: pickedIds }, status: 'active' as const };
 
     const deepLink = sanitizeNotificationCtaUrl(input.ctaUrl);
     const payload =
@@ -192,6 +200,9 @@ export class NotificationsService {
       where,
       select: { id: true },
     });
+    if (input.audience === 'individual' && !users.length) {
+      throw new BadRequestException('None of the selected accounts could receive this notification');
+    }
     const recipientIds: string[] = [];
     for (const { id: userId } of users) {
       const created = await this.create({

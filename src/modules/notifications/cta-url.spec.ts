@@ -15,4 +15,10 @@ describe('sanitizeNotificationCtaUrl', () => {
   it('rejects javascript URLs', () => {
     expect(() => sanitizeNotificationCtaUrl('javascript:alert(1)')).toThrow(BadRequestException);
   });
+
+  it('rejects free text that is not a path or URL', () => {
+    expect(() => sanitizeNotificationCtaUrl('Facere cupidatat officia non aut aliquam')).toThrow(
+      BadRequestException,
+    );
+  });
 });

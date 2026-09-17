@@ -7,7 +7,12 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
-import { StorageProvider, UploadResult } from './storage.interface';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import {
+  StorageProvider,
+  UploadResult,
+  PresignedUpload,
+} from './storage.interface';
 
 /** Prod provider, activated by STORAGE_PROVIDER=s3 once real AWS credentials are supplied. */
 @Injectable()
@@ -54,6 +59,29 @@ export class S3StorageProvider implements StorageProvider {
   urlFor(key: string): string {
     if (this.publicBase) return `${this.publicBase}/${key}`;
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+  }
+
+  async createPresignedPut(
+    originalName: string,
+    mimeType: string,
+    prefix = 'posts',
+  ): Promise<PresignedUpload> {
+    const ext = path.extname(originalName) || '';
+    const key = `${prefix}/${randomUUID()}${ext}`;
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: mimeType,
+      ServerSideEncryption: 'AES256',
+      CacheControl: 'public, max-age=31536000, immutable',
+    });
+    const url = await getSignedUrl(this.client, command, { expiresIn: 900 });
+    return {
+      url,
+      method: 'PUT',
+      headers: { 'Content-Type': mimeType },
+      key,
+    };
   }
 
   keyFromUrl(url: string): string | undefined {

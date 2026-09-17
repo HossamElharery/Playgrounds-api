@@ -3,6 +3,13 @@ export interface UploadResult {
   url: string;
 }
 
+export interface PresignedUpload {
+  url: string;
+  method: 'PUT';
+  headers: Record<string, string>;
+  key: string;
+}
+
 export const STORAGE_PROVIDER = 'STORAGE_PROVIDER';
 
 export interface StorageProvider {
@@ -16,4 +23,9 @@ export interface StorageProvider {
   urlFor(key: string): string;
   /** Reverse a public URL back to the object key, or undefined if unknown. */
   keyFromUrl(url: string): string | undefined;
+  createPresignedPut?(
+    originalName: string,
+    mimeType: string,
+    prefix?: string,
+  ): Promise<PresignedUpload>;
 }
