@@ -153,6 +153,20 @@ model User {
   webauthnCredentials   WebAuthnCredential[]
   teamMembershipRequests TeamMembershipRequest[] @relation("TeamRequestPlayer")
   teamRequestsSent       TeamMembershipRequest[] @relation("TeamRequestSender")
+  feedPosts              Post[]                  @relation("PostAuthor")
+  postsRemoved           Post[]                  @relation("PostRemovedBy")
+  postComments           PostComment[]
+  postLikes              PostLike[]
+  postSaves              PostSave[]
+  postShares             PostShare[]
+  followsMade            Follow[]                @relation("FollowFollower")
+  followsReceived        Follow[]                @relation("FollowFollowing")
+  postReportsFiled       PostReport[]
+  postReportsReviewed    PostReport[]            @relation("PostReportReviewedBy")
+  moderationActionsTaken ModerationAction[]      @relation("ModerationActionAdmin")
+  postingRestriction     UserPostingRestriction?
+  coinsRulesUpdated      CoinsRewardRule[]
+  mediaAssets            MediaAsset[]
 
   @@index([status])
   @@index([countryCode])
@@ -514,6 +528,7 @@ model Venue {
   bundles            Bundle[]
   tournaments        Tournament[]
   assistantMessages  AssistantMessage[]
+  taggedPosts        Post[]
 
   @@index([geohash])
   @@index([lat, lng])
@@ -871,6 +886,7 @@ model MatchPost {
   reactions          MatchPostReaction[]
   playerRatings      PlayerRating[]
   tournamentMatches  TournamentMatch[]
+  linkedPosts        Post[]
 
   @@index([sportId, status])
   @@index([districtId])
@@ -1570,11 +1586,12 @@ model FeatureFlag {
 }
 
 model PlatformSetting {
-  id                 Int      @id @default(1)
-  serviceFeePct      Float    @default(5)
-  coinsPerHundredEgp Int      @default(10) // global fallback; CountryConfig.coinsPerHundredMajor wins
-  coinToEgpRate      Float    @default(20)
-  updatedAt          DateTime @updatedAt
+  id                       Int      @id @default(1)
+  serviceFeePct            Float    @default(5)
+  coinsPerHundredEgp       Int      @default(10) // global fallback; CountryConfig.coinsPerHundredMajor wins
+  coinToEgpRate            Float    @default(20)
+  autoHideReportThreshold  Int      @default(5)
+  updatedAt                DateTime @updatedAt
 }
 
 model PageSeoOverride {
@@ -1863,4 +1880,272 @@ model TournamentMatch {
 
   @@unique([tournamentId, round, matchIndex])
   @@index([tournamentId, round])
+}
+
+// ============================================================
+// Posts & media feed — see POSTS_FEED_MODULE_BLUEPRINT.md
+// Separate from MatchPost. Public-only in v1.
+// ============================================================
+
+enum PostAuthorKind {
+  user
+  official
+  venue
+}
+
+enum PostStatus {
+  active
+  removed
+}
+
+enum PostMediaType {
+  image
+  video
+}
+
+enum PostReportReason {
+  spam
+  inappropriate
+  copyright
+  harassment
+  misinformation
+  other
+}
+
+enum PostReportStatus {
+  open
+  reviewed
+  dismissed
+}
+
+enum ModerationActionType {
+  post_deleted
+  comment_deleted
+  user_posting_suspended
+  user_posting_unsuspended
+  report_dismissed
+}
+
+enum MediaAssetStatus {
+  pending
+  ready
+  failed
+}
+
+model MediaAsset {
+  id              String           @id @default(uuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            PostMediaType
+  key             String
+  url             String
+  thumbnailUrl    String?
+  mimeType        String
+  width           Int              @default(0)
+  height          Int              @default(0)
+  durationSeconds Int?
+  altText         String?
+  status          MediaAssetStatus @default(pending)
+  createdAt       DateTime         @default(now())
+  postMedia       PostMedia[]
+
+  @@index([userId, createdAt])
+}
+
+model Post {
+  id               String         @id @default(uuid())
+  slug             String
+  authorId         String
+  author           User           @relation("PostAuthor", fields: [authorId], references: [id])
+  authorKind       PostAuthorKind @default(user)
+  text             String         @db.Text
+  hashtags         String[]       @default([])
+  mentions         String[]       @default([])
+  taggedVenueId    String?
+  taggedVenue      Venue?         @relation(fields: [taggedVenueId], references: [id])
+  linkedMatchId    String?
+  linkedMatch      MatchPost?     @relation(fields: [linkedMatchId], references: [id])
+  visibility       String         @default("public")
+  status           PostStatus     @default(active)
+  autoHidden       Boolean        @default(false)
+  flagged          Boolean        @default(false)
+  removedReason    String?
+  removedByAdminId String?
+  removedByAdmin   User?          @relation("PostRemovedBy", fields: [removedByAdminId], references: [id])
+  likeCount        Int            @default(0)
+  commentCount     Int            @default(0)
+  shareCount       Int            @default(0)
+  saveCount        Int            @default(0)
+  coinsAwarded     Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  media    PostMedia[]
+  comments PostComment[]
+  likes    PostLike[]
+  saves    PostSave[]
+  shares   PostShare[]
+  reports  PostReport[]
+
+  @@index([status, createdAt])
+  @@index([authorId, createdAt])
+  @@index([taggedVenueId, createdAt])
+  @@index([linkedMatchId])
+  @@index([hashtags], type: Gin)
+  @@index([slug])
+}
+
+model PostMedia {
+  id              String        @id @default(uuid())
+  postId          String
+  post            Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  assetId         String?
+  asset           MediaAsset?   @relation(fields: [assetId], references: [id])
+  type            PostMediaType
+  url             String
+  thumbnailUrl    String
+  width           Int
+  height          Int
+  durationSeconds Int?
+  order           Int           @default(0)
+  altText         String?
+
+  @@index([postId, order])
+}
+
+model PostComment {
+  id              String        @id @default(uuid())
+  postId          String
+  post            Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId        String
+  author          User          @relation(fields: [authorId], references: [id])
+  parentCommentId String?
+  parent          PostComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies         PostComment[] @relation("CommentReplies")
+  text            String        @db.Text
+  mentions        String[]      @default([])
+  status          PostStatus    @default(active)
+  removedReason   String?
+  createdAt       DateTime      @default(now())
+
+  @@index([postId, createdAt])
+  @@index([parentCommentId])
+}
+
+model PostLike {
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model PostSave {
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model PostShare {
+  id        String   @id @default(uuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   String   @default("internal")
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@unique([postId, userId])
+}
+
+model Follow {
+  followerId  String
+  follower    User     @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("FollowFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId])
+  @@index([followingId, createdAt])
+  @@index([followerId, createdAt])
+}
+
+model Hashtag {
+  tag            String   @id
+  postCount      Int      @default(0)
+  trendingScore  Float    @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+model PostReport {
+  id               String           @id @default(uuid())
+  postId           String
+  post             Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reportedByUserId String
+  reporter         User             @relation(fields: [reportedByUserId], references: [id])
+  reason           PostReportReason
+  note             String?
+  status           PostReportStatus @default(open)
+  reviewedById     String?
+  reviewedBy       User?            @relation("PostReportReviewedBy", fields: [reviewedById], references: [id])
+  createdAt        DateTime         @default(now())
+
+  @@unique([postId, reportedByUserId])
+  @@index([status, createdAt])
+}
+
+model ModerationAction {
+  id              String               @id @default(uuid())
+  type            ModerationActionType
+  targetPostId    String?
+  targetCommentId String?
+  targetUserId    String?
+  reason          String
+  adminId         String
+  admin           User                 @relation("ModerationActionAdmin", fields: [adminId], references: [id])
+  createdAt       DateTime             @default(now())
+
+  @@index([createdAt])
+  @@index([targetPostId])
+  @@index([targetUserId])
+}
+
+model UserPostingRestriction {
+  userId           String    @id
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  suspendedUntil   DateTime?
+  permanent        Boolean   @default(false)
+  reason           String
+  issuedByAdminId  String
+  issuedAt         DateTime  @default(now())
+}
+
+model CoinsRewardRule {
+  id              String   @id @default(uuid())
+  metric          String   @default("like_count")
+  threshold       Int      @default(200)
+  coinsAwarded    Int      @default(150)
+  active          Boolean  @default(true)
+  updatedByAdminId String
+  updatedBy       User     @relation(fields: [updatedByAdminId], references: [id])
+  updatedAt       DateTime @updatedAt
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  name      String
+  userId    String?
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
 }
