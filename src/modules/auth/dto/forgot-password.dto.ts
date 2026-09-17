@@ -1,8 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsPhoneNumber } from 'class-validator';
+import { IsEmail, MaxLength } from 'class-validator';
+import { NormalizeEmail } from '../../../common/validation/email.transform';
 
 export class ForgotPasswordDto {
-  @ApiProperty({ example: '+201000000002' })
-  @IsPhoneNumber()
-  phone!: string;
+  @ApiProperty({ example: 'you@matchena.com' })
+  @NormalizeEmail()
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
 }

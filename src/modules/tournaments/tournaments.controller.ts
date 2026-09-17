@@ -58,6 +58,14 @@ export class TournamentsController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
+  @Roles('player', 'owner', 'admin')
+  @Post(':id/withdraw')
+  withdraw(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.tournaments.withdraw(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
   @Roles('owner', 'admin')
   @Post(':id/bracket/generate')
   generateBracket(

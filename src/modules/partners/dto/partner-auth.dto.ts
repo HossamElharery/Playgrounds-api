@@ -9,9 +9,11 @@ import {
   MinLength,
 } from 'class-validator';
 import { USERNAME_PATTERN } from '../../../common/utils/username.util';
+import { NormalizeEmail, TrimString } from '../../../common/validation/email.transform';
 
 export class PartnerRegisterDto {
   @ApiProperty({ example: 'Ahmed El-Malek' })
+  @TrimString()
   @IsString()
   @MinLength(2)
   @MaxLength(80)
@@ -25,8 +27,10 @@ export class PartnerRegisterDto {
   })
   username!: string;
 
-  @ApiProperty({ example: 'new.owner@mal3ab.app' })
+  @ApiProperty({ example: 'new.owner@matchena.com' })
+  @NormalizeEmail()
   @IsEmail()
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({ example: '+201001112223' })
@@ -56,9 +60,11 @@ export class PartnerLoginDto {
   @MaxLength(30)
   username?: string;
 
-  @ApiPropertyOptional({ example: 'owner@mal3ab.app' })
+  @ApiPropertyOptional({ example: 'owner@matchena.com' })
   @IsOptional()
+  @NormalizeEmail()
   @IsEmail()
+  @MaxLength(254)
   email?: string;
 
   @ApiProperty({ example: 'Password123!' })

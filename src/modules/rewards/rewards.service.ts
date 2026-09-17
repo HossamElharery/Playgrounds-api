@@ -20,7 +20,7 @@ const REFERRAL_BONUS_COINS = 300;
 const REVIEW_PHOTO_BONUS_COINS = 50;
 
 /**
- * MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — the scope/event contract
+ * MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — the scope/event contract
  * that makes one quest engine work identically across every activity family
  * (football, PlayStation, billiards, ...) instead of forking per activity.
  * Lives inside the existing `Quest.rule` Json column — no schema change.
@@ -58,6 +58,24 @@ function isoWeekKey(date: Date): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
+/** Cairo calendar day — Matchena's home market, independent of server TZ. */
+export function calendarDayKey(
+  date: Date,
+  timeZone = 'Africa/Cairo',
+): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function calendarDayIndex(key: string): number {
+  const [year, month, day] = key.split('-').map(Number);
+  return Math.floor(Date.UTC(year, (month ?? 1) - 1, day ?? 1) / 86_400_000);
+}
+
 @Injectable()
 export class RewardsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -84,31 +102,45 @@ export class RewardsService {
   }
 
   async dailyCheckIn(userId: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-    });
-    const now = new Date();
-    const lastCheckIn = user.streakUpdatedAt;
-    const isSameDay =
-      lastCheckIn && lastCheckIn.toDateString() === now.toDateString();
-    if (isSameDay) throw new BadRequestException('Already checked in today');
+    const awarded = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+      });
+      const now = new Date();
+      const today = calendarDayKey(now);
+      const lastKey = user.streakUpdatedAt
+        ? calendarDayKey(user.streakUpdatedAt)
+        : null;
+      if (lastKey === today) {
+        return {
+          coins: 0,
+          streak: user.streakCount,
+          streakFreezes: user.streakFreezes,
+          usedFreeze: false,
+          alreadyCheckedIn: true as const,
+        };
+      }
 
-    const isConsecutiveDay =
-      lastCheckIn && now.getTime() - lastCheckIn.getTime() < 48 * 3_600_000;
-    // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
-    // streak is the single canonical streak; a purchased freeze protects it
-    // from resetting to 1 when exactly one day is missed.
-    const canUseFreeze = !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
-    const newStreak = isConsecutiveDay || canUseFreeze ? user.streakCount + 1 : 1;
-    const streakFreezes = canUseFreeze ? user.streakFreezes - 1 : user.streakFreezes;
-    const multiplier = Math.min(
-      STREAK_MAX_MULTIPLIER,
-      1 + Math.floor(newStreak / 7),
-    );
-    const coins = DAILY_CHECKIN_COINS * multiplier;
+      const isConsecutiveDay =
+        lastKey != null &&
+        calendarDayIndex(today) - calendarDayIndex(lastKey) === 1;
+      // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
+      // streak is the single canonical streak; a purchased freeze protects it
+      // from resetting to 1 when exactly one day is missed.
+      const canUseFreeze =
+        !isConsecutiveDay && !!lastKey && user.streakFreezes > 0;
+      const newStreak =
+        isConsecutiveDay || canUseFreeze ? user.streakCount + 1 : 1;
+      const streakFreezes = canUseFreeze
+        ? user.streakFreezes - 1
+        : user.streakFreezes;
+      const multiplier = Math.min(
+        STREAK_MAX_MULTIPLIER,
+        1 + Math.floor(newStreak / 7),
+      );
+      const coins = DAILY_CHECKIN_COINS * multiplier;
 
-    await this.prisma.$transaction([
-      this.prisma.user.update({
+      await tx.user.update({
         where: { id: userId },
         data: {
           coinsBalance: { increment: coins },
@@ -116,17 +148,27 @@ export class RewardsService {
           streakUpdatedAt: now,
           streakFreezes,
         },
-      }),
-      this.prisma.coinLedgerEntry.create({
+      });
+      await tx.coinLedgerEntry.create({
         data: { userId, amount: coins, reason: 'daily_checkin' },
-      }),
-    ]);
+      });
 
-    await this.bumpQuestsForEvent(userId, 'checkin.daily');
-    if (newStreak === 7) await this.awardBadgeIfExists(userId, 'week-streak');
-    if (newStreak === 30) await this.awardBadgeIfExists(userId, 'iron-man');
+      return {
+        coins,
+        streak: newStreak,
+        streakFreezes,
+        usedFreeze: canUseFreeze,
+        alreadyCheckedIn: false as const,
+      };
+    });
 
-    return { coins, streak: newStreak, streakFreezes, usedFreeze: canUseFreeze };
+    if (!awarded.alreadyCheckedIn) {
+      await this.bumpQuestsForEvent(userId, 'checkin.daily');
+      if (awarded.streak === 7) await this.awardBadgeIfExists(userId, 'week-streak');
+      if (awarded.streak === 30) await this.awardBadgeIfExists(userId, 'iron-man');
+    }
+
+    return awarded;
   }
 
   /** 400 coins -> one streak-freeze token (§4.3). */
@@ -186,7 +228,7 @@ export class RewardsService {
   }
 
   /**
-   * The real trigger point (MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1):
+   * The real trigger point (MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1):
    * bumps every active quest whose `rule.event` matches the event that just
    * happened and whose `rule.scope` (if any) matches the activity it happened
    * on. Call this from booking completion, daily check-in, MVP awarding,
@@ -627,5 +669,22 @@ export class RewardsService {
         data: { userId, amount: REVIEW_PHOTO_BONUS_COINS, reason: 'review_with_photo', bookingId },
       }),
     ]);
+  }
+
+  /** Generic one-shot credit used by the posts coins engine. Returns false if the user is missing. */
+  async awardLedger(userId: string, amount: number, reason: string): Promise<boolean> {
+    if (amount <= 0) return false;
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) return false;
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { coinsBalance: { increment: amount } },
+      }),
+      this.prisma.coinLedgerEntry.create({
+        data: { userId, amount, reason },
+      }),
+    ]);
+    return true;
   }
 }

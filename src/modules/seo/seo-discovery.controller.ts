@@ -38,6 +38,16 @@ export class SeoDiscoveryController {
   @Header('Content-Type', 'application/xml; charset=utf-8')
   staticPages(@Res() response: Response) { response.send(this.sitemap.staticPages()); }
 
+  @Public()
+  @Get('sitemaps/posts.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async posts(@Res() response: Response) { response.send(await this.sitemap.posts()); }
+
+  @Public()
+  @Get('sitemaps/hashtags.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async hashtags(@Res() response: Response) { response.send(await this.sitemap.hashtags()); }
+
   @Get('indexnow/status')
   @UseGuards(AuthGuard)
   @Roles('admin')

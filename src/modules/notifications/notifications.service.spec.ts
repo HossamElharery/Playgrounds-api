@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -51,6 +52,36 @@ describe('Notification delivery', () => {
     prisma.user.findMany.mockResolvedValue([]);
     await service.broadcast({ audience: 'players', titleEn: 'Notice', titleAr: 'إشعار', bodyEn: 'Details', bodyAr: 'تفاصيل' });
     expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ NOT: { roles: { hasSome: ['owner', 'staff', 'admin'] } } }) }));
+  });
+  it('sends to selected accounts without applying a governorate filter', async () => {
+    prisma.user.findMany.mockResolvedValue([{ id: 'u1' }]);
+    jest.spyOn(service, 'create').mockResolvedValue({ id: 'n1' } as never);
+    await service.broadcast({
+      audience: 'individual',
+      recipientIds: ['u1'],
+      governorateId: 'cairo',
+      titleEn: 'Notice',
+      titleAr: 'إشعار',
+      bodyEn: 'Details',
+      bodyAr: 'تفاصيل',
+    });
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['u1'] }, status: 'active' },
+      }),
+    );
+  });
+  it('rejects individual broadcasts with no recipients', async () => {
+    await expect(
+      service.broadcast({
+        audience: 'individual',
+        titleEn: 'Notice',
+        titleAr: 'إشعار',
+        bodyEn: 'Details',
+        bodyAr: 'تفاصيل',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
   });
   it('scopes dismissal to the authenticated recipient', async () => {
     await service.dismiss('current-user', 'message');

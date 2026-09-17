@@ -13,7 +13,7 @@ export class SitemapService {
     private readonly prisma: PrismaService,
     config: ConfigService,
   ) {
-    this.siteUrl = (config.get<string>('SITE_URL') || 'https://mal3ab.app').replace(/\/$/, '');
+    this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
 
   private localizedEntry(path: string, lastmod?: Date, images: string[] = []): string {
@@ -49,6 +49,8 @@ export class SitemapService {
   <sitemap><loc>${this.siteUrl}/sitemaps/venues.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
   <sitemap><loc>${this.siteUrl}/sitemaps/landings.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
   <sitemap><loc>${this.siteUrl}/sitemaps/static.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
+  <sitemap><loc>${this.siteUrl}/sitemaps/posts.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
+  <sitemap><loc>${this.siteUrl}/sitemaps/hashtags.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
 </sitemapindex>`;
   }
 
@@ -94,7 +96,39 @@ export class SitemapService {
   }
 
   staticPages(): string {
-    const paths = ['', '/about', '/partners', '/how-it-works', '/contact', '/help', '/terms', '/privacy', '/refund-policy'];
+    const paths = ['', '/about', '/partners', '/how-it-works', '/contact', '/help', '/terms', '/privacy', '/refund-policy', '/community'];
     return this.urlset(paths.map((path) => this.localizedEntry(path)).join(''));
+  }
+
+  async posts(): Promise<string> {
+    const rows = await this.prisma.post.findMany({
+      where: { status: 'active', autoHidden: false, visibility: 'public' },
+      select: { slug: true, id: true, updatedAt: true, media: { orderBy: { order: 'asc' }, take: 1, select: { thumbnailUrl: true } } },
+      orderBy: { updatedAt: 'desc' },
+      take: 5000,
+    });
+    return this.urlset(
+      rows
+        .map((row) =>
+          this.localizedEntry(
+            `/community/post/${row.slug}-${row.id}`,
+            row.updatedAt,
+            row.media[0]?.thumbnailUrl ? [row.media[0].thumbnailUrl] : [],
+          ),
+        )
+        .join(''),
+    );
+  }
+
+  async hashtags(): Promise<string> {
+    const tags = await this.prisma.hashtag.findMany({
+      where: { postCount: { gt: 0 } },
+      select: { tag: true, updatedAt: true },
+      orderBy: { trendingScore: 'desc' },
+      take: 2000,
+    });
+    return this.urlset(
+      tags.map((row) => this.localizedEntry(`/community/hashtag/${encodeURIComponent(row.tag)}`, row.updatedAt)).join(''),
+    );
   }
 }

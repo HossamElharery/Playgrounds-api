@@ -33,6 +33,7 @@ import {
 } from '../payments/payment-provider.interface';
 import { WalletService } from '../payments/wallet.service';
 import { RewardsService } from '../rewards/rewards.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
@@ -53,6 +54,7 @@ export class BookingsService {
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
     private readonly rewards: RewardsService,
     private readonly wallet: WalletService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---------- Slot grid ----------
@@ -230,7 +232,21 @@ export class BookingsService {
           });
           if (overlap) throw new ConflictException('SLOT_ALREADY_HELD');
 
-          return tx.booking.create({
+          // Coins have to be reserved the moment the price is locked in, not
+          // at confirm — otherwise two concurrent holds can each price in the
+          // same coin balance, and whichever confirms second finds the coins
+          // already gone from under a total it already showed the player.
+          if (coinsRedeemed > 0) {
+            const spent = await tx.user.updateMany({
+              where: { id: userId, coinsBalance: { gte: coinsRedeemed } },
+              data: { coinsBalance: { decrement: coinsRedeemed } },
+            });
+            if (spent.count !== 1) {
+              throw new BadRequestException('INSUFFICIENT_COINS');
+            }
+          }
+
+          const created = await tx.booking.create({
             data: {
               code: this.generateBookingCode(),
               courtId: court.id,
@@ -249,6 +265,19 @@ export class BookingsService {
               holdExpiresAt: new Date(Date.now() + HOLD_DURATION_MS),
             },
           });
+
+          if (coinsRedeemed > 0) {
+            await tx.coinLedgerEntry.create({
+              data: {
+                userId,
+                amount: -coinsRedeemed,
+                reason: 'booking_redemption',
+                bookingId: created.id,
+              },
+            });
+          }
+
+          return created;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
@@ -372,28 +401,9 @@ export class BookingsService {
       this.config.get<string>('QR_SIGNING_SECRET')!,
     );
 
-    return this.prisma.$transaction(async (tx) => {
-        if (booking.coinsRedeemed > 0) {
-          const spent = await tx.user.updateMany({
-            where: {
-              id: userId,
-              coinsBalance: { gte: booking.coinsRedeemed },
-            },
-            data: { coinsBalance: { decrement: booking.coinsRedeemed } },
-          });
-          if (spent.count !== 1) {
-            throw new BadRequestException('INSUFFICIENT_COINS');
-          }
-          await tx.coinLedgerEntry.create({
-            data: {
-              userId,
-              amount: -booking.coinsRedeemed,
-              reason: 'booking_redemption',
-              bookingId,
-            },
-          });
-        }
-
+    const confirmedBooking = await this.prisma.$transaction(async (tx) => {
+        // Coins were already reserved off the balance when this hold was
+        // created (see `holdSlot()`) — confirming only ever moves the EGP total.
         await this.wallet.debit(tx, {
           userId,
           amount: chargeAmount,
@@ -445,6 +455,21 @@ export class BookingsService {
         }
         return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
     });
+    // Paid-for bookings are the one thing a player must be able to find again:
+    // the notification carries the code and deep-links to the QR.
+    await this.notifications
+      .create({
+        userId,
+        category: 'bookings',
+        titleEn: `Booking confirmed — ${booking.venue.nameEn}`,
+        titleAr: `تم تأكيد الحجز — ${booking.venue.nameAr}`,
+        bodyEn: `Code ${confirmedBooking.code}`,
+        bodyAr: `كود ${confirmedBooking.code}`,
+        deepLink: '/app/bookings',
+        payload: { bookingId },
+      })
+      .catch(() => undefined);
+    return confirmedBooking;
   }
 
   // ---------- Split payment ----------
@@ -718,6 +743,28 @@ export class BookingsService {
     return 0;
   }
 
+  async refundPreview(userId: string, bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+    if (booking.userId !== userId)
+      throw new ForbiddenException('Not your booking');
+    const refundPct =
+      booking.status === 'held' ? 100 : this.refundPreviewPct(booking.slotStart);
+    const wasPaid =
+      booking.paymentStatus === 'paid' || booking.paymentStatus === 'partial';
+    return {
+      refundPct,
+      refundAmount: wasPaid
+        ? Math.round((booking.totalAmount * refundPct) / 100)
+        : 0,
+      currency: booking.currency,
+      coinsRestored:
+        booking.status === 'confirmed' ? booking.coinsRedeemed : 0,
+    };
+  }
+
   async cancelByAdmin(actorId: string, bookingId: string, reason: string) {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -731,13 +778,14 @@ export class BookingsService {
     if (!booking) throw new NotFoundException('Booking not found');
     if (booking.userId !== userId)
       throw new ForbiddenException('Not your booking');
-    return this.settleCancellation(booking, reason);
+    return this.settleCancellation(booking, reason, undefined, true);
   }
 
   private async settleCancellation(
     booking: Booking,
     reason?: string,
     adminActorId?: string,
+    cancelledByPlayer = false,
   ): Promise<Booking> {
     if (!['held', 'confirmed'].includes(booking.status)) {
       throw new BadRequestException(
@@ -765,7 +813,7 @@ export class BookingsService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const settled = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({
         where: { id: booking.id },
         data: {
@@ -797,7 +845,10 @@ export class BookingsService {
           },
         });
       }
-      if (booking.status === 'confirmed' && booking.coinsRedeemed > 0) {
+      // Coins are reserved the moment a hold is created (see `holdSlot()`),
+      // not just on confirm — so cancelling a still-`held` booking must give
+      // them back too, or they vanish for a booking that was never even paid.
+      if (booking.coinsRedeemed > 0) {
         await tx.user.update({
           where: { id: booking.userId },
           data: { coinsBalance: { increment: booking.coinsRedeemed } },
@@ -817,6 +868,28 @@ export class BookingsService {
       } });
       return updated;
     });
+
+    // A cancellation moves money and frees a slot the player was counting on.
+    // When the venue or an admin cancels, this is the only way they find out;
+    // when they cancel themselves, it's the receipt for what was refunded.
+    const refundMajor = Math.round(refundAmount / 100);
+    await this.notifications
+      .create({
+        userId: booking.userId,
+        category: 'bookings',
+        titleEn: cancelledByPlayer
+          ? 'Your booking was cancelled'
+          : 'Your booking was cancelled by the venue',
+        titleAr: cancelledByPlayer
+          ? 'تم إلغاء حجزك'
+          : 'الملعب ألغى حجزك',
+        bodyEn: refundAmount > 0 ? `${refundMajor} ${booking.currency} refunded to your wallet` : 'No refund was due under the cancellation policy',
+        bodyAr: refundAmount > 0 ? `تم رد ${refundMajor} ${booking.currency} إلى محفظتك` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
+        deepLink: '/app/bookings',
+        payload: { bookingId: booking.id, refundAmount },
+      })
+      .catch(() => undefined);
+    return settled;
   }
 
   // ---------- Reads ----------
@@ -851,7 +924,15 @@ export class BookingsService {
     };
     return this.prisma.booking.findMany({
       where,
-      include: { court: true, venue: true },
+      // The player's own booking list renders the venue's name and cover photo,
+      // so ship them with the booking instead of making the client hunt for the
+      // venue in a separate paginated search (where it may not even appear).
+      include: {
+        court: true,
+        venue: {
+          include: { photos: { orderBy: { position: 'asc' }, take: 1 } },
+        },
+      },
       orderBy: { slotStart: scope === 'past' ? 'desc' : 'asc' },
       take: 100,
     });

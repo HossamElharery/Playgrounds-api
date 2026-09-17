@@ -43,6 +43,11 @@ export class UpdateNotificationPrefsDto {
   @IsBoolean()
   pulse?: boolean;
 
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  posts?: boolean;
+
   @ApiPropertyOptional({ example: false })
   @IsOptional()
   @IsBoolean()

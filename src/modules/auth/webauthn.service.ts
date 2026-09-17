@@ -119,7 +119,7 @@ export class WebAuthnService {
     const options = await generateRegistrationOptions({
       rpName: this.rpName(),
       rpID: this.rpID(),
-      userName: user.email || user.phone,
+      userName: user.email || user.phone || user.id,
       userID: new TextEncoder().encode(user.id),
       userDisplayName: user.name,
       attestationType: 'none',

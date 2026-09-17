@@ -76,7 +76,7 @@ async function deleteVenueTree(venueId: string) {
 }
 
 async function main() {
-  console.log('Seeding Mal3ab reference + demo data...');
+  console.log('Seeding Matchena reference + demo data...');
 
   // ---- Country / geo ----
   const egyptPaymentMethods = [
@@ -263,7 +263,7 @@ async function main() {
       { id: 'sport-swimming', slug: 'swimming', nameEn: 'Swimming', nameAr: 'سباحة', icon: 'swimming', accentColor: '#2DD4BF', activityKind: 'field-sport' },
       { id: 'sport-squash', slug: 'squash', nameEn: 'Squash', nameAr: 'اسكواش', icon: 'squash', accentColor: '#8B5CF6', activityKind: 'racket-court' },
       { id: 'sport-volleyball', slug: 'volleyball', nameEn: 'Volleyball', nameAr: 'كرة طائرة', icon: 'volleyball', accentColor: '#F97316', activityKind: 'field-sport' },
-      // Mal3ab gaming expansion — see MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.1
+      // Matchena gaming expansion — see MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.1
       { id: 'sport-playstation', slug: 'playstation', nameEn: 'PlayStation', nameAr: 'بلايستيشن', icon: 'playstation', accentColor: '#C6FF3D', activityKind: 'gaming-station' },
       { id: 'sport-billiards', slug: 'billiards', nameEn: 'Billiards', nameAr: 'بلياردو', icon: 'billiards', accentColor: '#7C3AED', activityKind: 'table-game' },
       { id: 'sport-table-tennis', slug: 'table-tennis', nameEn: 'Table Tennis', nameAr: 'بينج بونج', icon: 'table-tennis', accentColor: '#22C7B8', activityKind: 'table-game' },
@@ -303,22 +303,22 @@ async function main() {
 
   const admin = await prisma.user.upsert({
     where: { phone: '+201000000001' },
-    update: {},
+    update: { email: 'admin@matchena.com', name: 'Matchena Admin' },
     create: {
       phone: '+201000000001',
-      email: 'admin@mal3ab.app',
+      email: 'admin@matchena.com',
       passwordHash,
-      name: 'Mal3ab Admin',
+      name: 'Matchena Admin',
       roles: ['admin'],
     },
   });
 
   const owner = await prisma.user.upsert({
     where: { phone: '+201000000002' },
-    update: { username: 'elmalek' },
+    update: { username: 'elmalek', email: 'owner@matchena.com' },
     create: {
       phone: '+201000000002',
-      email: 'owner@mal3ab.app',
+      email: 'owner@matchena.com',
       passwordHash,
       name: 'Ahmed El-Malek',
       username: 'elmalek',
@@ -335,12 +335,12 @@ async function main() {
       prisma.user.upsert({
         where: { phone: `+2010000001${String(i).padStart(2, '0')}` },
         update: {
-          email: `player${i}@mal3ab.app`,
+          email: `player${i}@matchena.com`,
           passwordHash,
         },
         create: {
           phone: `+2010000001${String(i).padStart(2, '0')}`,
-          email: `player${i}@mal3ab.app`,
+          email: `player${i}@matchena.com`,
           passwordHash,
           name,
           roles: ['player'],
@@ -424,7 +424,7 @@ async function main() {
     });
   }
 
-  // ---- Gaming expansion venues — see MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.2/§7.3 ----
+  // ---- Gaming expansion venues — see MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.2/§7.3 ----
   {
     const gamingSlug = venueSlug('EG', 'Neon Arena Gaming Lounge');
     const gamingVenue = await prisma.venue.upsert({
@@ -574,7 +574,7 @@ async function main() {
   });
 
   // ---- Quests & badges ----
-  // MAL3AB_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — `rule.event` says which
+  // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — `rule.event` says which
   // event bumps this quest; `rule.scope` (omitted = every activity) narrows
   // it to one activityKind and/or one specific sportId/gameId. Same table,
   // same code path, for football and for a PlayStation booking alike.
@@ -697,16 +697,16 @@ async function main() {
         'https://images.unsplash.com/photo-1554068865-24cecd4e34b8?auto=format&fit=crop&w=1600&q=80',
       titleEn: 'How to book a padel court in 60 seconds',
       titleAr: 'إزاي تحجز ملعب بادل في أقل من دقيقة',
-      subtitleEn: 'Explore → slot → hold → pay. The hold lasts two minutes.',
-      subtitleAr: 'استكشف ← المعاد ← تثبيت ← دفع. التثبيت يستمر دقيقتين.',
-      contentEn: `<p>Open <strong>Explore</strong>, pick Padel, and filter by district or tonight’s window.</p>
-<p>Tap a court card, choose a green slot, and confirm. Mal3ab holds the slot for about two minutes while you pay — card, wallet, or cash at the venue.</p>
-<p>Your QR code appears the moment the booking is confirmed. Show it at the gate; the owner scans it and you are checked in.</p>
-<p>First booking? Use promo <strong>WELCOME25</strong> for 25% off.</p>`,
-      contentAr: `<p>افتح <strong>استكشف</strong>، اختار بادل، وصفّي حسب الحي أو معاد الليلة.</p>
-<p>ادخل كارت الملعب، اختار سلوت أخضر، وأكّد. ملعب بيثبّت المعاد حوالي دقيقتين وأنت بتدفع — كارت أو محفظة أو كاش في الملعب.</p>
-<p>كود الـ QR بيظهر أول ما الحجز يتأكد. ورّيه عند البوابة؛ صاحب الملعب بيمسحه وتتحسب داخل.</p>
-<p>أول حجز؟ استخدم كود <strong>WELCOME25</strong> وخصم 25%.</p>`,
+      subtitleEn: 'Pick a slot, confirm, then show the QR at the gate.',
+      subtitleAr: 'اختار الميعاد، أكّد، وورّي الـ QR عند البوابة.',
+      contentEn: `<p>Open <strong>Explore</strong>, choose Padel, and filter by area or tonight.</p>
+<p>Open the venue, pick a free slot, and confirm. Matchena holds that slot for a few minutes while you pay — card, e-wallet, or cash at the venue.</p>
+<p>Once the booking is confirmed, a QR code appears. Show it at the gate for check-in.</p>
+<p>On a first booking you can apply <strong>WELCOME25</strong> for 25% off, if the code is still active.</p>`,
+      contentAr: `<p>افتح <strong>استكشف</strong>، اختار بادل، وصفّي حسب المنطقة أو معاد الليلة.</p>
+<p>افتح الملعب، اختار ميعاد فاضي، وأكّد. ماتشنا بيثبّت المعاد دقايق وأنت بتدفع — بطاقة أو محفظة أو كاش في الملعب.</p>
+<p>أول ما الحجز يتأكد يظهر كود QR. ورّيه عند البوابة للتشيك إن.</p>
+<p>في أول حجز تقدر تستخدم <strong>WELCOME25</strong> خصم 25٪، لو الكود لسه شغّال.</p>`,
     },
     {
       id: 'blog-split-pay',
@@ -719,12 +719,12 @@ async function main() {
       titleAr: 'قسّم سعر الملعب على السكواد',
       subtitleEn: 'Each teammate pays their share from a private link.',
       subtitleAr: 'كل لاعب يدفع حصته من لينك خاص.',
-      contentEn: `<p>When you confirm a booking you can attach split shares. The organizer pays their own amount; everyone else gets a pay link.</p>
-<p>The booking stays <em>partial</em> until every share is paid. Shares must add up to the booking total — the API rejects a mismatch.</p>
-<p>Cash shares stay pending until check-in. Card and wallet settle immediately in the current checkout.</p>`,
-      contentAr: `<p>وقت تأكيد الحجز تقدر تضيف حصص تقسيم. المنظم بيدفع حصته، وباقي الفريق بياخد لينك دفع.</p>
-<p>الحجز يفضل <em>partial</em> لحد ما كل الحصص تتدفع. مجموع الحصص لازم يساوي إجمالي الحجز — الـ API بيرفض أي فرق.</p>
-<p>حصة الكاش تفضل pending لحد التشيك إن. الكارت والمحفظة بيتقفلو فورًا في الدفع الحالي.</p>`,
+      contentEn: `<p>When you confirm a booking you can split the total. You pay your share; everyone else gets a private pay link.</p>
+<p>The booking stays open until every share is paid, and the amounts have to add up to the court total.</p>
+<p>A cash share is settled at check-in. Card and wallet payments close as soon as they go through.</p>`,
+      contentAr: `<p>وقت تأكيد الحجز تقدر تقسّم الإجمالي. تدفع حصتك، وباقي الفريق بياخد لينك دفع خاص.</p>
+<p>الحجز يفضل مفتوح لحد ما كل حصة تتدفع، والمبالغ لازم تساوي سعر الملعب.</p>
+<p>حصة الكاش بتتقفّل عند التشيك إن. البطاقة والمحفظة بتتأكد أول ما الدفع يعدي.</p>`,
     },
     {
       id: 'blog-coins-streaks',
@@ -735,32 +735,32 @@ async function main() {
         'https://images.unsplash.com/photo-1461896836934-ffe607ba6851?auto=format&fit=crop&w=1600&q=80',
       titleEn: 'Coins, streaks, and the Night Owl badge',
       titleAr: 'الكوينز، الستريك، وبادج بومة الليل',
-      subtitleEn: 'Play, check in, and the wallet grows on its own.',
-      subtitleAr: 'العب، اعمل تشيك إن، والمحفظة تزيد لوحدها.',
-      contentEn: `<p>Completed, checked-in bookings earn coins. Your first completed match also unlocks a welcome bonus.</p>
-<p>Open the wallet for daily check-in streaks and quests like <em>Play 3 times this week</em>. Badges (Night Owl and more) sit next to your public profile.</p>
-<p>Redeem coins at hold time. They never go below zero — the server locks the balance before the charge is kept.</p>`,
-      contentAr: `<p>الحجوزات المكتملة بعد التشيك إن بتديك كوينز. أول ماتش مكتمل كمان بيفتح بونص الترحيب.</p>
-<p>افتح المحفظة للستريك اليومي والكويستات زي <em>العب 3 مرات الأسبوع ده</em>. البادجز (بومة الليل وغيرها) بتظهر على بروفايلك العام.</p>
-<p>تقدر تصرف الكوينز وقت التثبيت. الرصيد عمره ما ينزل تحت صفر — السيرفر بيقفل الرصيد قبل ما الدفع يتثبت.</p>`,
+      subtitleEn: 'Play, check in, and spend coins on the next slot.',
+      subtitleAr: 'العب، اعمل تشيك إن، وصرف الكوينز على الميعاد الجاي.',
+      contentEn: `<p>Confirmed bookings that you check in for add coins. A first completed session can also add a welcome bonus.</p>
+<p>The wallet holds daily streaks and weekly quests — for example, book three times this week. Badges such as Night Owl show on your public profile.</p>
+<p>Apply coins when you confirm the next booking. They come off the total before you pay the rest.</p>`,
+      contentAr: `<p>الحجز المؤكد بعد التشيك إن بيزوّد الكوينز. أول جلسة مكتملة ممكن كمان تضيف بونص ترحيب.</p>
+<p>المحفظة فيها الستريك اليومي والكويستات الأسبوعية — مثلًا احجز ثلاث مرات في الأسبوع. شارات زي بومة الليل بتظهر على بروفايلك العام.</p>
+<p>صرف الكوينز وأنت بتأكد الحجز الجاي. بتتخصم من الإجمالي قبل ما تدفع الباقي.</p>`,
     },
     {
       id: 'blog-pulse',
-      slug: 'mal3ab-pulse-fill-a-missing-player',
+      slug: 'matchena-pulse-fill-a-missing-player',
       categoryId: news.id,
       daysAgo: 12,
       coverImageUrl:
         'https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?auto=format&fit=crop&w=1600&q=80',
-      titleEn: 'Mal3ab Pulse: fill a missing player tonight',
-      titleAr: 'نبض ملعب: كمّل اللاعب الناقص الليلة',
-      subtitleEn: 'Broadcast that you are ready. Claim a rescue spot in seconds.',
-      subtitleAr: 'أعلن إنك جاهز. احجز مكان الإنقاذ في ثواني.',
-      contentEn: `<p>Pulse is the live demand layer. Set your availability (now / tonight / weekend), sport, and radius.</p>
-<p>When a match is one player short, it shows up as a rescue opportunity. Claiming holds a seat for about 90 seconds — if someone else wins the race you get <code>PULSE_CAPACITY_CHANGED</code> and refetch.</p>
-<p>Releasing your claim does not blindly reopen a full lobby. The server recounts active holds first.</p>`,
-      contentAr: `<p>نبض ملعب هو طبقة الطلب اللحظي. حدّد جاهزيتك (دلوقتي / الليلة / الويكند) والرياضة ونطاق المسافة.</p>
-<p>لو ماتش ناقصه لاعب، بيظهر كفرصة إنقاذ. الكليم بيحجز المقعد حوالي 90 ثانية — لو حد تاني كسب السباق هتوصلك <code>PULSE_CAPACITY_CHANGED</code> وتعيد التحميل.</p>
-<p>إلغاء الكليم مش بيفتح اللوبي على طول لو لسه فيه ناس. السيرفر بيعِد الكليمات النشطة الأول.</p>`,
+      titleEn: 'Matchena Pulse: fill a missing player tonight',
+      titleAr: 'نبض ماتشنا: كمّل اللاعب الناقص الليلة',
+      subtitleEn: 'Set yourself ready, then claim an open spot before the slot closes.',
+      subtitleAr: 'حدّد إنك جاهز، وبعدين احجز المكان الفاضي قبل ما الميعاد يتقفل.',
+      contentEn: `<p>Pulse shows matches that still need a player. Set when you can play (now, tonight, or the weekend), the sport, and how far you will travel.</p>
+<p>If a side is short, it appears as a rescue spot. Claiming holds the seat briefly so you can confirm. If someone else takes it first, refresh and pick another opening.</p>
+<p>Release the spot if you cannot make it — that keeps your reliability score clean.</p>`,
+      contentAr: `<p>Pulse بيظهر الماتشات اللي لسه ناقصها لاعب. حدّد إمتى تقدر تلعب (دلوقتي، الليلة، أو الويكند)، الرياضة، والمسافة اللي تمشيها.</p>
+<p>لو الطرف ناقص، بيظهر كمكان إنقاذ. الحجز بيثبّت المقعد شوية عشان تأكد. لو حد تاني أخده، حدّث الصفحة واختَر فرصة تانية.</p>
+<p>حرّر المكان لو مش هتقدر تحضر — ده بيحافظ على درجة التزامك.</p>`,
     },
     {
       id: 'blog-cairo-districts',
@@ -771,14 +771,14 @@ async function main() {
         'https://images.unsplash.com/photo-1577223625816-7546f13df25d?auto=format&fit=crop&w=1600&q=80',
       titleEn: 'Where to play this weekend in Cairo',
       titleAr: 'هتلعب فين الويكند في القاهرة',
-      subtitleEn: 'Nasr City, Maadi, New Cairo, Sheikh Zayed — plus Riyadh and Dubai Marina.',
-      subtitleAr: 'مدينة نصر، المعادي، القاهرة الجديدة، الشيخ زايد — ومعاهم الرياض ودبي مارينا.',
-      contentEn: `<p>Seed venues are live for frontend wiring: El Dawlia (football, Nasr City), Zed Padel (Sheikh Zayed), Maadi Sporting Club (tennis), New Cairo Courts (basketball), and Heliopolis Squash.</p>
-<p>Search with <code>district=nasr-city</code> or a map viewport. Slot grids respect the venue country’s timezone — Egypt is <code>Africa/Cairo</code>.</p>
-<p>Weekend peak pricing is already on every demo court. Book Saturday after 17:00 and you will see the weekend rule, not the daytime base fare.</p>`,
-      contentAr: `<p>ملاعب السيد جاهزة لربط الفرونت: الدولية (كرة، مدينة نصر)، زد بادل (الشيخ زايد)، نادي المعادي (تنس)، ملاعب القاهرة الجديدة (سلة)، ومركز مصر الجديدة للاسكواش.</p>
-<p>ابحث بـ <code>district=nasr-city</code> أو من الخريطة. شبكة المواعيد بتمشي على تايم زون دولة الملعب — مصر <code>Africa/Cairo</code>.</p>
-<p>سعر الويكند متسجل على كل كورت ديمو. حجز السبت بعد 5 العصر هيظهر قاعدة الويكند مش سعر النهار.</p>`,
+      subtitleEn: 'Nasr City, Maadi, New Cairo, Sheikh Zayed — filter by area and sport.',
+      subtitleAr: 'مدينة نصر، المعادي، القاهرة الجديدة، الشيخ زايد — فلتر حسب المنطقة والرياضة.',
+      contentEn: `<p>Start in Explore, pick the sport, then narrow by district. Football in Nasr City, padel in Sheikh Zayed, tennis in Maadi, basketball in New Cairo, squash in Heliopolis — same booking flow.</p>
+<p>The map and the list stay in sync. Times follow the venue’s local clock, so an evening slot in Cairo is evening in Cairo.</p>
+<p>Weekend evenings often cost more than weekday afternoons. The price on the card is the price you confirm.</p>`,
+      contentAr: `<p>ابدأ من استكشف، اختار الرياضة، وبعدين ضيّق على الحي. كرة في مدينة نصر، بادل في الشيخ زايد، تنس في المعادي، سلة في القاهرة الجديدة، اسكواش في مصر الجديدة — نفس طريقة الحجز.</p>
+<p>الخريطة والقائمة ماشيين مع بعض. المواعيد على توقيت الملعب، فميعاد بالليل في القاهرة يبقى بالليل في القاهرة.</p>
+<p>عصر الويكند غالبًا أغلى من بعد الظهر في نص الأسبوع. السعر على الكارت هو السعر اللي هتأكده.</p>`,
     },
   ];
 
@@ -845,9 +845,9 @@ async function main() {
       questionEn: 'I did not receive the login OTP',
       questionAr: 'الـ OTP مش واصل',
       answerEn:
-        'Check that the phone is in +20 format. In local development the 4-digit code is printed in the API terminal, not sent by SMS.',
+        'Check the number is in +20 format and wait a minute. If it still does not arrive, try again or sign in with Google, Facebook, or Face ID.',
       answerAr:
-        'اتأكد إن الرقم بصيغة +20. في التطوير المحلي الكود المكوّن من 4 أرقام بيظهر في ترمينال الـ API مش SMS.',
+        'اتأكد إن الرقم بصيغة +20 واستنى دقيقة. لو الكود موصلش، اطلبه تاني أو ادخل بجوجل أو فيسبوك أو Face ID.',
     },
     {
       id: 'faq-split',
@@ -1072,7 +1072,7 @@ async function main() {
 
   // ---- Gaming expansion: game catalog, bundle, membership plans ----
   // Generic/placeholder titles only — never real publishers' names or box
-  // art, per MAL3AB_GAMING_EXPANSION_BLUEPRINT.md §3.6/§12.
+  // art, per MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.6/§12.
   await Promise.all(
     [
       { slug: 'football-champions', nameEn: 'Football Champions', nameAr: 'أبطال كرة القدم', genre: 'sports', ageRating: 'everyone' },
@@ -1090,8 +1090,8 @@ async function main() {
     [
       {
         slug: 'gaming-pass',
-        nameEn: 'Mal3ab Gaming Pass',
-        nameAr: 'اشتراك ملعب للألعاب',
+        nameEn: 'Matchena Gaming Pass',
+        nameAr: 'اشتراك ماتشنا للألعاب',
         scope: 'gaming',
         priceAmount: 60000,
         priceCurrency: 'EGP',
@@ -1102,8 +1102,8 @@ async function main() {
       },
       {
         slug: 'all-access',
-        nameEn: 'Mal3ab All-Access',
-        nameAr: 'اشتراك ملعب الشامل',
+        nameEn: 'Matchena All-Access',
+        nameAr: 'اشتراك ماتشنا الشامل',
         scope: 'all-activities',
         priceAmount: 120000,
         priceCurrency: 'EGP',
@@ -1112,7 +1112,13 @@ async function main() {
         perksEn: ['15% off every activity', 'Priority Rescue Match matching', 'Free coins bonus monthly'],
         perksAr: ['خصم 15% على كل الأنشطة', 'أولوية في مطابقة Rescue Match', 'مكافأة كوينز شهرية مجانية'],
       },
-    ].map((p) => prisma.membershipPlan.upsert({ where: { slug: p.slug }, update: {}, create: p })),
+    ].map((p) =>
+      prisma.membershipPlan.upsert({
+        where: { slug: p.slug },
+        update: { nameEn: p.nameEn, nameAr: p.nameAr },
+        create: p,
+      }),
+    ),
   );
 
   const billiardsClub = await prisma.venue.findUnique({
@@ -1138,8 +1144,8 @@ async function main() {
 
   console.log('Seed complete.');
   console.log('---------------------------------------------');
-  console.log('Admin login : admin@mal3ab.app / Password123!');
-  console.log('Owner login : owner@mal3ab.app / Password123!');
+  console.log('Admin login : admin@matchena.com / Password123!');
+  console.log('Owner login : owner@matchena.com / Password123!');
   console.log('Players     : phone +2010000010X (OTP via console, X=0..9)');
   console.log('---------------------------------------------');
 }

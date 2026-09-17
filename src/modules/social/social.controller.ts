@@ -103,12 +103,18 @@ export class SocialController {
 
   @Public()
   @Get('feed/matches')
-  feed(@Query() q: MatchFeedQueryDto) {
-    return this.matchPosts.feed({
-      sportId: q.sportId,
-      districtId: q.districtId,
-      status: q.status,
-    });
+  feed(
+    @Query() q: MatchFeedQueryDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.matchPosts.feed(
+      {
+        sportId: q.sportId,
+        districtId: q.districtId,
+        status: q.status,
+      },
+      user?.id,
+    );
   }
 
   @UseGuards(AuthGuard)
@@ -134,8 +140,8 @@ export class SocialController {
 
   @Public()
   @Get('matches/:id')
-  getMatch(@Param('id') id: string) {
-    return this.matchPosts.getById(id);
+  getMatch(@Param('id') id: string, @CurrentUser() user?: AuthenticatedUser) {
+    return this.matchPosts.getById(id, user?.id);
   }
 
   @UseGuards(AuthGuard)

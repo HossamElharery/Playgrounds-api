@@ -18,9 +18,6 @@ export const envValidationSchema = Joi.object({
 
   GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
   GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
-  APPLE_CLIENT_ID: Joi.string().allow('').optional(),
-  APPLE_TEAM_ID: Joi.string().allow('').optional(),
-  APPLE_KEY_ID: Joi.string().allow('').optional(),
   FACEBOOK_APP_ID: Joi.string().allow('').optional(),
   FACEBOOK_APP_SECRET: Joi.string().allow('').optional(),
   WEBAUTHN_RP_ID: Joi.string().allow('').optional(),
@@ -40,14 +37,15 @@ export const envValidationSchema = Joi.object({
 
   SMTP_HOST: Joi.string().allow('').optional(),
   SMTP_PORT: Joi.number().default(587),
+  SMTP_SECURE: Joi.string().valid('true', 'false', '').optional(),
   SMTP_USER: Joi.string().allow('').optional(),
   SMTP_PASS: Joi.string().allow('').optional(),
-  MAIL_FROM: Joi.string().default('no-reply@mal3ab.app'),
+  MAIL_FROM: Joi.string().default('no-reply@matchena.com'),
 
   QR_SIGNING_SECRET: Joi.string().min(32).required(),
 
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
-  SITE_URL: Joi.string().uri().default('https://mal3ab.app'),
+  SITE_URL: Joi.string().uri().default('https://matchena.com'),
   INDEXNOW_KEY: Joi.string().allow('').optional(),
   INDEXNOW_ENDPOINT: Joi.string().uri().default('https://api.indexnow.org/indexnow'),
 

@@ -1,16 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { NormalizeEmail } from '../../../common/validation/email.transform';
 
 export class LoginEmailDto {
-  @ApiProperty({
-    example: 'admin@mal3ab.app',
-    description: 'Use admin@mal3ab.app or owner@mal3ab.app from seed data',
-  })
+  @ApiProperty({ example: 'admin@matchena.com' })
+  @NormalizeEmail()
   @IsEmail()
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @MinLength(8)
+  @MinLength(1)
+  @MaxLength(128)
   password!: string;
 }

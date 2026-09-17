@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PAYMENT_PROVIDER } from '../payments/payment-provider.interface';
 import { RewardsService } from '../rewards/rewards.service';
 import { WalletService } from '../payments/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('BookingsService', () => {
   let service: BookingsService;
@@ -29,6 +30,10 @@ describe('BookingsService', () => {
         {
           provide: WalletService,
           useValue: { debit: jest.fn(), credit: jest.fn() },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { create: jest.fn().mockResolvedValue(null) },
         },
       ],
     }).compile();

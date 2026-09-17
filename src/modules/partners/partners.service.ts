@@ -394,8 +394,8 @@ export class PartnersService {
       await this.notifications.create({
         userId: app.ownerId,
         category: 'bookings',
-        titleEn: 'Your listing was updated by Mal3ab',
-        titleAr: 'تم تحديث إعلانك بواسطة ملعب',
+        titleEn: 'Your listing was updated by Matchena',
+        titleAr: 'تم تحديث إعلانك بواسطة ماتشنا',
         bodyEn: reason,
         bodyAr: reason,
         deepLink: `/partners/join?application=${id}`,

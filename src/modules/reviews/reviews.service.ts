@@ -159,18 +159,26 @@ export class ReviewsService {
       );
     }
 
-    const rating = await this.prisma.playerRating.create({
-      data: {
-        bookingId: dto.bookingId ?? null,
-        matchPostId: dto.matchPostId ?? null,
-        raterId,
-        rateeId: dto.rateeId,
-        sportsmanship: dto.sportsmanship,
-        skill: dto.skill,
-        punctuality: dto.punctuality,
-        mvpVote: dto.mvpVote ?? false,
-      },
-    });
+    let rating;
+    try {
+      rating = await this.prisma.playerRating.create({
+        data: {
+          bookingId: dto.bookingId ?? null,
+          matchPostId: dto.matchPostId ?? null,
+          raterId,
+          rateeId: dto.rateeId,
+          sportsmanship: dto.sportsmanship,
+          skill: dto.skill,
+          punctuality: dto.punctuality,
+          mvpVote: dto.mvpVote ?? false,
+        },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') {
+        throw new BadRequestException('You already rated this player for this match');
+      }
+      throw error;
+    }
 
     if (dto.mvpVote) {
       const updated = await this.prisma.user.update({

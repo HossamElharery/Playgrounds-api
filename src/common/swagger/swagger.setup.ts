@@ -16,10 +16,10 @@ const GUIDE = `
 
 | Role | Email | Password |
 | --- | --- | --- |
-| Admin | \`admin@mal3ab.app\` | \`Password123!\` |
-| Venue owner | \`owner@mal3ab.app\` | \`Password123!\` |
+| Admin | \`admin@matchena.com\` | \`Password123!\` |
+| Venue owner | \`owner@matchena.com\` | \`Password123!\` |
 
-Player login is phone OTP: \`POST /auth/otp/request\` with \`"phone": "+201001234567"\`. In development the code is printed in the **API server terminal** (not returned in the HTTP response). Then \`POST /auth/otp/verify\` with that 4-digit code.
+Player login is email + password: \`POST /auth/login\` with \`"email"\` and \`"password"\`. New players use \`POST /auth/register/email\`. Google and Facebook are available via \`POST /auth/oauth/google\` and \`POST /auth/oauth/facebook\` when those keys are configured. Password reset is email-only: \`POST /auth/password/forgot\` then \`POST /auth/password/reset\`.
 
 ### Typical booking flow
 
@@ -48,7 +48,7 @@ Global validation **rejects unknown query fields** (\`property X should not exis
 
 export function setupSwagger(app: INestApplication) {
   const config = new DocumentBuilder()
-    .setTitle('Mal3ab API')
+    .setTitle('Matchena API')
     .setDescription(GUIDE)
     .setVersion('0.1.0')
     .addBearerAuth({
@@ -58,7 +58,7 @@ export function setupSwagger(app: INestApplication) {
       description:
         'Paste the accessToken from POST /api/v1/auth/login (Authorize button at the top).',
     })
-    .addTag('auth', 'Login, OTP, register, refresh')
+    .addTag('auth', 'Login, register, OAuth, password reset, refresh')
     .addTag('venues', 'Explore map search, venue details, owner courts')
     .addTag('bookings', 'Hold → confirm → cancel slots')
     .addTag('users', 'Profile, players directory, favorites')
@@ -70,7 +70,7 @@ export function setupSwagger(app: INestApplication) {
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document, {
-    customSiteTitle: 'Mal3ab API — Try it out',
+    customSiteTitle: 'Matchena API — Try it out',
     swaggerOptions: {
       persistAuthorization: true,
       displayRequestDuration: true,

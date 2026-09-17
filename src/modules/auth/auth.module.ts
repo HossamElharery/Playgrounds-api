@@ -4,7 +4,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { WebAuthnService } from './webauthn.service';
-import { SmsModule } from '../sms/sms.module';
 
 const JwtModuleConfigured = JwtModule.registerAsync({
   imports: [ConfigModule],
@@ -18,9 +17,9 @@ const JwtModuleConfigured = JwtModule.registerAsync({
 });
 
 @Module({
-  imports: [SmsModule, JwtModuleConfigured],
-    providers: [AuthService, WebAuthnService],
-    controllers: [AuthController],
-    exports: [AuthService, WebAuthnService, JwtModuleConfigured],
+  imports: [JwtModuleConfigured],
+  providers: [AuthService, WebAuthnService],
+  controllers: [AuthController],
+  exports: [AuthService, WebAuthnService, JwtModuleConfigured],
 })
 export class AuthModule {}

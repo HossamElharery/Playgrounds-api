@@ -9,6 +9,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { IsNotificationCtaUrl } from '../../notifications/cta-url';
 
 export class BroadcastNotificationDto {
   @ApiProperty({ enum: ['owners', 'players', 'individual'] })
@@ -57,23 +58,30 @@ export class BroadcastNotificationDto {
   bodyAr!: string;
 
   @ApiPropertyOptional({ example: 'Book this pitch' })
-  @ValidateIf((dto: BroadcastNotificationDto) => Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn))
+  @ValidateIf((dto: BroadcastNotificationDto) =>
+    Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn),
+  )
   @IsString()
   @MinLength(2)
   @MaxLength(40)
   ctaLabelEn?: string;
 
   @ApiPropertyOptional({ example: 'احجز الملعب' })
-  @ValidateIf((dto: BroadcastNotificationDto) => Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn))
+  @ValidateIf((dto: BroadcastNotificationDto) =>
+    Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn),
+  )
   @IsString()
   @MinLength(2)
   @MaxLength(40)
   ctaLabelAr?: string;
 
   @ApiPropertyOptional({ example: '/en/venues/neon-arena' })
-  @ValidateIf((dto: BroadcastNotificationDto) => Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn))
+  @ValidateIf((dto: BroadcastNotificationDto) =>
+    Boolean(dto.ctaUrl || dto.ctaLabelAr || dto.ctaLabelEn),
+  )
   @IsString()
   @MinLength(1)
   @MaxLength(500)
+  @IsNotificationCtaUrl()
   ctaUrl?: string;
 }

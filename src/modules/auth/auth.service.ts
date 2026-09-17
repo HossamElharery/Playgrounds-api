@@ -3,8 +3,8 @@ import {
   ConflictException,
   ForbiddenException,
   HttpStatus,
-  Inject,
   Injectable,
+  Logger,
   NotImplementedException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -13,13 +13,13 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
+import { EmailService } from '../email/email.service';
 import { generateOtp } from '../../common/utils/otp.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
 import { OAuthProvider, OtpPurpose, User } from '@prisma/client';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
+import { RegisterEmailDto } from './dto/register-email.dto';
 import {
   PartnerLoginDto,
   PartnerRegisterDto,
@@ -30,10 +30,7 @@ import {
 } from '../../common/utils/username.util';
 import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
-import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
-import * as jwt from 'jsonwebtoken';
-import jwksClient from 'jwks-rsa';
 
 export interface TokenPair {
   accessToken: string;
@@ -42,14 +39,17 @@ export interface TokenPair {
 }
 
 const OTP_MAX_ATTEMPTS = 5;
+const SYNTHETIC_OAUTH_EMAIL = '@oauth.matchena.local';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
-    @Inject(OTP_DELIVERY) private readonly otpDelivery: OtpDelivery,
+    private readonly email: EmailService,
   ) {}
 
   // ---------- password / token primitives ----------
@@ -60,6 +60,10 @@ export class AuthService {
 
   private sha256(value: string): string {
     return createHash('sha256').update(value).digest('hex');
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 
   private async issueTokenPair(
@@ -128,8 +132,8 @@ export class AuthService {
     }
   }
 
-  private async inferCountryFromPhone(
-    phone: string,
+  private async resolveCountryCode(
+    phone?: string | null,
     explicit?: string,
   ): Promise<string> {
     const fromDto = normalizeCountryCode(explicit);
@@ -141,149 +145,83 @@ export class AuthService {
       if (!country) throw new BadRequestException('Unknown or inactive country');
       return country.code;
     }
-    const countries = await this.prisma.countryConfig.findMany({
-      where: { active: true },
-      select: { code: true, phoneCallingCode: true },
-    });
-    const match = countries
-      .sort((a, b) => b.phoneCallingCode.length - a.phoneCallingCode.length)
-      .find((c) => phone.startsWith(c.phoneCallingCode));
-    if (!match) {
-      throw new BadRequestException(
-        'countryCode is required — phone prefix did not match an active market',
-      );
+    if (phone) {
+      const countries = await this.prisma.countryConfig.findMany({
+        where: { active: true },
+        select: { code: true, phoneCallingCode: true },
+      });
+      const match = countries
+        .sort((a, b) => b.phoneCallingCode.length - a.phoneCallingCode.length)
+        .find((c) => phone.startsWith(c.phoneCallingCode));
+      if (match) return match.code;
     }
-    return match.code;
+    return 'EG';
   }
 
-  // ---------- Phone-OTP (primary player auth) ----------
-
-  async requestOtp(phone: string): Promise<{ purpose: OtpPurpose }> {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { phone },
+  private async maybeLinkReferrer(referralCode?: string): Promise<string | undefined> {
+    if (!referralCode) return undefined;
+    const referrer = await this.prisma.user.findUnique({
+      where: { referralCode },
+      select: { id: true },
     });
-    const purpose: OtpPurpose = existingUser ? 'login' : 'register';
-
-    const recentCount = await this.prisma.otpCode.count({
-      where: {
-        target: phone,
-        createdAt: { gt: new Date(Date.now() - 60_000) },
-      },
-    });
-    if (recentCount >= 1) {
-      throw new BadRequestException(
-        'Please wait before requesting another code',
-      );
-    }
-
-    const code = generateOtp();
-    const codeHash = await bcrypt.hash(code, 10);
-    const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS', 300);
-
-    await this.prisma.otpCode.create({
-      data: {
-        userId: existingUser?.id,
-        target: phone,
-        codeHash,
-        purpose,
-        expiresAt: new Date(Date.now() + ttlSeconds * 1000),
-      },
-    });
-
-    // Delivered out-of-band only — the code is NEVER returned in this method's result.
-    await this.otpDelivery.send(phone, code);
-
-    return { purpose };
+    return referrer?.id;
   }
 
-  async verifyOtp(
-    dto: VerifyOtpDto,
+  // ---------- Email registration (players) ----------
+
+  async registerPlayerEmail(
+    dto: RegisterEmailDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
-    const otp = await this.prisma.otpCode.findFirst({
-      where: {
-        target: dto.phone,
-        consumedAt: null,
-        expiresAt: { gt: new Date() },
+    const email = this.normalizeEmail(dto.email);
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'EMAIL_IN_USE',
+        'An account with this email already exists',
+      );
+    }
+
+    const countryCode = await this.resolveCountryCode(null, dto.countryCode);
+    const passwordHash = await this.hashPassword(dto.password);
+    const referredById = await this.maybeLinkReferrer(dto.referralCode);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        phone: null,
+        name: dto.name.trim(),
+        passwordHash,
+        roles: ['player'],
+        countryCode,
+        referredById,
       },
-      orderBy: { createdAt: 'desc' },
     });
 
-    if (!otp)
-      throw new UnauthorizedException(
-        'Code expired or not found, request a new one',
-      );
-    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
-      throw new UnauthorizedException('Too many attempts, request a new code');
-    }
-
-    const isValid = await bcrypt.compare(dto.code, otp.codeHash);
-    if (!isValid) {
-      await this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new UnauthorizedException('Invalid code');
-    }
-
-    await this.prisma.otpCode.update({
-      where: { id: otp.id },
-      data: { consumedAt: new Date() },
-    });
-
-    let user = await this.prisma.user.findUnique({
-      where: { phone: dto.phone },
-    });
-    if (!user) {
-      if (!dto.name)
-        throw new BadRequestException('name is required for a new account');
-      const countryCode = await this.inferCountryFromPhone(
-        dto.phone,
-        dto.countryCode,
-      );
-      let referredById: string | undefined;
-      if (dto.referralCode) {
-        const referrer = await this.prisma.user.findUnique({
-          where: { referralCode: dto.referralCode },
-          select: { id: true },
-        });
-        referredById = referrer?.id;
-      }
-      user = await this.prisma.user.create({
-        data: {
-          phone: dto.phone,
-          name: dto.name,
-          roles: ['player'],
-          countryCode,
-          referredById,
-        },
-      });
-    }
-    this.assertActive(user);
-
+    void this.sendWelcomeQuietly(user);
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Email/password (owner, staff, admin) ----------
+  // ---------- Owner / partner email+password ----------
 
   async registerOwner(
     dto: RegisterOwnerDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
+    const email = this.normalizeEmail(dto.email);
+    const phone = dto.phone?.trim() || undefined;
     const existing = await this.prisma.user.findFirst({
-      where: { OR: [{ email: dto.email }, { phone: dto.phone }] },
+      where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] },
     });
     if (existing) throw new ConflictException('Email or phone already in use');
 
-    const countryCode = await this.inferCountryFromPhone(
-      dto.phone,
-      dto.countryCode,
-    );
+    const countryCode = await this.resolveCountryCode(phone, dto.countryCode);
     const passwordHash = await this.hashPassword(dto.password);
     const user = await this.prisma.user.create({
       data: {
-        email: dto.email,
-        phone: dto.phone,
-        name: dto.name,
+        email,
+        phone: phone ?? null,
+        name: dto.name.trim(),
         passwordHash,
         roles: ['owner'],
         countryCode,
@@ -306,9 +244,10 @@ export class AuthService {
       );
     }
 
+    const email = this.normalizeEmail(dto.email);
     const existing = await this.prisma.user.findFirst({
       where: {
-        OR: [{ email: dto.email }, { phone: dto.phone }, { username }],
+        OR: [{ email }, { phone: dto.phone }, { username }],
       },
     });
     if (existing) {
@@ -325,14 +264,14 @@ export class AuthService {
         );
       }
       const passwordHash = await this.hashPassword(dto.password);
-      const countryCode = await this.inferCountryFromPhone(
+      const countryCode = await this.resolveCountryCode(
         dto.phone,
         dto.countryCode,
       );
       const upgraded = await this.prisma.user.update({
         where: { id: existing.id },
         data: {
-          email: dto.email,
+          email,
           name: dto.name,
           username,
           passwordHash,
@@ -344,14 +283,14 @@ export class AuthService {
       return { ...tokens, user: this.sanitize(upgraded) };
     }
 
-    const countryCode = await this.inferCountryFromPhone(
+    const countryCode = await this.resolveCountryCode(
       dto.phone,
       dto.countryCode,
     );
     const passwordHash = await this.hashPassword(dto.password);
     const user = await this.prisma.user.create({
       data: {
-        email: dto.email,
+        email,
         phone: dto.phone,
         name: dto.name,
         username,
@@ -367,11 +306,11 @@ export class AuthService {
   async loginEmail(
     dto: LoginEmailDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    if (!user?.passwordHash)
+    const email = this.normalizeEmail(dto.email);
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
+    }
     this.assertActive(user);
 
     const isValid = await bcrypt.compare(dto.password, user.passwordHash);
@@ -389,7 +328,7 @@ export class AuthService {
           where: { username: normalizeUsername(dto.username) },
         })
       : await this.prisma.user.findUnique({
-          where: { email: dto.email! },
+          where: { email: this.normalizeEmail(dto.email!) },
         });
     if (!user?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
@@ -411,49 +350,66 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Password reset (phone-OTP gated, never leaks the code) ----------
+  // ---------- Password reset (email code, never leaked in the HTTP response) ----------
 
-  async requestPasswordReset(phone: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { phone } });
-    if (!user) return;
+  async requestPasswordReset(emailRaw: string): Promise<void> {
+    const email = this.normalizeEmail(emailRaw);
+    if (email.endsWith(SYNTHETIC_OAUTH_EMAIL)) return;
 
     const recentCount = await this.prisma.otpCode.count({
       where: {
-        target: phone,
+        target: email,
         purpose: 'reset_password',
         createdAt: { gt: new Date(Date.now() - 60_000) },
       },
     });
-    if (recentCount >= 1) {
-      throw new BadRequestException(
-        'Please wait before requesting another code',
-      );
-    }
+    if (recentCount >= 1) return;
 
-    const code = generateOtp();
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return;
+
+    const code = generateOtp(6);
     const codeHash = await bcrypt.hash(code, 10);
-    const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS', 300);
+    const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS', 600);
 
     await this.prisma.otpCode.create({
       data: {
         userId: user.id,
-        target: phone,
+        target: email,
         codeHash,
-        purpose: 'reset_password',
+        purpose: 'reset_password' satisfies OtpPurpose,
         expiresAt: new Date(Date.now() + ttlSeconds * 1000),
       },
     });
-    await this.otpDelivery.send(phone, code);
+
+    const lang = user.preferredLang === 'en' ? 'en' : 'ar';
+    try {
+      await this.email.sendPasswordReset(email, code, lang);
+    } catch (err) {
+      this.logger.error(
+        `Failed to send password-reset email to ${email}`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
+
+    if (this.config.get('NODE_ENV') !== 'production') {
+      this.logger.log(`[dev] password reset code for ${email}: ${code}`);
+    } else if (!this.email.isConfigured()) {
+      this.logger.error(
+        'SMTP_HOST is empty in production — password reset emails are not being delivered',
+      );
+    }
   }
 
   async resetPassword(
-    phone: string,
+    emailRaw: string,
     code: string,
     newPassword: string,
   ): Promise<void> {
+    const email = this.normalizeEmail(emailRaw);
     const otp = await this.prisma.otpCode.findFirst({
       where: {
-        target: phone,
+        target: email,
         purpose: 'reset_password',
         consumedAt: null,
         expiresAt: { gt: new Date() },
@@ -474,7 +430,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid code');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { phone } });
+    const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new BadRequestException('Account not found');
 
     const passwordHash = await this.hashPassword(newPassword);
@@ -520,7 +476,6 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('Invalid refresh token');
     this.assertActive(user);
 
-    // rotate: revoke the used token, issue a brand-new pair
     await this.prisma.refreshToken.update({
       where: { id: stored.id },
       data: { revokedAt: new Date() },
@@ -549,6 +504,19 @@ export class AuthService {
     return rest;
   }
 
+  private async sendWelcomeQuietly(user: User): Promise<void> {
+    if (!user.email || user.email.endsWith(SYNTHETIC_OAUTH_EMAIL)) return;
+    const lang = user.preferredLang === 'en' ? 'en' : 'ar';
+    try {
+      await this.email.sendWelcome(user.email, user.name, lang);
+    } catch (err) {
+      this.logger.warn(
+        `Welcome email failed for ${user.email}`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   /** Used by WebAuthn and other sibling auth flows. */
   assertAccountActive(user: Pick<User, 'status'>): void {
     this.assertActive(user);
@@ -568,21 +536,18 @@ export class AuthService {
   listLoginProviders(): {
     google: { enabled: boolean; clientId?: string };
     facebook: { enabled: boolean; appId?: string };
-    apple: { enabled: boolean; clientId?: string };
     passkeys: { enabled: boolean };
   } {
     const google = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
     const facebook = this.config.get<string>('FACEBOOK_APP_ID')?.trim() || '';
-    const apple = this.config.get<string>('APPLE_CLIENT_ID')?.trim() || '';
     return {
       google: { enabled: !!google, clientId: google || undefined },
       facebook: { enabled: !!facebook, appId: facebook || undefined },
-      apple: { enabled: !!apple, clientId: apple || undefined },
       passkeys: { enabled: true },
     };
   }
 
-  // ---------- OAuth (wired, inert until client IDs are configured) ----------
+  // ---------- OAuth ----------
 
   async oauthGoogle(
     dto: OAuthGoogleDto,
@@ -630,40 +595,6 @@ export class AuthService {
       email: claims.email,
       name: claims.name ?? 'Player',
       avatarUrl: claims.picture,
-    });
-    const tokens = await this.issueTokenPair(user);
-    return { ...tokens, user: this.sanitize(user) };
-  }
-
-  async oauthApple(
-    dto: OAuthAppleDto,
-  ): Promise<TokenPair & { user: Partial<User> }> {
-    const clientId = this.config.get<string>('APPLE_CLIENT_ID')?.trim();
-    if (!clientId) {
-      throw new NotImplementedException(
-        'Apple sign-in is not configured yet — set APPLE_CLIENT_ID/APPLE_TEAM_ID/APPLE_KEY_ID in .env',
-      );
-    }
-
-    const client = jwksClient({
-      jwksUri: 'https://appleid.apple.com/auth/keys',
-    });
-
-    const decoded = jwt.decode(dto.identityToken, { complete: true });
-    if (!decoded || typeof decoded === 'string')
-      throw new UnauthorizedException('Invalid Apple token');
-    const key = await client.getSigningKey(decoded.header.kid);
-    const claims = jwt.verify(dto.identityToken, key.getPublicKey(), {
-      audience: clientId,
-      issuer: 'https://appleid.apple.com',
-    }) as { email?: string; sub: string };
-
-    const email = claims.email ?? `${claims.sub}@appleid.private`;
-    const user = await this.findOrCreateOAuthUser({
-      provider: 'apple',
-      providerUserId: claims.sub,
-      email,
-      name: dto.name ?? 'Player',
     });
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
@@ -769,8 +700,10 @@ export class AuthService {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          email: email ?? `${input.provider}-${input.providerUserId}@oauth.mal3ab.local`,
-          phone: `pending-${crypto.randomUUID()}`,
+          email:
+            email ??
+            `${input.provider}-${input.providerUserId}${SYNTHETIC_OAUTH_EMAIL}`,
+          phone: null,
           name: input.name,
           avatarUrl: input.avatarUrl,
           roles: ['player'],

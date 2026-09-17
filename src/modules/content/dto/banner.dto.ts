@@ -10,7 +10,7 @@ export class UpsertBannerDto {
   @IsString()
   titleAr!: string;
 
-  @ApiProperty({ example: 'https://cdn.mal3ab.app/banners/ramadan.jpg' })
+  @ApiProperty({ example: 'https://cdn.matchena.com/banners/ramadan.jpg' })
   @IsString()
   imageUrl!: string;
 

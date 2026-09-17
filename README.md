@@ -1,8 +1,8 @@
-# Mal3ab API
+# Matchena API
 
-Backend for **Mal3ab** — a bilingual (Arabic/English) sports venue booking and social play platform. NestJS 11 + Prisma 6 + PostgreSQL.
+Backend for **Matchena** — a bilingual (Arabic/English) sports venue booking and social play platform. NestJS 11 + Prisma 6 + PostgreSQL.
 
-For the full architecture, data model, endpoint catalog, and realtime contract, see **[MAL3AB_BACKEND.md](./MAL3AB_BACKEND.md)** — written for any AI assistant, mobile developer, or frontend developer picking this up with zero prior context.
+For the full architecture, data model, endpoint catalog, and realtime contract, see **[MATCHENA_BACKEND.md](./MATCHENA_BACKEND.md)** — written for any AI assistant, mobile developer, or frontend developer picking this up with zero prior context.
 
 ## Quick start
 
@@ -30,8 +30,8 @@ npm run start:dev
 The API listens on `http://localhost:3000/api/v1`. Interactive docs (Swagger) at `http://localhost:3000/api/docs`.
 
 Seeded logins (after `npm run seed`):
-- **Admin:** `admin@mal3ab.app` / `Password123!`
-- **Owner:** `owner@mal3ab.app` / `Password123!`
+- **Admin:** `admin@matchena.com` / `Password123!`
+- **Owner:** `owner@matchena.com` / `Password123!`
 - **Players:** phone `+2010000010X` (X = 0-9) — OTP is printed to the server console, never returned in any API response
 
 ## Scripts

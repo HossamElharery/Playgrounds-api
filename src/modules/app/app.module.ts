@@ -40,6 +40,7 @@ import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
+import { PostsModule } from '../posts/posts.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
     MembershipModule,
     TournamentsModule,
     SeoDiscoveryModule,
+    PostsModule,
   ],
   controllers: [AppController],
   providers: [

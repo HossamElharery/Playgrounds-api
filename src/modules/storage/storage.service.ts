@@ -3,6 +3,7 @@ import {
   STORAGE_PROVIDER,
   StorageProvider,
   UploadResult,
+  PresignedUpload,
 } from './storage.interface';
 
 @Injectable()
@@ -30,5 +31,20 @@ export class StorageService {
 
   keyFromUrl(url: string): string | undefined {
     return this.provider.keyFromUrl(url);
+  }
+
+  supportsPresign(): boolean {
+    return typeof this.provider.createPresignedPut === 'function';
+  }
+
+  createPresignedPut(
+    originalName: string,
+    mimeType: string,
+    prefix?: string,
+  ): Promise<PresignedUpload> {
+    if (!this.provider.createPresignedPut) {
+      throw new Error('Presigned uploads are not available for this storage provider');
+    }
+    return this.provider.createPresignedPut(originalName, mimeType, prefix);
   }
 }

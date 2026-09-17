@@ -7,12 +7,18 @@ describe('sanitizeNotificationCtaUrl', () => {
   });
 
   it('keeps https URLs', () => {
-    expect(sanitizeNotificationCtaUrl('https://mal3ab.app/ar/explore')).toBe(
-      'https://mal3ab.app/ar/explore',
+    expect(sanitizeNotificationCtaUrl('https://matchena.com/ar/explore')).toBe(
+      'https://matchena.com/ar/explore',
     );
   });
 
   it('rejects javascript URLs', () => {
     expect(() => sanitizeNotificationCtaUrl('javascript:alert(1)')).toThrow(BadRequestException);
+  });
+
+  it('rejects free text that is not a path or URL', () => {
+    expect(() => sanitizeNotificationCtaUrl('Facere cupidatat officia non aut aliquam')).toThrow(
+      BadRequestException,
+    );
   });
 });

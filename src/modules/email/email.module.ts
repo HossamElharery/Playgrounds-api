@@ -11,15 +11,18 @@ import { MAIL_TRANSPORT } from './email.tokens';
     {
       provide: MAIL_TRANSPORT,
       useFactory: (config: ConfigService) => {
-        const host = config.get<string>('SMTP_HOST');
+        const host = config.get<string>('SMTP_HOST')?.trim();
         if (!host) {
-          // Dev default: no SMTP configured -> log instead of sending.
+          // No SMTP yet: serialize the message instead of sending.
           return nodemailer.createTransport({ jsonTransport: true });
         }
+        const port = config.get<number>('SMTP_PORT', 587);
+        const secure =
+          config.get<string>('SMTP_SECURE') === 'true' || port === 465;
         return nodemailer.createTransport({
           host,
-          port: config.get<number>('SMTP_PORT', 587),
-          secure: false,
+          port,
+          secure,
           auth: {
             user: config.get('SMTP_USER'),
             pass: config.get('SMTP_PASS'),

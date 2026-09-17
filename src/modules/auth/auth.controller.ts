@@ -12,13 +12,11 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { RequestOtpDto } from './dto/request-otp.dto';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
+import { RegisterEmailDto } from './dto/register-email.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
-import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -44,22 +42,19 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 3, ttl: 60_000 } })
-  @Post('otp/request')
-  requestOtp(@Body() dto: RequestOtpDto) {
-    return this.authService.requestOtp(dto.phone);
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('register/email')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a player account with email + password' })
+  async registerEmail(@Body() dto: RegisterEmailDto) {
+    const result = await this.authService.registerPlayerEmail(dto);
+    return { message: 'account created', result };
   }
 
   @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('otp/verify')
-  async verifyOtp(@Body() dto: VerifyOtpDto) {
-    const result = await this.authService.verifyOtp(dto);
-    return { message: 'authenticated', result };
-  }
-
-  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
+  @ApiOperation({ summary: 'Create a venue-owner account with email + password' })
   async register(@Body() dto: RegisterOwnerDto) {
     const result = await this.authService.registerOwner(dto);
     return { message: 'account created', result };
@@ -69,20 +64,24 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @ApiOperation({
-    summary: 'Login with email + password (start here)',
+    summary: 'Login with email + password',
     description:
-      'Use seed admin admin@mal3ab.app / Password123! then copy result.accessToken and click Authorize.',
+      'Use seed admin admin@matchena.com / Password123! then copy result.accessToken and click Authorize.',
   })
   @ApiBody({
     type: LoginEmailDto,
     examples: {
       admin: {
         summary: 'Admin (seed)',
-        value: { email: 'admin@mal3ab.app', password: 'Password123!' },
+        value: { email: 'admin@matchena.com', password: 'Password123!' },
       },
       owner: {
         summary: 'Venue owner (seed)',
-        value: { email: 'owner@mal3ab.app', password: 'Password123!' },
+        value: { email: 'owner@matchena.com', password: 'Password123!' },
+      },
+      player: {
+        summary: 'Player (seed)',
+        value: { email: 'player0@matchena.com', password: 'Password123!' },
       },
     },
   })
@@ -96,14 +95,6 @@ export class AuthController {
   @Post('oauth/google')
   async oauthGoogle(@Body() dto: OAuthGoogleDto) {
     const result = await this.authService.oauthGoogle(dto);
-    return { message: 'authenticated', result };
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('oauth/apple')
-  async oauthApple(@Body() dto: OAuthAppleDto) {
-    const result = await this.authService.oauthApple(dto);
     return { message: 'authenticated', result };
   }
 
@@ -137,7 +128,7 @@ export class AuthController {
       id: user.id,
       email: user.email ?? null,
       name: user.name ?? 'Player',
-      phone: user.phone ?? '',
+      phone: user.phone ?? null,
     });
   }
 
@@ -191,19 +182,19 @@ export class AuthController {
     return this.authService.logoutAll(user.id);
   }
 
-  // Never returns the OTP — it only ever leaves the server via OtpDelivery (console/SMS provider).
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/forgot')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.requestPasswordReset(dto.phone);
+    return this.authService.requestPasswordReset(dto.email);
   }
 
   @Public()
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/reset')
   resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto.phone, dto.code, dto.newPassword);
+    return this.authService.resetPassword(dto.email, dto.code, dto.newPassword);
   }
 }
