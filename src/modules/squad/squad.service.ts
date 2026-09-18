@@ -109,6 +109,7 @@ export class SquadService {
         data: { members: { create: [{ userId: fromUserId, isLeader: true }] } },
       });
       squadId = squad.id;
+      this.presence.setInSquad(fromUserId, true);
     } else {
       squadId = membership.squadId;
     }
