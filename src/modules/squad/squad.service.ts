@@ -27,14 +27,14 @@ export class SquadService {
       this.config.get<string>('STUN_URLS') ??
       'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302';
     const servers: { urls: string; username?: string; credential?: string }[] =
-      stun.split(',').filter(Boolean).map((urls) => ({ urls: urls.trim() }));
+      stun.split(',').map((urls) => urls.trim()).filter(Boolean).map((urls) => ({ urls }));
     const turn = this.config.get<string>('TURN_URLS');
     if (turn) {
-      servers.push({
-        urls: turn,
-        username: this.config.get<string>('TURN_USERNAME') ?? undefined,
-        credential: this.config.get<string>('TURN_CREDENTIAL') ?? undefined,
-      });
+      const username = this.config.get<string>('TURN_USERNAME') ?? undefined;
+      const credential = this.config.get<string>('TURN_CREDENTIAL') ?? undefined;
+      for (const urls of turn.split(',').map((u) => u.trim()).filter(Boolean)) {
+        servers.push({ urls, username, credential });
+      }
     }
     return { iceServers: servers };
   }
