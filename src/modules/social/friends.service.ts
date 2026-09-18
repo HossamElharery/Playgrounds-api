@@ -266,9 +266,13 @@ export class FriendsService {
       friends = friends.filter((f) => f.name.toLowerCase().includes(q));
     }
 
+    void this.prisma.user
+      .update({ where: { id: userId }, data: { lastSeenAt: new Date() } })
+      .catch(() => undefined);
+
     const withPresence = friends.map((f) => ({
       ...f,
-      presence: this.presence.stateFor(f.id),
+      presence: this.presence.stateFor(f.id, f.lastSeenAt),
       lastSeenAt: f.lastSeenVisible ? f.lastSeenAt : undefined,
     }));
     if (statusFilter && statusFilter !== 'all') {

@@ -267,7 +267,7 @@ export class ChatService {
             id: other.user.id,
             name: other.user.name,
             avatarUrl: other.user.avatarUrl,
-            presence: this.presence.stateFor(other.user.id),
+            presence: this.presence.stateFor(other.user.id, other.user.lastSeenAt),
             lastSeenAt: other.user.lastSeenVisible
               ? other.user.lastSeenAt
               : undefined,
@@ -277,7 +277,7 @@ export class ChatService {
         id: p.user.id,
         name: p.user.name,
         avatarUrl: p.user.avatarUrl,
-        presence: this.presence.stateFor(p.user.id),
+        presence: this.presence.stateFor(p.user.id, p.user.lastSeenAt),
       })),
       lastMessage: thread.messages[0]
         ? this.toMessageDto(thread.messages[0])

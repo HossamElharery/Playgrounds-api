@@ -27,6 +27,7 @@ export class EmailService {
     code: string,
     expiresInMinutes: number,
   ): Promise<void> {
+    this.logDevCode(to, 'verification', code);
     await this.sendTemplate(to, {
       subject: `${code} is your Matchena verification code`,
       preheader: `Verify your Matchena email. This code expires in ${expiresInMinutes} minutes.`,
@@ -44,6 +45,7 @@ export class EmailService {
     code: string,
     expiresInMinutes: number,
   ): Promise<void> {
+    this.logDevCode(to, 'password-reset', code);
     await this.sendTemplate(to, {
       subject: `${code} is your Matchena password reset code`,
       preheader: `Reset your Matchena password. This code expires in ${expiresInMinutes} minutes.`,
@@ -107,6 +109,14 @@ export class EmailService {
     if (info.message) {
       this.logger.debug(`[dev email:no-smtp] to=${to} subject="${content.subject}"`);
     }
+  }
+
+  /** Local `.env` leaves SMTP empty, so mail never leaves this machine. Print
+   *  the code the same way console SMS OTP does, otherwise register/reset
+   *  cannot be tested without production credentials. */
+  private logDevCode(to: string, kind: string, code: string): void {
+    if (this.config.get<string>('SMTP_HOST')) return;
+    this.logger.log(`[dev email:no-smtp] ${kind} for ${to}: ${code}`);
   }
 
   private render(content: EmailContent): string {

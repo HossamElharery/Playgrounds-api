@@ -4,11 +4,11 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IoAdapter } from '@nestjs/platform-socket.io';
 import * as cookieParser from 'cookie-parser';
 import * as express from 'express';
 import helmet from 'helmet';
 import * as path from 'path';
+import { SocketIoAdapter } from './common/adapters/socket-io.adapter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
@@ -34,12 +34,14 @@ export function configureApp(app: INestApplication): ConfigService {
   app.use(cookieParser());
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
+  const corsOrigins = config
+    .get<string>('CORS_ORIGINS', 'http://localhost:4200')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: config
-      .get<string>('CORS_ORIGINS', 'http://localhost:4200')
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean),
+    origin: corsOrigins,
     credentials: true,
   });
 
@@ -59,7 +61,7 @@ export function configureApp(app: INestApplication): ConfigService {
     }),
   );
 
-  app.useWebSocketAdapter(new IoAdapter(app));
+  app.useWebSocketAdapter(new SocketIoAdapter(app, corsOrigins));
 
   return config;
 }

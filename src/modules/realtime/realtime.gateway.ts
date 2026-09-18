@@ -22,7 +22,11 @@ import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
  * relayed between squad members — no media server.
  */
 @Injectable()
-@WebSocketGateway({ cors: { origin: '*', credentials: true } })
+@WebSocketGateway({
+  // CORS is owned by SocketIoAdapter (CORS_ORIGINS). Do not use `origin: '*'`
+  // with credentials — browsers reject that combination.
+  cors: { origin: true, credentials: true },
+})
 export class RealtimeGateway
   extends RealtimeGatewayEmitter
   implements OnGatewayConnection, OnGatewayDisconnect
@@ -43,9 +47,13 @@ export class RealtimeGateway
 
   async handleConnection(client: Socket): Promise<void> {
     try {
-      const token =
-        (client.handshake.auth?.token as string) ??
-        (client.handshake.query?.token as string);
+      const raw =
+        client.handshake.auth?.token ?? client.handshake.query?.token;
+      const token = Array.isArray(raw) ? raw[0] : raw;
+      if (!token || typeof token !== 'string') {
+        client.disconnect(true);
+        return;
+      }
       const payload = await this.jwtService.verifyAsync(token, {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
       });
@@ -86,13 +94,16 @@ export class RealtimeGateway
   }
 
   private async broadcastPresence(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { lastSeenVisible: true, lastSeenAt: true },
+    });
     const event = {
       type: 'presence.changed',
       userId,
-      presence: this.presence.stateFor(userId),
+      presence: this.presence.stateFor(userId, user?.lastSeenAt),
       lastSeenAt: new Date().toISOString(),
     };
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { lastSeenVisible: true } });
     if (!user?.lastSeenVisible) delete (event as { lastSeenAt?: string }).lastSeenAt;
     const friends = await this.prisma.friendship.findMany({
       where: {

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailService } from './email.service';
 
@@ -29,6 +30,26 @@ describe('EmailService', () => {
       }),
     );
     expect(sendMail.mock.calls[0][0].html).toContain('أكّد بريدك الإلكتروني');
+  });
+
+  it('logs the verification code when SMTP is not configured', async () => {
+    const logger = { log: jest.spyOn(Logger.prototype, 'log').mockImplementation() };
+    const local = {
+      get: (key: string, fallback?: unknown) =>
+        ({
+          MAIL_FROM: 'Matchena <no-reply@matchena.com>',
+          MAIL_REPLY_TO: 'support@matchena.com',
+        })[key] ?? fallback,
+    } as ConfigService;
+    sendMail.mockResolvedValueOnce({ message: '{}' });
+    const service = new EmailService({ sendMail } as never, local);
+
+    await service.sendVerificationCode('player@example.com', '4321', 5);
+
+    expect(logger.log).toHaveBeenCalledWith(
+      '[dev email:no-smtp] verification for player@example.com: 4321',
+    );
+    logger.log.mockRestore();
   });
 
   it('escapes user-provided names in welcome email HTML', async () => {
