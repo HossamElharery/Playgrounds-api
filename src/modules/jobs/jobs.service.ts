@@ -20,8 +20,22 @@ export class JobsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  private async runJob(name: string, work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (err) {
+      this.logger.warn(
+        `${name} skipped: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
   @Cron(CronExpression.EVERY_10_SECONDS)
   async expireBookingHolds() {
+    await this.runJob('expireBookingHolds', () => this.releaseExpiredBookingHolds());
+  }
+
+  private async releaseExpiredBookingHolds() {
     // Coins are reserved off the balance the moment a hold is created (see
     // BookingsService.holdSlot), so releasing an abandoned hold can no
     // longer be a blind bulk update — each row with `coinsRedeemed > 0`
@@ -60,6 +74,10 @@ export class JobsService {
 
   @Cron(CronExpression.EVERY_10_SECONDS)
   async expirePulseClaims() {
+    await this.runJob('expirePulseClaims', () => this.releaseExpiredPulseClaims());
+  }
+
+  private async releaseExpiredPulseClaims() {
     const expired = await this.prisma.pulseClaim.findMany({
       where: { state: 'held', holdExpiresAt: { lt: new Date() } },
     });
@@ -112,39 +130,49 @@ export class JobsService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async expirePulseAvailability() {
-    await this.prisma.pulseAvailability.updateMany({
-      where: { status: 'active', expiresAt: { lt: new Date() } },
-      data: { status: 'expired' },
+    await this.runJob('expirePulseAvailability', async () => {
+      await this.prisma.pulseAvailability.updateMany({
+        where: { status: 'active', expiresAt: { lt: new Date() } },
+        data: { status: 'expired' },
+      });
     });
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async expirePulseOpportunities() {
-    await this.prisma.pulseOpportunity.updateMany({
-      where: {
-        status: { in: ['open', 'held'] },
-        expiresAt: { lt: new Date() },
-      },
-      data: { status: 'expired' },
+    await this.runJob('expirePulseOpportunities', async () => {
+      await this.prisma.pulseOpportunity.updateMany({
+        where: {
+          status: { in: ['open', 'held'] },
+          expiresAt: { lt: new Date() },
+        },
+        data: { status: 'expired' },
+      });
     });
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async markNoShows() {
-    const cutoff = new Date(Date.now() - 3 * 3_600_000);
-    const { count } = await this.prisma.booking.updateMany({
-      where: {
-        status: 'confirmed',
-        slotEnd: { lt: cutoff },
-        checkedInAt: null,
-      },
-      data: { status: 'no_show' },
+    await this.runJob('markNoShows', async () => {
+      const cutoff = new Date(Date.now() - 3 * 3_600_000);
+      const { count } = await this.prisma.booking.updateMany({
+        where: {
+          status: 'confirmed',
+          slotEnd: { lt: cutoff },
+          checkedInAt: null,
+        },
+        data: { status: 'no_show' },
+      });
+      if (count) this.logger.log(`Marked ${count} booking(s) as no-show`);
     });
-    if (count) this.logger.log(`Marked ${count} booking(s) as no-show`);
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async expireInactiveCoins() {
+    await this.runJob('expireInactiveCoins', () => this.expireInactiveCoinsNow());
+  }
+
+  private async expireInactiveCoinsNow() {
     // §5.1: coins expire after 6 months of account inactivity.
     //
     // This deliberately reads `lastSeenAt`, not `updatedAt` — Prisma's
@@ -201,12 +229,14 @@ export class JobsService {
 
   @Cron(CronExpression.EVERY_DAY_AT_4AM)
   async resetBrokenStreaks() {
-    const cutoff = new Date(Date.now() - 48 * 3_600_000);
-    const { count } = await this.prisma.user.updateMany({
-      where: { streakCount: { gt: 0 }, streakUpdatedAt: { lt: cutoff } },
-      data: { streakCount: 0 },
+    await this.runJob('resetBrokenStreaks', async () => {
+      const cutoff = new Date(Date.now() - 48 * 3_600_000);
+      const { count } = await this.prisma.user.updateMany({
+        where: { streakCount: { gt: 0 }, streakUpdatedAt: { lt: cutoff } },
+        data: { streakCount: 0 },
+      });
+      if (count) this.logger.log(`Reset ${count} broken streak(s)`);
     });
-    if (count) this.logger.log(`Reset ${count} broken streak(s)`);
   }
 
   /**
@@ -220,6 +250,12 @@ export class JobsService {
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async syncPulseRescueOpportunities() {
+    await this.runJob('syncPulseRescueOpportunities', () =>
+      this.syncPulseRescueOpportunitiesNow(),
+    );
+  }
+
+  private async syncPulseRescueOpportunitiesNow() {
     const now = new Date();
     const openPosts = await this.prisma.matchPost.findMany({
       where: { status: 'open', playersNeeded: { gt: 0 }, dateTime: { gt: now } },

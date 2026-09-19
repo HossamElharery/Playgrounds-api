@@ -41,6 +41,12 @@ describe('validatePartnerSubmission', () => {
     expect(validatePartnerSubmission(validPayload())).toEqual([]);
   });
 
+  it('accepts a submission without a booking contact phone', () => {
+    const payload = validPayload();
+    payload.contactPhone = '';
+    expect(validatePartnerSubmission(payload)).toEqual([]);
+  });
+
   it('rejects missing photos, location, and consent', () => {
     const payload = validPayload();
     payload.photos = [];

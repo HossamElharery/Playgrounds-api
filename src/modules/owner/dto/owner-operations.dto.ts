@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -14,6 +15,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 export class CreateWalkInDto {
   @ApiProperty({ example: 'venue-uuid' })
@@ -40,6 +42,7 @@ export class CreateWalkInDto {
 
   @ApiPropertyOptional({ example: '+201001234567' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
   @IsPhoneNumber()
   customerPhone?: string;
 
@@ -56,6 +59,7 @@ export class CreateStaffInviteDto {
   venueId!: string;
 
   @ApiPropertyOptional({ example: '+201001234567' })
+  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
   @ValidateIf((o: CreateStaffInviteDto) => !o.inviteeEmail)
   @IsPhoneNumber()
   inviteePhone?: string;

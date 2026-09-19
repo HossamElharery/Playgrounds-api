@@ -13,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { SquadService } from './squad.service';
 import { InviteToSquadDto } from './dto/invite.dto';
+import { DeclineSquadInviteDto } from './dto/decline-invite.dto';
 
 @ApiTags('squad')
 @ApiBearerAuth()
@@ -58,8 +59,12 @@ export class SquadController {
   }
 
   @Post('invites/:id/decline')
-  decline(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.squad.respondInvite(user.id, id, false);
+  decline(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: DeclineSquadInviteDto = {},
+  ) {
+    return this.squad.respondInvite(user.id, id, false, !!dto?.hold);
   }
 
   @Post('join-requests/:id/approve')
@@ -68,8 +73,12 @@ export class SquadController {
   }
 
   @Post('join-requests/:id/decline')
-  declineJoin(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.squad.resolveJoinRequest(user.id, id, false);
+  declineJoin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: DeclineSquadInviteDto = {},
+  ) {
+    return this.squad.resolveJoinRequest(user.id, id, false, !!dto?.hold);
   }
 
   @Post(':squadId/kick/:userId')

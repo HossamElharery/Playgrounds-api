@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsEmail, IsOptional, IsPhoneNumber, IsString, MinLength } from 'class-validator';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 /** Venue-owner / staff-facing signup (email+password), separate from the phone-OTP player flow. */
 export class RegisterOwnerDto {
@@ -16,9 +18,11 @@ export class RegisterOwnerDto {
   @IsString()
   name!: string;
 
-  @ApiProperty({ example: '+201001112223' })
+  @ApiPropertyOptional({ example: '+201001112223' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
   @IsPhoneNumber()
-  phone!: string;
+  phone?: string;
 
   @ApiPropertyOptional({ example: 'EG' })
   @IsOptional()

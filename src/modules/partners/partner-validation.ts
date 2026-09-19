@@ -31,7 +31,9 @@ export function validatePartnerSubmission(
   if (nameAr.length > MAX_NAME) errors.push('Arabic name is too long');
 
   const phone = trimmed(payload.contactPhone);
-  if (!looksLikeE164(phone)) errors.push('Booking contact must be a valid E.164 phone');
+  if (phone && !looksLikeE164(phone)) {
+    errors.push('Booking contact must be a valid E.164 phone');
+  }
 
   if (!trimmed(payload.governorateId)) errors.push('Governorate is required');
   if (!trimmed(payload.districtId)) errors.push('District is required');

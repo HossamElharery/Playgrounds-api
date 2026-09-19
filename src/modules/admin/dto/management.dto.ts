@@ -7,16 +7,20 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  IsPhoneNumber,
   IsString,
   Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { UserRole, UserStatus, VenueStatus } from '@prisma/client';
 import { PageQueryDto } from '../../../common/dto/page-query.dto';
 import { UpdateVenueDto } from '../../venues/dto/update-venue.dto';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 export class ManagementQuery extends PageQueryDto {
   @IsOptional() @IsString() @MaxLength(150) search?: string;
@@ -30,7 +34,13 @@ export class ReasonDto {
 }
 export class AdminUserDto extends ReasonDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(100) name?: string;
-  @IsOptional() @Matches(/^\+[1-9]\d{7,14}$/) phone?: string;
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined ? undefined : normalizeOptionalPhone(value),
+  )
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsPhoneNumber()
+  phone?: string | null;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() @MaxLength(50) username?: string;
   @IsOptional() @IsIn(['active', 'suspended', 'banned']) status?: UserStatus;
@@ -56,7 +66,13 @@ export class AdminVenueDto extends UpdateVenueDto {
   @IsOptional() @IsIn(['pending', 'active', 'suspended']) status?: VenueStatus;
   @IsOptional() @IsBoolean() featured?: boolean;
   @IsOptional() @IsString() ownerId?: string;
-  @IsOptional() @IsString() @MaxLength(50) contactPhone?: string;
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined ? undefined : normalizeOptionalPhone(value),
+  )
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsPhoneNumber()
+  contactPhone?: string | null;
   @IsOptional() @IsString() @MaxLength(2000) houseRules?: string;
 }
 export class AdminReviewDto extends ReasonDto {

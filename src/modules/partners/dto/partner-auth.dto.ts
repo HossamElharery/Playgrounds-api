@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsOptional,
@@ -9,6 +10,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { USERNAME_PATTERN } from '../../../common/utils/username.util';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 export class PartnerRegisterDto {
   @ApiProperty({ example: 'Ahmed El-Malek' })
@@ -29,9 +31,11 @@ export class PartnerRegisterDto {
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ example: '+201001112223' })
+  @ApiPropertyOptional({ example: '+201001112223' })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
   @IsPhoneNumber()
-  phone!: string;
+  phone?: string;
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()

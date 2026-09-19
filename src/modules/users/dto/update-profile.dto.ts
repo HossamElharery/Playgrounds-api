@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsIn,
+  IsOptional,
+  IsPhoneNumber,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({ example: 'Omar Hassan' })
@@ -28,4 +37,18 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   countryCode?: string;
+
+  @ApiPropertyOptional({
+    example: '+201001112223',
+    nullable: true,
+    description:
+      'E.164 number. Send null or empty to remove. Not OTP-verified — the player can set and edit it freely.',
+  })
+  @Transform(({ value }) =>
+    value === undefined ? undefined : normalizeOptionalPhone(value),
+  )
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsPhoneNumber()
+  phone?: string | null;
 }

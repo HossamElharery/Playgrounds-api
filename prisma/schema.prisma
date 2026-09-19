@@ -114,6 +114,8 @@ model User {
   receivedSquadInvites  SquadInvite[]             @relation("SquadInviteTo")
   squadJoinRequestsMade SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
   squadJoinRequestsRes  SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
+  squadInviteHoldsHeld  SquadInviteHold[]         @relation("SquadInviteHoldHolder")
+  squadInviteHoldsFrom  SquadInviteHold[]         @relation("SquadInviteHoldFrom")
   coinLedger            CoinLedgerEntry[]
   walletLedger          WalletLedgerEntry[]
   walletWithdrawals     WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
@@ -1140,6 +1142,22 @@ model SquadJoinRequest {
   resolvedByUserId String?
   resolvedByUser   User?             @relation("SquadJoinRequestResolvedBy", fields: [resolvedByUserId], references: [id])
   createdAt        DateTime          @default(now())
+}
+
+/// Receiver-side pause: after declining with "quiet for 5 min", the sender
+/// cannot invite this holder again until `until`. Unique per pair so a later
+/// quiet replaces an earlier one instead of stacking rows.
+model SquadInviteHold {
+  id         String   @id @default(uuid())
+  holderId   String
+  holder     User     @relation("SquadInviteHoldHolder", fields: [holderId], references: [id], onDelete: Cascade)
+  fromUserId String
+  fromUser   User     @relation("SquadInviteHoldFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  until      DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([holderId, fromUserId])
+  @@index([fromUserId, until])
 }
 
 // ============================================================

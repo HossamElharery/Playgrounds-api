@@ -54,42 +54,56 @@ export class RealtimeGateway
         client.disconnect(true);
         return;
       }
-      const payload = await this.jwtService.verifyAsync(token, {
+      const payload = await this.jwtService.verifyAsync<{
+        id?: unknown;
+        sub?: unknown;
+      }>(token, {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
       });
+      const userId = this.jwtUserId(payload);
+      if (!userId) {
+        client.disconnect(true);
+        return;
+      }
       const user = await this.prisma.user.findUnique({
-        where: { id: payload.id },
+        where: { id: userId },
         select: { status: true },
       });
       if (!user || user.status !== 'active') {
         client.disconnect(true);
         return;
       }
-      client.data.userId = payload.id;
-      await client.join(`user:${payload.id}`);
+      client.data.userId = userId;
+      await client.join(`user:${userId}`);
       await client.join('presence');
       await client.join('pulse');
-      this.presence.markConnected(payload.id, client.id);
+      this.presence.markConnected(userId, client.id);
       await this.prisma.user.update({
-        where: { id: payload.id },
+        where: { id: userId },
         data: { lastSeenAt: new Date() },
       });
-      await this.broadcastPresence(payload.id);
+      await this.broadcastPresence(userId);
     } catch {
       client.disconnect(true);
     }
   }
 
   async handleDisconnect(client: Socket): Promise<void> {
-    const userId = client.data?.userId as string | undefined;
+    const userId = this.authedUserId(client);
     if (!userId) return;
     this.presence.markDisconnected(userId, client.id);
     if (!this.presence.isOnline(userId)) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { lastSeenAt: new Date() },
-      });
-      await this.broadcastPresence(userId);
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastSeenAt: new Date() },
+        });
+        await this.broadcastPresence(userId);
+      } catch (err) {
+        this.logger.warn(
+          `presence disconnect write skipped: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
   }
 
@@ -119,7 +133,7 @@ export class RealtimeGateway
 
   @SubscribeMessage('presence.heartbeat')
   async heartbeat(@ConnectedSocket() client: Socket) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
     if (!userId) return;
     await this.prisma.user.update({
       where: { id: userId },
@@ -132,7 +146,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { threadId: string },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.threadId) return;
     const participant = await this.prisma.chatThreadParticipant.findUnique({
       where: { threadId_userId: { threadId: data.threadId, userId } },
     });
@@ -152,7 +167,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { threadId: string; typing: boolean },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.threadId) return;
     const participant = await this.prisma.chatThreadParticipant.findUnique({
       where: { threadId_userId: { threadId: data.threadId, userId } },
     });
@@ -170,7 +186,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId) return;
     const member = await this.prisma.squadMember.findUnique({
       where: { squadId_userId: { squadId: data.squadId, userId } },
     });
@@ -197,7 +214,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId: string; sdp: unknown },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId || !data.toUserId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
     if (!(await this.assertSquadMember(data.toUserId, data.squadId))) return;
     this.emitToUser(data.toUserId, {
@@ -213,7 +231,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId: string; sdp: unknown },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId || !data.toUserId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
     this.emitToUser(data.toUserId, {
       type: 'voice.answer',
@@ -229,7 +248,8 @@ export class RealtimeGateway
     @MessageBody()
     data: { squadId: string; toUserId: string; candidate: unknown },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
     this.emitToUser(data.toUserId, {
       type: 'voice.ice',
@@ -244,7 +264,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; speaking: boolean },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
     this.emitToRoom(`squad:${data.squadId}`, {
       type: 'voice.speaking',
@@ -259,7 +280,8 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId?: string },
   ) {
-    const userId = client.data.userId as string;
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
     const event = {
       type: 'voice.hangup',
@@ -268,6 +290,17 @@ export class RealtimeGateway
     };
     if (data.toUserId) this.emitToUser(data.toUserId, event);
     else this.emitToRoom(`squad:${data.squadId}`, event);
+  }
+
+  private authedUserId(client: Socket): string | null {
+    const id = client.data?.userId;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  }
+
+  private jwtUserId(payload: { id?: unknown; sub?: unknown }): string | null {
+    if (typeof payload.id === 'string' && payload.id) return payload.id;
+    if (typeof payload.sub === 'string' && payload.sub) return payload.sub;
+    return null;
   }
 
   emitToUser(

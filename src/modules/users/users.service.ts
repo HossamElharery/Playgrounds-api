@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -57,17 +58,28 @@ export class UsersService {
     if (dto.countryCode && !countryCode) {
       throw new BadRequestException('Invalid country code');
     }
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        name: dto.name,
-        preferredLang: dto.preferredLang,
-        bioEn: dto.bioEn,
-        bioAr: dto.bioAr,
-        ...(countryCode ? { countryCode } : {}),
-      },
-    });
-    return this.sanitize(user);
+    try {
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: dto.name,
+          preferredLang: dto.preferredLang,
+          bioEn: dto.bioEn,
+          bioAr: dto.bioAr,
+          ...(countryCode ? { countryCode } : {}),
+          ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+        },
+      });
+      return this.sanitize(user);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Phone already in use');
+      }
+      throw e;
+    }
   }
 
   async reportLocation(userId: string, dto: ReportLocationDto) {

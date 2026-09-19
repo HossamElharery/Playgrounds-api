@@ -195,7 +195,9 @@ export class ContentService {
 
   // ---- Support inquiries ----
   createSupportInquiry(dto: CreateSupportInquiryDto) {
-    return this.prisma.supportInquiry.create({ data: dto });
+    return this.prisma.supportInquiry.create({
+      data: { ...dto, phone: dto.phone ?? '' },
+    });
   }
 
   async listSupportInquiries(page: number, perPage: number, status?: string) {

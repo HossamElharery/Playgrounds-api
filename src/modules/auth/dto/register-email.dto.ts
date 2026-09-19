@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsOptional,
@@ -7,6 +8,7 @@ import {
   Length,
   MinLength,
 } from 'class-validator';
+import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 /** Player signup by email + password. Phone is optional — the OTP-SMS flow
  * remains available but is no longer required to create an account. */
@@ -34,6 +36,7 @@ export class RegisterEmailDto {
 
   @ApiPropertyOptional({ example: '+201001112223' })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
   @IsPhoneNumber()
   phone?: string;
 

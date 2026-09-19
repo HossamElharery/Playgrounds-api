@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { Interval } from '@nestjs/schedule';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class IndexNowService {
   private readonly logger = new Logger(IndexNowService.name);
   private lastResult: { at: string; status: number; urls: string[] } | null = null;
   private changedSince = new Date();
+  private sweepInFlight = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -49,27 +50,49 @@ export class IndexNowService {
     }
   }
 
-  /** Safety net for mutation paths outside VenuesService (partner approval and admin management). */
-  @Interval(1_000)
+  /**
+   * Safety net for mutation paths outside VenuesService (partner approval and
+   * admin management). Must not poll every second: that is one Venue query
+   * per second in production even when IndexNow is unset, and a log flood
+   * whenever Postgres blips.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
   async notifyRecentlyChangedVenues(): Promise<void> {
+    if (this.sweepInFlight || !this.configured()) return;
+    this.sweepInFlight = true;
     const until = new Date();
-    const changed = await this.prisma.venue.findMany({
-      where: { updatedAt: { gt: this.changedSince, lte: until } },
-      select: { slug: true },
-      take: 1000,
-    });
-    this.changedSince = until;
-    if (!changed.length) return;
-    await this.notifyUrls(changed.flatMap((venue) => [
-      `/ar/venues/${venue.slug}`,
-      `/en/venues/${venue.slug}`,
-    ]));
+    try {
+      const changed = await this.prisma.venue.findMany({
+        where: { updatedAt: { gt: this.changedSince, lte: until } },
+        select: { slug: true },
+        take: 1000,
+      });
+      this.changedSince = until;
+      if (!changed.length) return;
+      await this.notifyUrls(changed.flatMap((venue) => [
+        `/ar/venues/${venue.slug}`,
+        `/en/venues/${venue.slug}`,
+      ]));
+    } catch (error) {
+      this.logger.warn(
+        `IndexNow venue sweep skipped: ${error instanceof Error ? error.message : error}`,
+      );
+    } finally {
+      this.sweepInFlight = false;
+    }
   }
 
   status() {
     return {
-      configured: Boolean(this.config.get<string>('INDEXNOW_KEY')?.trim()),
+      configured: this.configured(),
       lastResult: this.lastResult,
     };
+  }
+
+  private configured(): boolean {
+    return Boolean(
+      this.config.get<string>('INDEXNOW_KEY')?.trim() &&
+        this.config.get<string>('SITE_URL')?.trim(),
+    );
   }
 }

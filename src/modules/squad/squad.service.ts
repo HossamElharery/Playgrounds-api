@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ApiException } from '../../common/errors/api-exception';
+import {
+  SQUAD_INVITE_PAUSED_CODE,
+  squadInviteHoldUntil,
+  squadInviteRetryAfterSec,
+} from './squad-invite-hold';
 
 const SQUAD_MAX_SIZE = 7;
 
@@ -99,6 +106,8 @@ export class SquadService {
     if (fromUserId === toUserId)
       throw new BadRequestException('Cannot invite yourself');
 
+    await this.assertInviteNotHeld(toUserId, fromUserId);
+
     const membership = await this.prisma.squadMember.findFirst({
       where: { userId: fromUserId },
     });
@@ -119,11 +128,17 @@ export class SquadService {
 
     const isLeader = membership?.isLeader ?? true;
     if (!isLeader) {
-      const request = await this.prisma.squadJoinRequest.create({
-        data: { squadId, fromUserId: toUserId, viaMemberId: membership!.id },
-      });
       const leader = await this.prisma.squadMember.findFirst({
         where: { squadId, isLeader: true },
+      });
+      if (leader) await this.assertInviteNotHeld(leader.userId, toUserId);
+
+      const existingRequest = await this.prisma.squadJoinRequest.findFirst({
+        where: { squadId, fromUserId: toUserId, status: 'pending' },
+      });
+      if (existingRequest) return existingRequest;
+      const request = await this.prisma.squadJoinRequest.create({
+        data: { squadId, fromUserId: toUserId, viaMemberId: membership!.id },
       });
       if (leader)
         this.emitter.emitToUser(leader.userId, {
@@ -131,6 +146,17 @@ export class SquadService {
           request,
         });
       return request;
+    }
+
+    const existingInvite = await this.prisma.squadInvite.findFirst({
+      where: { squadId, fromUserId, toUserId, status: 'pending' },
+    });
+    if (existingInvite) {
+      this.emitter.emitToUser(toUserId, {
+        type: 'squad.invite.created',
+        invite: existingInvite,
+      });
+      return existingInvite;
     }
 
     const invite = await this.prisma.squadInvite.create({
@@ -152,7 +178,12 @@ export class SquadService {
     return invite;
   }
 
-  async respondInvite(userId: string, inviteId: string, accept: boolean) {
+  async respondInvite(
+    userId: string,
+    inviteId: string,
+    accept: boolean,
+    hold = false,
+  ) {
     const invite = await this.prisma.squadInvite.findUnique({
       where: { id: inviteId },
     });
@@ -203,6 +234,7 @@ export class SquadService {
         where: { id: inviteId },
         data: { status: 'declined' },
       });
+      if (hold) await this.placeInviteHold(userId, invite.fromUserId);
     }
 
     this.emitter.emitToUser(invite.fromUserId, {
@@ -217,6 +249,7 @@ export class SquadService {
     leaderId: string,
     requestId: string,
     approve: boolean,
+    hold = false,
   ) {
     const request = await this.prisma.squadJoinRequest.findUnique({
       where: { id: requestId },
@@ -227,6 +260,8 @@ export class SquadService {
     if (request.status !== 'pending')
       throw new BadRequestException('Request already resolved');
 
+    if (approve) await this.assertInviteNotHeld(request.fromUserId, leaderId);
+
     await this.prisma.squadJoinRequest.update({
       where: { id: requestId },
       data: {
@@ -236,6 +271,7 @@ export class SquadService {
     });
 
     if (!approve) {
+      if (hold) await this.placeInviteHold(leaderId, request.fromUserId);
       this.emitter.emitToUser(request.fromUserId, {
         type: 'squad.join_request.resolved',
         requestId,
@@ -248,31 +284,42 @@ export class SquadService {
     // That is still only half the consent — the player themselves never asked
     // for any of this, so they get a normal invite to accept or decline rather
     // than being dropped straight into a live voice lobby.
-    const invite = await this.prisma.squadInvite.create({
-      data: {
+    const existingInvite = await this.prisma.squadInvite.findFirst({
+      where: {
         squadId: request.squadId,
-        fromUserId: leaderId,
         toUserId: request.fromUserId,
+        status: 'pending',
       },
     });
+    const invite =
+      existingInvite ??
+      (await this.prisma.squadInvite.create({
+        data: {
+          squadId: request.squadId,
+          fromUserId: leaderId,
+          toUserId: request.fromUserId,
+        },
+      }));
     this.emitter.emitToUser(request.fromUserId, {
       type: 'squad.invite.created',
       invite,
     });
-    const leader = await this.prisma.user.findUnique({
-      where: { id: leaderId },
-      select: { name: true },
-    });
-    await this.notifications
-      .create({
-        userId: request.fromUserId,
-        category: 'squad',
-        titleEn: `${leader?.name ?? 'A player'} invited you to a squad`,
-        titleAr: `${leader?.name ?? 'لاعب'} دعاك إلى سكواد`,
-        deepLink: '/app',
-        payload: { inviteId: invite.id, squadId: request.squadId },
-      })
-      .catch(() => undefined);
+    if (!existingInvite) {
+      const leader = await this.prisma.user.findUnique({
+        where: { id: leaderId },
+        select: { name: true },
+      });
+      await this.notifications
+        .create({
+          userId: request.fromUserId,
+          category: 'squad',
+          titleEn: `${leader?.name ?? 'A player'} invited you to a squad`,
+          titleAr: `${leader?.name ?? 'لاعب'} دعاك إلى سكواد`,
+          deepLink: '/app',
+          payload: { inviteId: invite.id, squadId: request.squadId },
+        })
+        .catch(() => undefined);
+    }
     return { approved: true, invited: true };
   }
 
@@ -369,5 +416,46 @@ export class SquadService {
     });
     if (remaining === 0)
       await this.prisma.squad.delete({ where: { id: squadId } });
+  }
+
+  private async assertInviteNotHeld(holderId: string, fromUserId: string) {
+    const hold = await this.prisma.squadInviteHold.findUnique({
+      where: { holderId_fromUserId: { holderId, fromUserId } },
+    });
+    if (!hold) return;
+    if (hold.until.getTime() <= Date.now()) {
+      await this.prisma.squadInviteHold
+        .delete({ where: { id: hold.id } })
+        .catch(() => undefined);
+      return;
+    }
+    throw new ApiException(
+      HttpStatus.FORBIDDEN,
+      SQUAD_INVITE_PAUSED_CODE,
+      'This player is not accepting squad invites right now',
+      { retryAfterSec: squadInviteRetryAfterSec(hold.until) },
+    );
+  }
+
+  private async placeInviteHold(holderId: string, fromUserId: string) {
+    if (holderId === fromUserId) return;
+    const until = squadInviteHoldUntil();
+    await this.prisma.squadInviteHold.upsert({
+      where: { holderId_fromUserId: { holderId, fromUserId } },
+      create: { holderId, fromUserId, until },
+      update: { until },
+    });
+    await this.prisma.squadInvite.updateMany({
+      where: { fromUserId, toUserId: holderId, status: 'pending' },
+      data: { status: 'declined' },
+    });
+    await this.prisma.squadJoinRequest.updateMany({
+      where: {
+        fromUserId,
+        status: 'pending',
+        squad: { members: { some: { userId: holderId, isLeader: true } } },
+      },
+      data: { status: 'declined', resolvedByUserId: holderId },
+    });
   }
 }

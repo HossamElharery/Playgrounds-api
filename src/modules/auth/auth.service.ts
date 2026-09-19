@@ -276,14 +276,15 @@ export class AuthService {
     dto: RegisterOwnerDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
     const existing = await this.prisma.user.findFirst({
-      where: { OR: [{ email: dto.email }, { phone: dto.phone }] },
+      where: {
+        OR: [{ email: dto.email }, ...(dto.phone ? [{ phone: dto.phone }] : [])],
+      },
     });
     if (existing) throw new ConflictException('Email or phone already in use');
 
-    const countryCode = await this.inferCountryFromPhone(
-      dto.phone,
-      dto.countryCode,
-    );
+    const countryCode = dto.phone
+      ? await this.inferCountryFromPhone(dto.phone, dto.countryCode)
+      : normalizeCountryCode(dto.countryCode) || 'EG';
     const passwordHash = await this.hashPassword(dto.password);
     const user = await this.prisma.user.create({
       data: {
@@ -416,11 +417,16 @@ export class AuthService {
 
     const existing = await this.prisma.user.findFirst({
       where: {
-        OR: [{ email: dto.email }, { phone: dto.phone }, { username }],
+        OR: [
+          { email: dto.email },
+          ...(dto.phone ? [{ phone: dto.phone }] : []),
+          { username },
+        ],
       },
     });
     if (existing) {
       const samePhonePlayer =
+        !!dto.phone &&
         existing.phone === dto.phone &&
         !existing.passwordHash &&
         existing.roles.includes('player') &&
@@ -433,10 +439,9 @@ export class AuthService {
         );
       }
       const passwordHash = await this.hashPassword(dto.password);
-      const countryCode = await this.inferCountryFromPhone(
-        dto.phone,
-        dto.countryCode,
-      );
+      const countryCode = dto.phone
+        ? await this.inferCountryFromPhone(dto.phone, dto.countryCode)
+        : normalizeCountryCode(dto.countryCode) || 'EG';
       const upgraded = await this.prisma.user.update({
         where: { id: existing.id },
         data: {
@@ -452,10 +457,9 @@ export class AuthService {
       return { ...tokens, user: this.sanitize(upgraded) };
     }
 
-    const countryCode = await this.inferCountryFromPhone(
-      dto.phone,
-      dto.countryCode,
-    );
+    const countryCode = dto.phone
+      ? await this.inferCountryFromPhone(dto.phone, dto.countryCode)
+      : normalizeCountryCode(dto.countryCode) || 'EG';
     const passwordHash = await this.hashPassword(dto.password);
     const user = await this.prisma.user.create({
       data: {

@@ -9,6 +9,7 @@ import {
   IsLongitude,
   IsObject,
   IsOptional,
+  IsPhoneNumber,
   IsString,
   Max,
   MaxLength,
@@ -118,8 +119,9 @@ export class PartnerApplicationPayloadDto {
   publicNameAr?: string;
 
   @ApiPropertyOptional()
+  @OptionalText()
   @IsOptional()
-  @IsString()
+  @IsPhoneNumber()
   @MaxLength(20)
   contactPhone?: string;
 

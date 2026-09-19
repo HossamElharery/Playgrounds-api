@@ -134,9 +134,20 @@ export class PostsService {
     if (dto.linkedMatchId) {
       const match = await this.prisma.matchPost.findUnique({
         where: { id: dto.linkedMatchId },
-        select: { id: true, authorId: true },
+        select: {
+          id: true,
+          authorId: true,
+          joinRequests: {
+            where: { userId, status: 'approved' },
+            select: { id: true },
+            take: 1,
+          },
+        },
       });
       if (!match) throw new BadRequestException('Unknown match');
+      if (match.authorId !== userId && !match.joinRequests.length) {
+        throw new BadRequestException('You can only link a match you play in');
+      }
     }
 
     const authorKind: PostAuthorKind =

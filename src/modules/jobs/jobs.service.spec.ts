@@ -82,6 +82,13 @@ describe('Booking hold expiry', () => {
     await service.expireBookingHolds();
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
+
+  it('does not throw into the scheduler when Postgres is unreachable', async () => {
+    prisma.booking.findMany.mockRejectedValue(
+      new Error("Can't reach database server at localhost:5432"),
+    );
+    await expect(service.expireBookingHolds()).resolves.toBeUndefined();
+  });
 });
 
 describe('Pulse rescue opportunity sync', () => {
