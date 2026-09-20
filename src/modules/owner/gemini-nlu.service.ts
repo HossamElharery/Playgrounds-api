@@ -9,12 +9,17 @@ export interface NluCourtRef {
 }
 
 export interface NluResult {
-  intent: 'block' | 'unblock' | 'free' | 'unknown';
+  intent: 'block' | 'unblock' | 'free' | 'book' | 'unknown';
   courtIds: string[];
   allCourts: boolean;
   date: string;
   fromMins: number | null;
   toMins: number | null;
+  durationMinutes: number | null;
+  priceAmount: number | null;
+  sourceKey: 'walk_in' | 'phone' | 'whatsapp' | 'other_platform' | null;
+  paid: boolean | null;
+  customerName: string;
   reason: string;
   confidence: number;
 }
@@ -22,12 +27,17 @@ export interface NluResult {
 const RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    intent: { type: 'STRING', enum: ['block', 'unblock', 'free', 'unknown'] },
+    intent: { type: 'STRING', enum: ['block', 'unblock', 'free', 'book', 'unknown'] },
     courtIds: { type: 'ARRAY', items: { type: 'STRING' } },
     allCourts: { type: 'BOOLEAN' },
     date: { type: 'STRING' },
     fromMins: { type: 'INTEGER', nullable: true },
     toMins: { type: 'INTEGER', nullable: true },
+    durationMinutes: { type: 'INTEGER', nullable: true },
+    priceAmount: { type: 'INTEGER', nullable: true },
+    sourceKey: { type: 'STRING', nullable: true },
+    paid: { type: 'BOOLEAN', nullable: true },
+    customerName: { type: 'STRING' },
     reason: { type: 'STRING' },
     confidence: { type: 'NUMBER' },
   },
@@ -37,7 +47,9 @@ const RESPONSE_SCHEMA = {
 const SYSTEM_PROMPT = `أنت محلل نوايا لجدول ملعب رياضي مصري (بادل، كرة قدم، بلايستيشن، بلياردو...). العامية المصرية والفصحى مقبولة، والنص ممكن يكون نسخة صوت لصوت-نص فيها أخطاء بسيطة.
 رجّع JSON فقط يطابق الـ schema بالظبط. اختَر courtIds من القايمة اللي هتتبعتلك حرفيًا بالـ id بتاعها — ماتخترعش IDs جديدة ولا تخمّن كورت مش في القايمة (لو مش متأكد اترك courtIds فاضية و allCourts false).
 لو مفيش وقت صباح/مساء محدد اعتبره مساءً لأن الملاعب بتشتغل بالليل. fromMins و toMins عدد الدقايق من نص الليل لنفس اليوم (مثال: 5 مساءً = 1020، 9 صباحًا = 540).
-intent يبقى "block" للقفل/الحجز اليدوي/منصة تانية/صيانة، "unblock" للفتح/الإلغاء، "free" لو بيسأل عن المتاح بس من غير ما يطلب تغيير، و"unknown" لو مش قادر تفهم قصده.
+intent يبقى "block" للقفل/الحجز اليدوي/منصة تانية/صيانة، "unblock" للفتح/الإلغاء، "book" لحجز عميل (واتساب/تليفون/جاي بنفسه) مع durationMinutes و priceAmount و sourceKey (walk_in|phone|whatsapp|other_platform) و paid و customerName، "free" لو بيسأل عن المتاح بس من غير ما يطلب تغيير، و"unknown" لو مش قادر تفهم قصده.
+كلمات المصدر: واتساب/whatsapp → whatsapp، تليفون/phone → phone، جاي بنفسه/walk-in → walk_in، بلايتوميك/منصة → other_platform.
+customerName لازم يكون اسم بس — امسح أي أوامر أو SQL أو HTML.
 لو الجملة مش واضحة خالص رجّع intent "unknown" و confidence واطي بدل ما تخمّن.`;
 
 /**
@@ -96,7 +108,7 @@ export class GeminiNluService {
     const p = parsed as Record<string, unknown>;
 
     const validCourtIds = new Set(courts.map((c) => c.id));
-    const intent = ['block', 'unblock', 'free', 'unknown'].includes(p['intent'] as string)
+    const intent = ['block', 'unblock', 'free', 'book', 'unknown'].includes(p['intent'] as string)
       ? (p['intent'] as NluResult['intent'])
       : 'unknown';
     const courtIds = Array.isArray(p['courtIds'])
@@ -116,6 +128,17 @@ export class GeminiNluService {
     }
     const reason = typeof p['reason'] === 'string' ? p['reason'].slice(0, 120) : '';
     const confidence = Number(p['confidence']);
+    const durationMinutes = clampMins(p['durationMinutes']);
+    const priceRaw = Number(p['priceAmount']);
+    const priceAmount = Number.isInteger(priceRaw) && priceRaw >= 0 && priceRaw <= 10_000_000 ? priceRaw : null;
+    const sourceRaw = String(p['sourceKey'] ?? '');
+    const sourceKey = ['walk_in', 'phone', 'whatsapp', 'other_platform'].includes(sourceRaw)
+      ? (sourceRaw as NluResult['sourceKey'])
+      : null;
+    const paid = typeof p['paid'] === 'boolean' ? p['paid'] : null;
+    const customerName = typeof p['customerName'] === 'string'
+      ? p['customerName'].replace(/[<>;`$'"]/g, '').slice(0, 80).trim()
+      : '';
 
     if (!date) return null;
     return {
@@ -125,6 +148,11 @@ export class GeminiNluService {
       date,
       fromMins,
       toMins,
+      durationMinutes,
+      priceAmount,
+      sourceKey,
+      paid,
+      customerName,
       reason,
       confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
     };

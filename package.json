@@ -19,11 +19,13 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:openrouter": "ts-node src/scripts/test-openrouter-connection.ts",
+    "qa:finance": "ts-node src/scripts/qa-seed-and-verify.ts",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
-    "seed:admin": "ts-node src/seeds/seedAdmin.ts"
+    "seed:admin": "ts-node src/seeds/seedAdmin.ts",
+    "test:integration": "bash scripts/test-integration.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.927.0",

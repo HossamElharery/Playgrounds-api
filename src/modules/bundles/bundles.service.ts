@@ -17,6 +17,12 @@ import { assertVenueStaffAccess } from '../../common/access/venue-access';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { ConfigService } from '@nestjs/config';
 import { WalletService } from '../payments/wallet.service';
+import { CommissionService } from '../finance/commission.service';
+import { LedgerService } from '../finance/ledger.service';
+import {
+  bookingSnapshotFields,
+  computeBookingMoney,
+} from '../../common/money/booking-money';
 import {
   CreateBundleDto,
   PurchaseBundleDto,
@@ -38,6 +44,8 @@ export class BundlesService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly wallet: WalletService,
+    private readonly commission: CommissionService,
+    private readonly ledger: LedgerService,
   ) {}
 
   listForVenue(venueId: string) {
@@ -177,15 +185,19 @@ export class BundlesService {
     const feeAmount = Math.round(combinedBase * (feePct / 100));
     const totalAmount = Math.max(0, combinedBase + feeAmount - discountAmount);
     const qrSecret = this.config.get<string>('QR_SIGNING_SECRET')!;
+    const commissionBps = await this.commission.resolveBps(bundle.venueId);
+    const payAtVenue = bundle.venue.paymentMode === 'at_venue';
 
     try {
       return await this.prisma.$transaction(
         async (tx) => {
-          await this.wallet.debit(tx, {
-            userId,
-            amount: totalAmount,
-            reason: 'bundle',
-          });
+          if (!payAtVenue) {
+            await this.wallet.debit(tx, {
+              userId,
+              amount: totalAmount,
+              reason: 'bundle',
+            });
+          }
           const bookings: Booking[] = [];
           for (const p of priced) {
             const overlap = await tx.booking.findFirst({
@@ -202,10 +214,13 @@ export class BundlesService {
             const share = p.baseAmount / combinedBase;
             const itemFee = Math.round(feeAmount * share);
             const itemDiscount = Math.round(discountAmount * share);
-            const itemTotal = Math.max(
-              0,
-              p.baseAmount + itemFee - itemDiscount,
-            );
+            const money = computeBookingMoney({
+              base: p.baseAmount,
+              fee: itemFee,
+              discount: itemDiscount,
+              ownerFundedDiscount: itemDiscount,
+              commissionBps,
+            });
 
             const created = await tx.booking.create({
               data: {
@@ -218,12 +233,13 @@ export class BundlesService {
                 baseAmount: p.baseAmount,
                 feeAmount: itemFee,
                 discountAmount: itemDiscount,
-                totalAmount: itemTotal,
+                totalAmount: money.total,
                 currency: p.currency,
-                paymentMethod: 'wallet',
-                paymentStatus: 'paid',
+                paymentMethod: payAtVenue ? 'cash' : 'wallet',
+                paymentStatus: payAtVenue ? 'pending' : 'paid',
                 status: 'confirmed',
                 bundleId: bundle.id,
+                ...bookingSnapshotFields(money, bundle.venue.paymentMode),
               },
             });
             const qrPayload = signQrPayload(created.id, qrSecret);
@@ -231,6 +247,7 @@ export class BundlesService {
               where: { id: created.id },
               data: { qrPayload },
             });
+            await this.ledger.syncBookingLedger(tx, created.id, 'payment_paid');
             bookings.push(withQr);
           }
           return bookings;

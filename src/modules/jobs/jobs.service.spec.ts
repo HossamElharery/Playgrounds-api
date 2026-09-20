@@ -13,7 +13,12 @@ describe('Coin inactivity expiry', () => {
     jest.resetAllMocks();
     prisma.$transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
     notifications.create.mockResolvedValue(null);
-    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, notifications as never);
+    service = new JobsService(
+      prisma as never,
+      { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never,
+      notifications as never,
+      { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: false }) } as never,
+    );
   });
 
   it('queries by lastSeenAt, not updatedAt — a socket ping must not reset the inactivity clock', async () => {
@@ -49,7 +54,7 @@ describe('Booking hold expiry', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(prisma));
-    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never);
+    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never, { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: false }) } as never);
   });
 
   it('restores coins that were reserved on a hold that lapsed unconfirmed', async () => {
@@ -100,7 +105,7 @@ describe('Pulse rescue opportunity sync', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
-    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never);
+    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never, { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: false }) } as never);
   });
 
   it('creates a rescue opportunity for an open, upcoming, short-handed match with no opportunity yet', async () => {
@@ -156,7 +161,7 @@ describe('Elapsed match post expiry', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
-    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never);
+    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never, { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: false }) } as never);
   });
 
   it('closes open and full matches whose kickoff has passed', async () => {
@@ -170,5 +175,48 @@ describe('Elapsed match post expiry', () => {
     expect(prisma.pulseOpportunity.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'expired' } }),
     );
+  });
+});
+
+describe('Stale platform booking auto-complete', () => {
+  const prisma = {
+    booking: { findMany: jest.fn(), updateMany: jest.fn() },
+    $transaction: jest.fn(),
+  };
+  const ledger = { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: true }) };
+  let service: JobsService;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(prisma));
+    service = new JobsService(
+      prisma as never,
+      { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never,
+      { create: jest.fn() } as never,
+      ledger as never,
+    );
+  });
+
+  it('marks confirmed platform bookings completed 24h after slotEnd and syncs the ledger', async () => {
+    prisma.booking.findMany.mockResolvedValue([{ id: 'b1' }]);
+    prisma.booking.updateMany.mockResolvedValue({ count: 1 });
+    await service.completeStalePlatformBookingsNow();
+    expect(prisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      source: 'platform',
+      status: 'confirmed',
+      checkedInAt: null,
+    });
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: 'b1', status: 'confirmed', checkedInAt: null },
+      data: { status: 'completed' },
+    });
+    expect(ledger.syncBookingLedger).toHaveBeenCalledWith(prisma, 'b1', 'auto_completed');
+  });
+
+  it('is idempotent when another worker already completed the row', async () => {
+    prisma.booking.findMany.mockResolvedValue([{ id: 'b1' }]);
+    prisma.booking.updateMany.mockResolvedValue({ count: 0 });
+    await service.completeStalePlatformBookingsNow();
+    expect(ledger.syncBookingLedger).not.toHaveBeenCalled();
   });
 });

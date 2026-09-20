@@ -91,6 +91,17 @@ export class EmailService {
     return `<div style="margin:24px 0;padding:20px;border:1px solid #365314;border-radius:16px;background:#0b1a10;text-align:center"><div style="font-size:34px;line-height:1;font-weight:900;letter-spacing:9px;color:#a3ff12">${this.escapeHtml(code)}</div><div style="margin-top:12px;color:#94a3b8;font-size:13px">Expires in ${expiresInMinutes} minutes · صالح لمدة ${expiresInMinutes} دقائق</div></div>`;
   }
 
+  async sendFinanceNotice(to: string, subject: string, body: string): Promise<void> {
+    await this.sendTemplate(to, {
+      subject,
+      preheader: subject,
+      heading: `${subject} · إشعار مالي`,
+      intro: body,
+      bodyHtml: '',
+      bodyText: body,
+    });
+  }
+
   private async sendTemplate(to: string, content: EmailContent): Promise<void> {
     const from = this.config.get<string>(
       'MAIL_FROM',

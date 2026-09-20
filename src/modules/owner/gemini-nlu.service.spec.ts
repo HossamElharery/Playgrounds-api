@@ -113,4 +113,68 @@ describe('GeminiNluService', () => {
     expect(call.systemPrompt).toContain('context');
     expect(call.responseSchema).toBeDefined();
   });
+
+  it('understands a WhatsApp walk-in style book intent in Arabic', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        intent: 'book', courtIds: ['c1'], allCourts: false, date: '2026-09-12',
+        fromMins: 1020, toMins: null, durationMinutes: 90, priceAmount: 400,
+        sourceKey: 'whatsapp', paid: true, customerName: 'أحمد', reason: '', confidence: 0.9,
+      }),
+    );
+    const result = await service.interpret('احجز لأحمد واتساب ساعة ونص', courts, '2026-09-11');
+    expect(result?.intent).toBe('book');
+    expect(result?.sourceKey).toBe('whatsapp');
+    expect(result?.durationMinutes).toBe(90);
+    expect(result?.priceAmount).toBe(400);
+    expect(result?.paid).toBe(true);
+    expect(result?.customerName).toBe('أحمد');
+  });
+
+  it('maps English source words and keeps only venue courts', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        intent: 'book', courtIds: ['c1', 'not-here'], allCourts: false, date: '2026-09-12',
+        fromMins: 1080, toMins: null, durationMinutes: 60, priceAmount: 250,
+        sourceKey: 'phone', paid: false, customerName: 'Omar', reason: '', confidence: 0.8,
+      }),
+    );
+    const result = await service.interpret('book Omar on the phone for an hour', courts, '2026-09-11');
+    expect(result?.courtIds).toEqual(['c1']);
+    expect(result?.sourceKey).toBe('phone');
+    expect(result?.paid).toBe(false);
+  });
+
+  it('does not guess when the unit name is ambiguous', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        intent: 'book', courtIds: [], allCourts: false, date: '2026-09-12',
+        fromMins: 1020, toMins: null, durationMinutes: 60, priceAmount: null,
+        sourceKey: 'walk_in', paid: true, customerName: 'Sara', reason: 'which court?', confidence: 0.4,
+      }),
+    );
+    const result = await service.interpret('احجز لسارة على الملعب', [
+      { id: 'c1', name: 'Court 1' },
+      { id: 'c2', name: 'Court 1 indoor' },
+    ], '2026-09-11');
+    expect(result?.courtIds).toEqual([]);
+    expect(result?.allCourts).toBe(false);
+  });
+
+  it('strips injection attempts from customerName', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        intent: 'book', courtIds: ['c1'], allCourts: false, date: '2026-09-12',
+        fromMins: 1020, toMins: null, durationMinutes: 60, priceAmount: 100,
+        sourceKey: 'walk_in', paid: true,
+        customerName: `Ahmed'; DROP TABLE Booking; <script>alert(1)</script>`,
+        reason: '', confidence: 0.9,
+      }),
+    );
+    const result = await service.interpret('x', courts, '2026-09-11');
+    expect(result?.customerName).not.toContain('<');
+    expect(result?.customerName).not.toContain(';');
+    expect(result?.customerName).not.toContain("'");
+    expect(result?.customerName).toContain('Ahmed');
+  });
 });

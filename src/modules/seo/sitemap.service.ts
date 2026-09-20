@@ -16,7 +16,7 @@ export class SitemapService {
     this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
 
-  private localizedEntry(path: string, lastmod?: Date, images: string[] = []): string {
+  private localizedEntry(path: string, lastmod?: Date | null, images: string[] = []): string {
     const ar = `${this.siteUrl}/ar${path}`;
     const en = `${this.siteUrl}/en${path}`;
     return [ar, en].map((loc, index) => `
@@ -38,17 +38,42 @@ export class SitemapService {
 </urlset>`;
   }
 
+  /** Public, indexable community posts (same filter the public feed uses). */
+  private readonly publicPostWhere = {
+    status: 'active' as const,
+    visibility: 'public',
+    autoHidden: false,
+    flagged: false,
+  };
+  private static readonly MAX_POSTS = 5000;
+  private static readonly MIN_HASHTAG_POSTS = 3;
+
   async index(): Promise<string> {
-    const latest = await this.prisma.venue.aggregate({
-      where: { status: 'active' },
-      _max: { updatedAt: true },
-    });
-    const lastmod = (latest._max.updatedAt || new Date()).toISOString();
+    const [venue, blog, post, hashtag, sport] = await Promise.all([
+      this.prisma.venue.aggregate({ where: { status: 'active' }, _max: { updatedAt: true } }),
+      this.prisma.blogPost.aggregate({ where: { status: 'published' }, _max: { updatedAt: true } }),
+      this.prisma.post.aggregate({ where: this.publicPostWhere, _max: { updatedAt: true } }),
+      this.prisma.hashtag.aggregate({ _max: { updatedAt: true } }),
+      this.prisma.sportCategory.aggregate({ _max: { createdAt: true } }),
+    ]);
+    const now = new Date();
+    const entries: [string, Date | null | undefined][] = [
+      ['static', null],
+      ['sports', sport._max.createdAt],
+      ['venues', venue._max.updatedAt],
+      ['landings', venue._max.updatedAt],
+      ['blog', blog._max.updatedAt],
+      ['posts', post._max.updatedAt],
+      ['hashtags', hashtag._max.updatedAt],
+    ];
+    const items = entries
+      .map(([name, date]) =>
+        `  <sitemap><loc>${this.siteUrl}/sitemaps/${name}.xml</loc><lastmod>${(date ?? now).toISOString()}</lastmod></sitemap>`,
+      )
+      .join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <sitemap><loc>${this.siteUrl}/sitemaps/venues.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
-  <sitemap><loc>${this.siteUrl}/sitemaps/landings.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
-  <sitemap><loc>${this.siteUrl}/sitemaps/static.xml</loc><lastmod>${lastmod}</lastmod></sitemap>
+${items}
 </sitemapindex>`;
   }
 
@@ -58,7 +83,7 @@ export class SitemapService {
       select: {
         slug: true,
         updatedAt: true,
-        photos: { orderBy: { position: 'asc' }, select: { url: true } },
+        photos: { orderBy: { position: 'asc' }, take: 5, select: { url: true } },
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -71,8 +96,21 @@ export class SitemapService {
     );
   }
 
+  /** One hub page per sport (`/sports/:slug`). */
+  async sports(): Promise<string> {
+    const sports = await this.prisma.sportCategory.findMany({ select: { slug: true, createdAt: true } });
+    return this.urlset(
+      sports.map((sport) => this.localizedEntry(`/sports/${encodeURIComponent(sport.slug)}`, sport.createdAt)).join(''),
+    );
+  }
+
+  /** Indexable explore landings: governorate, district and sport filters that actually have venues. */
   async landings(): Promise<string> {
-    const [districts, sports] = await Promise.all([
+    const [governorates, districts, sports] = await Promise.all([
+      this.prisma.governorate.findMany({
+        where: { slug: { not: null }, venues: { some: { status: 'active' } } },
+        select: { slug: true },
+      }),
       this.prisma.district.findMany({
         where: { slug: { not: null }, venues: { some: { status: 'active' } } },
         select: { slug: true },
@@ -82,19 +120,69 @@ export class SitemapService {
         select: { slug: true },
       }),
     ]);
-    const districtEntries = districts
-      .filter((district): district is { slug: string } => Boolean(district.slug))
-      .map((district) =>
-        this.localizedEntry(`/explore?district=${encodeURIComponent(district.slug)}`),
-      );
-    const sportEntries = sports.map((sport) =>
-      this.localizedEntry(`/explore?sport=${encodeURIComponent(sport.slug)}`),
+    const entry = (key: string, slug: string | null) =>
+      slug ? this.localizedEntry(`/explore?${key}=${encodeURIComponent(slug)}`) : '';
+    return this.urlset(
+      [
+        ...governorates.map((g) => entry('governorate', g.slug)),
+        ...districts.map((d) => entry('district', d.slug)),
+        ...sports.map((s) => entry('sport', s.slug)),
+      ].join(''),
     );
-    return this.urlset([...districtEntries, ...sportEntries].join(''));
+  }
+
+  async blog(): Promise<string> {
+    const posts = await this.prisma.blogPost.findMany({
+      where: { status: 'published' },
+      select: { slug: true, updatedAt: true, coverImageUrl: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return this.urlset(
+      this.localizedEntry('/blog', posts[0]?.updatedAt) +
+        posts
+          .map((post) =>
+            this.localizedEntry(
+              `/blog/${encodeURIComponent(post.slug)}`,
+              post.updatedAt,
+              post.coverImageUrl ? [post.coverImageUrl] : [],
+            ),
+          )
+          .join(''),
+    );
+  }
+
+  /** Public community posts. Each post is a single URL; the renderer localises the shell. */
+  async posts(): Promise<string> {
+    const posts = await this.prisma.post.findMany({
+      where: this.publicPostWhere,
+      select: { id: true, slug: true, updatedAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: SitemapService.MAX_POSTS,
+    });
+    return this.urlset(
+      posts
+        .map((post) => this.localizedEntry(`/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`, post.updatedAt))
+        .join(''),
+    );
+  }
+
+  async hashtags(): Promise<string> {
+    const tags = await this.prisma.hashtag.findMany({
+      where: { postCount: { gte: SitemapService.MIN_HASHTAG_POSTS } },
+      select: { tag: true, updatedAt: true },
+      orderBy: { postCount: 'desc' },
+      take: 2000,
+    });
+    return this.urlset(
+      tags.map((t) => this.localizedEntry(`/community/hashtag/${encodeURIComponent(t.tag)}`, t.updatedAt)).join(''),
+    );
   }
 
   staticPages(): string {
-    const paths = ['', '/about', '/partners', '/how-it-works', '/contact', '/help', '/terms', '/privacy', '/refund-policy'];
+    const paths = [
+      '', '/explore', '/community', '/leaderboards', '/blog', '/about', '/partners', '/how-it-works',
+      '/contact', '/help', '/terms', '/privacy', '/refund-policy',
+    ];
     return this.urlset(paths.map((path) => this.localizedEntry(path)).join(''));
   }
 }

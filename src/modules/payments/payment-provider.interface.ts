@@ -13,6 +13,8 @@ export interface ChargeResult {
  * not a BookingsService change.
  */
 export interface PaymentProvider {
+  /** Live PSP configured and allowed to collect online charges. Mock = false. */
+  readonly isLive: boolean;
   charge(
     amount: number,
     currency: string,

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { IndexNowService } from '../seo/index-now.service';
 import { PublishStatus } from '@prisma/client';
 import { CreateBlogPostDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateBlogCategoryDto } from './dto/blog-category.dto';
@@ -19,7 +20,19 @@ function slugify(input: string): string {
 
 @Injectable()
 export class ContentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly indexNow: IndexNowService,
+  ) {}
+
+  /** Tell IndexNow-enabled engines (Bing, Yandex, …) about a published article; never blocks the save. */
+  private pingBlog(post: { slug: string; status: PublishStatus }): void {
+    if (post.status !== 'published') return;
+    const slug = encodeURIComponent(post.slug);
+    void this.indexNow
+      .notifyUrls([`/ar/blog/${slug}`, `/en/blog/${slug}`, '/ar/blog', '/en/blog'])
+      .catch(() => undefined);
+  }
 
   // ---- Blog ----
   async listBlogPosts(
@@ -70,7 +83,7 @@ export class ContentService {
     const slug = await this.ensureUniqueSlug(
       dto.slug?.trim() || slugify(dto.titleEn) || `post-${Date.now()}`,
     );
-    return this.prisma.blogPost.create({
+    const created = await this.prisma.blogPost.create({
       data: {
         slug,
         titleEn: dto.titleEn,
@@ -88,8 +101,16 @@ export class ContentService {
         ctaLabelAr: dto.ctaLabelAr,
         ctaHref: dto.ctaHref,
         relatedSportSlug: dto.relatedSportSlug,
+        seoTitleEn: dto.seoTitleEn?.trim() || null,
+        seoTitleAr: dto.seoTitleAr?.trim() || null,
+        seoDescriptionEn: dto.seoDescriptionEn?.trim() || null,
+        seoDescriptionAr: dto.seoDescriptionAr?.trim() || null,
+        keywordsEn: dto.keywordsEn?.trim() || null,
+        keywordsAr: dto.keywordsAr?.trim() || null,
       },
     });
+    this.pingBlog(created);
+    return created;
   }
 
   async updateBlogPost(id: string, dto: UpdateBlogPostDto) {
@@ -100,7 +121,7 @@ export class ContentService {
     const slug = dto.slug
       ? await this.ensureUniqueSlug(dto.slug, existing.id)
       : undefined;
-    return this.prisma.blogPost.update({
+    const updated = await this.prisma.blogPost.update({
       where: { id: existing.id },
       data: {
         ...(slug ? { slug } : {}),
@@ -121,8 +142,16 @@ export class ContentService {
         ctaLabelAr: dto.ctaLabelAr,
         ctaHref: dto.ctaHref,
         relatedSportSlug: dto.relatedSportSlug,
+        ...(dto.seoTitleEn !== undefined ? { seoTitleEn: dto.seoTitleEn.trim() || null } : {}),
+        ...(dto.seoTitleAr !== undefined ? { seoTitleAr: dto.seoTitleAr.trim() || null } : {}),
+        ...(dto.seoDescriptionEn !== undefined ? { seoDescriptionEn: dto.seoDescriptionEn.trim() || null } : {}),
+        ...(dto.seoDescriptionAr !== undefined ? { seoDescriptionAr: dto.seoDescriptionAr.trim() || null } : {}),
+        ...(dto.keywordsEn !== undefined ? { keywordsEn: dto.keywordsEn.trim() || null } : {}),
+        ...(dto.keywordsAr !== undefined ? { keywordsAr: dto.keywordsAr.trim() || null } : {}),
       },
     });
+    this.pingBlog(updated);
+    return updated;
   }
 
   async deleteBlogPost(id: string) {

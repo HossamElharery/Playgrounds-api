@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
@@ -26,6 +27,7 @@ import {
 import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
 import { matchPricingRule } from '../../common/utils/pricing-rule.util';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
+import { assertBookingAccess, assertVenueAccess } from '../../common/access/owner-access';
 import { randomUUID } from 'crypto';
 import {
   PAYMENT_PROVIDER,
@@ -34,9 +36,34 @@ import {
 import { WalletService } from '../payments/wallet.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CommissionService } from '../finance/commission.service';
+import { LedgerService } from '../finance/ledger.service';
+import { ApiException } from '../../common/errors/api-exception';
+import {
+  bookingSnapshotFields,
+  computeBookingMoney,
+} from '../../common/money/booking-money';
 
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
+
+/** PSP methods that cannot be used when the venue is `at_venue`. Wallet is the
+ *  legacy player confirm path and is accepted as "pay at the venue" (no debit). */
+const ONLINE_ONLY_METHODS = new Set([
+  'card',
+  'apple_pay',
+  'google_pay',
+  'paypal',
+  'vodafone',
+  'orange',
+  'etisalat',
+  'fawry',
+  'instapay',
+  'mada',
+  'stc_pay',
+  'benefit',
+  'knet',
+]);
 
 export interface SlotCell {
   start: string;
@@ -55,6 +82,8 @@ export class BookingsService {
     private readonly rewards: RewardsService,
     private readonly wallet: WalletService,
     private readonly notifications: NotificationsService,
+    private readonly commission: CommissionService,
+    private readonly ledger: LedgerService,
   ) {}
 
   // ---------- Slot grid ----------
@@ -119,7 +148,7 @@ export class BookingsService {
         timeZone,
       );
       const overlapping = existing.find(
-        (b) => b.slotStart.getTime() === start.getTime(),
+        (b) => b.slotStart < end && b.slotEnd > start,
       );
       const blocked = blocks.some((b) => b.startsAt < end && b.endsAt > start);
 
@@ -188,10 +217,12 @@ export class BookingsService {
 
     let discountAmount = 0;
     let promoCodeId: string | undefined;
+    let ownerFundedDiscount = 0;
     if (dto.promoCode) {
       const promo = await this.validatePromo(dto.promoCode, userId, baseAmount);
       discountAmount = promo.discountAmount;
       promoCodeId = promo.id;
+      if (promo.venueId) ownerFundedDiscount = promo.discountAmount;
     }
 
     let coinsRedeemed = 0;
@@ -246,6 +277,21 @@ export class BookingsService {
             }
           }
 
+          const commissionBps = await this.commission.resolveBps(
+            court.venueId,
+            tx,
+          );
+          const money = computeBookingMoney({
+            base: baseAmount,
+            fee: feeAmount,
+            discount: discountAmount,
+            ownerFundedDiscount,
+            commissionBps,
+          });
+          if (money.total !== totalAmount) {
+            throw new BadRequestException('MONEY_TOTAL_MISMATCH');
+          }
+
           const created = await tx.booking.create({
             data: {
               code: this.generateBookingCode(),
@@ -263,6 +309,7 @@ export class BookingsService {
               coinsRedeemed,
               status: 'held',
               holdExpiresAt: new Date(Date.now() + HOLD_DURATION_MS),
+              ...bookingSnapshotFields(money, court.venue.paymentMode),
             },
           });
 
@@ -340,6 +387,7 @@ export class BookingsService {
       type: promo.type,
       value: promo.value,
       discountAmount: Math.min(discountAmount, baseAmount),
+      venueId: promo.venueId,
     };
   }
 
@@ -411,28 +459,50 @@ export class BookingsService {
       chargeAmount = organizerShare.amount;
     }
 
-    const paymentStatus = isSplit ? 'partial' : 'paid';
+    const mode =
+      booking.paymentModeSnapshot ?? booking.venue.paymentMode ?? 'at_venue';
+    if (mode === 'at_venue') {
+      if (dto.paymentMethod && ONLINE_ONLY_METHODS.has(dto.paymentMethod)) {
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'PAYMENT_MODE_AT_VENUE',
+          'This venue collects payment at the venue',
+        );
+      }
+      if (isSplit) {
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'PAYMENT_MODE_AT_VENUE',
+          'Split payment is not available when paying at the venue',
+        );
+      }
+    }
+
+    const paymentStatus =
+      mode === 'at_venue' ? 'pending' : isSplit ? 'partial' : 'paid';
+    const paymentMethod =
+      mode === 'at_venue' ? 'cash' : 'wallet';
     const qrPayload = signQrPayload(
       bookingId,
       this.config.get<string>('QR_SIGNING_SECRET')!,
     );
 
     const confirmedBooking = await this.prisma.$transaction(async (tx) => {
-        // Coins were already reserved off the balance when this hold was
-        // created (see `holdSlot()`) — confirming only ever moves the EGP total.
-        await this.wallet.debit(tx, {
-          userId,
-          amount: chargeAmount,
-          reason: 'booking',
-          bookingId,
-        });
+        if (mode === 'online') {
+          await this.wallet.debit(tx, {
+            userId,
+            amount: chargeAmount,
+            reason: 'booking',
+            bookingId,
+          });
+        }
 
         const confirmed = await tx.booking.updateMany({
           where: { id: bookingId, status: 'held' },
           data: {
             status: 'confirmed',
             holdExpiresAt: null,
-            paymentMethod: 'wallet',
+            paymentMethod,
             paymentStatus,
             isSplitPayment: isSplit,
             qrPayload,
@@ -442,16 +512,18 @@ export class BookingsService {
           throw new ConflictException('PULSE_EXPIRED');
         }
 
-        await tx.payment.create({
-          data: {
-            bookingId,
-            amount: chargeAmount,
-            currency: booking.currency,
-            method: 'wallet',
-            status: 'paid',
-            providerRef: 'wallet',
-          },
-        });
+        if (mode === 'online') {
+          await tx.payment.create({
+            data: {
+              bookingId,
+              amount: chargeAmount,
+              currency: booking.currency,
+              method: 'wallet',
+              status: 'paid',
+              providerRef: 'wallet',
+            },
+          });
+        }
         if (booking.promoCodeId) {
           await tx.promoRedemption.create({
             data: { promoCodeId: booking.promoCodeId, userId, bookingId },
@@ -469,6 +541,7 @@ export class BookingsService {
             })),
           });
         }
+        await this.ledger.syncBookingLedger(tx, bookingId, 'payment_paid');
         return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
     });
     // Paid-for bookings are the one thing a player must be able to find again:
@@ -532,6 +605,7 @@ export class BookingsService {
           where: { id: shareRow.bookingId },
           data: { paymentStatus: 'paid' },
         });
+        await this.ledger.syncBookingLedger(tx, shareRow.bookingId, 'payment_paid');
       }
       return updated;
     });
@@ -550,21 +624,23 @@ export class BookingsService {
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    await assertVenueStaffAccess(this.prisma, booking.venueId, staffUser);
+    await assertBookingAccess(this.prisma, staffUser, booking.id, { write: true });
     if (booking.status !== 'confirmed')
       throw new BadRequestException('Booking is not confirmed');
     if (booking.checkedInAt) throw new ConflictException('Already checked in');
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.booking.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.booking.update({
         where: { id: bookingId },
         data: {
           checkedInAt: new Date(),
           checkedInByUserId: staffUser.id,
           status: 'completed',
         },
-      }),
-    ]);
+      });
+      await this.ledger.syncBookingLedger(tx, bookingId, 'checked_in');
+      return row;
+    });
 
     const { isFirstBooking } = await this.awardCompletionCoins(booking);
     await this.prisma.user.update({
@@ -585,19 +661,23 @@ export class BookingsService {
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    await assertVenueStaffAccess(this.prisma, booking.venueId, staffUser);
+    await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
     if (booking.qrPayload) return this.checkIn(staffUser, booking.qrPayload);
     if (booking.status !== 'confirmed') {
       throw new BadRequestException('Booking is not confirmed');
     }
     if (booking.checkedInAt) throw new ConflictException('Already checked in');
-    const updated = await this.prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        checkedInAt: new Date(),
-        checkedInByUserId: staffUser.id,
-        status: 'completed',
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          checkedInAt: new Date(),
+          checkedInByUserId: staffUser.id,
+          status: 'completed',
+        },
+      });
+      await this.ledger.syncBookingLedger(tx, bookingId, 'checked_in');
+      return row;
     });
     const { isFirstBooking } = await this.awardCompletionCoins(booking);
     await this.prisma.user.update({
@@ -617,7 +697,7 @@ export class BookingsService {
     staffUser: AuthenticatedUser,
     dto: { venueId: string; qrPayload?: string; code?: string },
   ) {
-    await assertVenueStaffAccess(this.prisma, dto.venueId, staffUser);
+    await assertVenueAccess(this.prisma, staffUser, dto.venueId, { write: false });
     if (!dto.qrPayload && !dto.code) {
       return { outcome: 'invalid' as const, booking: null };
     }
@@ -685,15 +765,19 @@ export class BookingsService {
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    await assertVenueStaffAccess(this.prisma, booking.venueId, staffUser);
+    await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
     if (booking.status !== 'confirmed') {
       throw new BadRequestException(
         'Only confirmed bookings can be marked no-show',
       );
     }
-    return this.prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: 'no_show' },
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: 'no_show' },
+      });
+      await this.ledger.syncBookingLedger(tx, bookingId, 'no_show');
+      return updated;
     });
   }
 
@@ -706,7 +790,7 @@ export class BookingsService {
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    await assertVenueStaffAccess(this.prisma, booking.venueId, staffUser);
+    await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
     return this.settleCancellation(booking, reason ?? 'Cancelled by venue');
   }
 
@@ -885,8 +969,13 @@ export class BookingsService {
       }
       if (adminActorId) await tx.auditLogEntry.create({ data: {
         actorUserId: adminActorId, action: 'admin.booking.cancel', targetType: 'booking', targetId: booking.id,
-        metadata: { reason: reason ?? '', previousStatus: booking.status, refundAmount },
+        metadata: { venueId: booking.venueId, reason: reason ?? '', previousStatus: booking.status, refundAmount },
       } });
+      await this.ledger.syncBookingLedger(
+        tx,
+        booking.id,
+        adminActorId ? 'admin_cancel' : 'cancelled',
+      );
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id } });
     });
 

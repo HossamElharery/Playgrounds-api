@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
+import { LedgerService } from '../finance/ledger.service';
 import { pulseStatusFromOccupancy } from '../pulse/pulse-status.util';
 import { elapsedLiveMatchWhere } from '../social/match-lifecycle';
 
@@ -19,6 +20,7 @@ export class JobsService {
     private readonly prisma: PrismaService,
     private readonly emitter: RealtimeGatewayEmitter,
     private readonly notifications: NotificationsService,
+    private readonly ledger: LedgerService,
   ) {}
 
   private async runJob(name: string, work: () => Promise<void>): Promise<void> {
@@ -68,6 +70,7 @@ export class JobsService {
             },
           });
         }
+        await this.ledger.syncBookingLedger(tx, booking.id, 'cancelled');
       });
     }
     this.logger.debug(`Released ${expiring.length} expired booking hold(s)`);
@@ -152,20 +155,51 @@ export class JobsService {
     });
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
-  async markNoShows() {
-    await this.runJob('markNoShows', async () => {
-      const cutoff = new Date(Date.now() - 3 * 3_600_000);
-      const { count } = await this.prisma.booking.updateMany({
-        where: {
-          status: 'confirmed',
-          slotEnd: { lt: cutoff },
-          checkedInAt: null,
-        },
-        data: { status: 'no_show' },
-      });
-      if (count) this.logger.log(`Marked ${count} booking(s) as no-show`);
+  /**
+   * Anti-leak: at_venue commission cannot be avoided by never scanning the QR.
+   * Confirmed platform bookings become `completed` 24h after slotEnd unless the
+   * owner marked them no_show or cancelled in that window. `completed` triggers
+   * at_venue accrual. The previous 3-hour auto-no-show job was removed because
+   * it zeroed commission whenever the owner skipped check-in.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async completeStalePlatformBookings() {
+    await this.runJob('completeStalePlatformBookings', () =>
+      this.completeStalePlatformBookingsNow(),
+    );
+  }
+
+  async completeStalePlatformBookingsNow() {
+    const cutoff = new Date(Date.now() - 24 * 3_600_000);
+    const stale = await this.prisma.booking.findMany({
+      where: {
+        source: 'platform',
+        status: 'confirmed',
+        checkedInAt: null,
+        slotEnd: { lt: cutoff },
+      },
+      select: { id: true },
+      take: 200,
     });
+    for (const booking of stale) {
+      await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.booking.updateMany({
+          where: {
+            id: booking.id,
+            status: 'confirmed',
+            checkedInAt: null,
+          },
+          data: { status: 'completed' },
+        });
+        if (!updated.count) return;
+        await this.ledger.syncBookingLedger(tx, booking.id, 'auto_completed');
+      });
+    }
+    if (stale.length) {
+      this.logger.log(
+        `Auto-completed ${stale.length} stale platform booking(s) after 24h`,
+      );
+    }
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)

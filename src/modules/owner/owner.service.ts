@@ -19,6 +19,35 @@ import { zonedDayBounds } from '../../common/utils/timezone.util';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
 import { BookingsService } from '../bookings/bookings.service';
 import { GeminiNluService, NluResult } from './gemini-nlu.service';
+import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
+import { assertVenueAccess } from '../../common/access/owner-access';
+import { sourceDisplay } from '../../common/utils/source-label.util';
+import { maskPlayerPhone } from '../../common/utils/phone.util';
+
+function unknownNlu(date: string, available: boolean): NluResult & { available: boolean } {
+  return {
+    intent: 'unknown',
+    courtIds: [],
+    allCourts: false,
+    date,
+    fromMins: null,
+    toMins: null,
+    durationMinutes: null,
+    priceAmount: null,
+    sourceKey: null,
+    paid: null,
+    customerName: '',
+    reason: '',
+    confidence: 0,
+    available,
+  };
+}
+
+function unitNoun(activityKind: string | null | undefined): 'court' | 'station' | 'table' {
+  if (activityKind === 'gaming-station') return 'station';
+  if (activityKind === 'table-game') return 'table';
+  return 'court';
+}
 
 const MAX_FINANCE_RANGE_MS = 93 * 86_400_000;
 
@@ -38,14 +67,23 @@ export class OwnerService {
     return venue?.country?.timezone ?? 'UTC';
   }
 
+  private async requireVenue(
+    user: AuthenticatedUser,
+    venueId: string,
+    write: boolean,
+  ) {
+    return assertVenueAccess(this.prisma, user, venueId, { write });
+  }
+
+  /** @deprecated use requireVenue with the authenticated user */
   private async assertVenueOwnership(venueId: string, ownerId: string) {
-    const venue = await this.prisma.venue.findUnique({
-      where: { id: venueId },
-    });
-    if (!venue) throw new NotFoundException('Venue not found');
-    if (venue.ownerId !== ownerId)
-      throw new ForbiddenException('Not your venue');
-    return venue;
+    const user = {
+      id: ownerId,
+      phone: '',
+      name: '',
+      roles: ['owner' as const],
+    };
+    return this.requireVenue(user, venueId, true);
   }
 
   private parseFinanceRange(from: string, to: string): { start: Date; end: Date } {
@@ -170,11 +208,11 @@ export class OwnerService {
     }
   }
 
-  async calendar(ownerId: string, venueId: string, date: string) {
+  async calendar(user: AuthenticatedUser, venueId: string, date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
       throw new BadRequestException('date must be YYYY-MM-DD');
     }
-    await this.assertVenueOwnership(venueId, ownerId);
+    await this.requireVenue(user, venueId, false);
     // Must match the slot grid's window, or a late-evening block shows up in one
     // view and not the other whenever the server clock is not the venue's.
     const { start: dayStart, end: dayEnd } = zonedDayBounds(
@@ -213,21 +251,89 @@ export class OwnerService {
    * Every court of a venue with its slot grid for one day, in a single call.
    * The dashboard used to fetch one grid per court and trip the rate limiter.
    */
-  async board(ownerId: string, venueId: string, date: string) {
+  async board(user: AuthenticatedUser, venueId: string, date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
       throw new BadRequestException('date must be YYYY-MM-DD');
     }
-    await this.assertVenueOwnership(venueId, ownerId);
+    await this.requireVenue(user, venueId, false);
+    const timeZone = await this.venueTimeZone(venueId);
+    const { start: dayStart, end: dayEnd } = zonedDayBounds(date, timeZone);
     const courts = await this.prisma.court.findMany({
       where: { venueId },
-      include: { pricingRules: true },
+      include: {
+        pricingRules: true,
+        sport: { select: { activityKind: true } },
+      },
       orderBy: { name: 'asc' },
     });
+    const dayBookings = await this.prisma.booking.findMany({
+      where: {
+        venueId,
+        slotStart: { lt: dayEnd },
+        slotEnd: { gt: dayStart },
+        status: { in: ['held', 'confirmed', 'completed'] },
+      },
+      include: { user: { select: { name: true } } },
+    });
+    const now = new Date();
+    const attentionFrom = new Date(now.getTime() - 24 * 3_600_000);
     const rows = await Promise.all(
-      courts.map(async (court) => ({
-        court,
-        slots: await this.bookings.getSlotGrid(court.id, date),
-      })),
+      courts.map(async (court) => {
+        const slots = await this.bookings.getSlotGrid(court.id, date);
+        const kind = court.sport?.activityKind ?? null;
+        const enriched = slots.map((slot) => {
+          const start = new Date(slot.start);
+          const end = new Date(slot.end);
+          const booking = dayBookings.find(
+            (b) => b.courtId === court.id && b.slotStart < end && b.slotEnd > start,
+          );
+          const spanSlots = booking
+            ? Math.max(
+                1,
+                Math.round(
+                  (booking.slotEnd.getTime() - booking.slotStart.getTime()) /
+                    (court.slotDurationMins * 60_000),
+                ),
+              )
+            : 1;
+          const isSpanHead = !!booking && booking.slotStart.getTime() === start.getTime();
+          let state: 'free' | 'booked_platform' | 'booked_manual' | 'blocked' | 'past' =
+            slot.state === 'blocked' ? 'blocked' : slot.state === 'past' ? 'past' : 'free';
+          if (booking?.source === 'platform') state = 'booked_platform';
+          else if (booking?.source === 'manual') state = 'booked_manual';
+          const needsAttention = !!(
+            booking &&
+            booking.source === 'platform' &&
+            booking.status === 'confirmed' &&
+            !booking.checkedInAt &&
+            booking.slotEnd <= now &&
+            booking.slotEnd >= attentionFrom
+          );
+          return {
+            ...slot,
+            state,
+            bookingId: booking?.id,
+            customerName:
+              booking?.source === 'manual' ? booking.guestName : booking?.user?.name,
+            sourceLabel: booking
+              ? sourceDisplay(booking.source, booking.sourceKey, booking.sourceLabel).label
+              : undefined,
+            price: booking?.totalAmount,
+            paymentStatus: booking?.paymentStatus,
+            needsAttention,
+            startsAt: booking?.slotStart.toISOString(),
+            endsAt: booking?.slotEnd.toISOString(),
+            spanSlots: isSpanHead ? spanSlots : booking ? 0 : 1,
+          };
+        });
+        return {
+          court,
+          unitKind: kind,
+          unitNoun: unitNoun(kind),
+          slotDurationMins: court.slotDurationMins,
+          slots: enriched,
+        };
+      }),
     );
     return { venueId, date, courts: rows };
   }
@@ -239,19 +345,16 @@ export class OwnerService {
    * before it can reach that card (see gemini-nlu.service.ts for the rest).
    */
   async interpretScheduleCommand(
-    ownerId: string,
+    user: AuthenticatedUser,
     venueId: string,
     text: string,
   ): Promise<NluResult & { available: boolean }> {
-    await this.assertVenueOwnership(venueId, ownerId);
+    await this.requireVenue(user, venueId, false);
     if (!text || text.trim().length < 2 || text.length > 400) {
       throw new BadRequestException('text must be 2-400 characters');
     }
     if (!this.nlu.enabled) {
-      return {
-        intent: 'unknown', courtIds: [], allCourts: false, date: '',
-        fromMins: null, toMins: null, reason: '', confidence: 0, available: false,
-      };
+      return unknownNlu('', false);
     }
     const timeZone = await this.venueTimeZone(venueId);
     const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
@@ -262,22 +365,19 @@ export class OwnerService {
     });
     const result = await this.nlu.interpret(text, courts, today);
     if (!result) {
-      return {
-        intent: 'unknown', courtIds: [], allCourts: false, date: today,
-        fromMins: null, toMins: null, reason: '', confidence: 0, available: true,
-      };
+      return unknownNlu(today, true);
     }
     return { ...result, available: true };
   }
 
   /** Newest first; the caller derives the current undo token from items[0]. */
   async listAssistantMessages(
-    ownerId: string,
+    user: AuthenticatedUser,
     venueId: string,
     limit = 30,
     cursor?: string,
   ) {
-    await this.assertVenueOwnership(venueId, ownerId);
+    await this.requireVenue(user, venueId, false);
     return paginateByCursor(
       (args) =>
         this.prisma.assistantMessage.findMany({
@@ -290,12 +390,12 @@ export class OwnerService {
     );
   }
 
-  createAssistantMessage(ownerId: string, dto: CreateAssistantMessageDto) {
-    return this.assertVenueOwnership(dto.venueId, ownerId).then((venue) =>
+  createAssistantMessage(user: AuthenticatedUser, dto: CreateAssistantMessageDto) {
+    return this.requireVenue(user, dto.venueId, true).then((venue) =>
       this.prisma.assistantMessage.create({
         data: {
           venueId: venue.id,
-          ownerId,
+          ownerId: user.id,
           sender: dto.sender,
           text: dto.text,
           appliedChange: dto.appliedChange as Prisma.InputJsonValue | undefined,
@@ -310,8 +410,8 @@ export class OwnerService {
    * apply it through the same /owner/calendar/blocks flow it already uses for
    * every other change — this endpoint only guards against double-undo.
    */
-  async undoAssistantMessage(ownerId: string, venueId: string, messageId: string) {
-    await this.assertVenueOwnership(venueId, ownerId);
+  async undoAssistantMessage(user: AuthenticatedUser, venueId: string, messageId: string) {
+    await this.requireVenue(user, venueId, true);
     const message = await this.prisma.assistantMessage.findUnique({ where: { id: messageId } });
     if (!message || message.venueId !== venueId) throw new NotFoundException('Message not found');
     if (!message.inverseChange) throw new BadRequestException('Nothing to undo');
@@ -323,8 +423,8 @@ export class OwnerService {
     return message.inverseChange;
   }
 
-  async createWalkInBooking(ownerId: string, dto: CreateWalkInDto) {
-    await this.assertVenueOwnership(dto.venueId, ownerId);
+  async createWalkInBooking(user: AuthenticatedUser, dto: CreateWalkInDto) {
+    await this.requireVenue(user, dto.venueId, true);
     const court = await this.prisma.court.findUnique({
       where: { id: dto.courtId },
     });
@@ -366,7 +466,7 @@ export class OwnerService {
               code: `WALKIN-${Date.now()}`,
               courtId: dto.courtId,
               venueId: dto.venueId,
-              userId: ownerId,
+              userId: user.id,
               slotStart,
               slotEnd,
               baseAmount: amount,
@@ -376,7 +476,10 @@ export class OwnerService {
               paymentMethod: 'cash',
               guestName: dto.customerName,
               guestPhone: dto.customerPhone,
-              cancellationReason: `walk-in: ${dto.customerName}`,
+              source: 'manual',
+              sourceKey: 'walk_in',
+              notes: dto.customerName ? `walk-in: ${dto.customerName}` : null,
+              createdByUserId: user.id,
             },
           });
         },
@@ -391,8 +494,8 @@ export class OwnerService {
     }
   }
 
-  async finance(ownerId: string, venueId: string, from: string, to: string) {
-    const venue = await this.assertVenueOwnership(venueId, ownerId);
+  async finance(user: AuthenticatedUser, venueId: string, from: string, to: string) {
+    const venue = await this.requireVenue(user, venueId, false);
     const { start, end } = this.parseFinanceRange(from, to);
     const bookings = await this.prisma.booking.findMany({
       where: {
@@ -437,41 +540,119 @@ export class OwnerService {
     };
   }
 
-  async customers(ownerId: string, venueId: string) {
-    await this.assertVenueOwnership(venueId, ownerId);
-    const bookings = await this.prisma.booking.groupBy({
-      by: ['userId'],
-      where: { venueId, status: { in: ['completed', 'no_show'] } },
-      _count: { _all: true },
-    });
-    const noShows = await this.prisma.booking.groupBy({
-      by: ['userId'],
-      where: { venueId, status: 'no_show' },
-      _count: { _all: true },
-    });
-    const noShowMap = new Map(noShows.map((n) => [n.userId, n._count._all]));
-
+  async customers(user: AuthenticatedUser, venueId: string) {
+    const venue = await this.requireVenue(user, venueId, false);
+    const [platform, manualPhone, manualName, sourceRows] = await Promise.all([
+      this.prisma.booking.groupBy({
+        by: ['userId'],
+        where: {
+          venueId,
+          source: 'platform',
+          status: { not: 'cancelled' },
+          userId: { not: venue.ownerId },
+        },
+        _count: { _all: true },
+        _max: { slotStart: true },
+        _sum: { baseAmount: true, ownerFundedDiscount: true, totalAmount: true },
+      }),
+      this.prisma.booking.groupBy({
+        by: ['guestPhone'],
+        where: {
+          venueId,
+          source: 'manual',
+          status: { not: 'cancelled' },
+          guestPhone: { not: null },
+        },
+        _count: { _all: true },
+        _max: { slotStart: true, guestName: true },
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.booking.groupBy({
+        by: ['guestName'],
+        where: {
+          venueId,
+          source: 'manual',
+          status: { not: 'cancelled' },
+          guestPhone: null,
+        },
+        _count: { _all: true },
+        _max: { slotStart: true },
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.booking.groupBy({
+        by: ['userId', 'source', 'sourceKey', 'sourceLabel', 'guestPhone', 'guestName'],
+        where: { venueId, status: { not: 'cancelled' } },
+        _count: { _all: true },
+      }),
+    ]);
     const users = await this.prisma.user.findMany({
-      where: { id: { in: bookings.map((b) => b.userId) } },
+      where: { id: { in: platform.map((p) => p.userId) } },
       select: { id: true, name: true, phone: true },
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
-
-    return bookings
-      .map((b) => ({
-        user: userMap.get(b.userId),
-        totalBookings: b._count._all,
-        noShows: noShowMap.get(b.userId) ?? 0,
-      }))
-      .sort((a, b) => b.totalBookings - a.totalBookings);
+    const sourcesFor = (
+      pred: (row: (typeof sourceRows)[number]) => boolean,
+    ): string[] => {
+      const keys = new Set<string>();
+      for (const row of sourceRows) {
+        if (!pred(row)) continue;
+        keys.add(sourceDisplay(row.source, row.sourceKey, row.sourceLabel).label);
+      }
+      return [...keys];
+    };
+    const items = [
+      ...platform.map((p) => {
+        const u = userMap.get(p.userId);
+        return {
+          key: `p:${p.userId}`,
+          name: u?.name ?? null,
+          phone: null as string | null,
+          phoneMasked: maskPlayerPhone(u?.phone),
+          bookings: p._count._all,
+          spent: Math.max(0, (p._sum.baseAmount ?? 0) - (p._sum.ownerFundedDiscount ?? 0)),
+          lastVisit: p._max.slotStart,
+          sources: sourcesFor((r) => r.source === 'platform' && r.userId === p.userId),
+          isMatchenaPlayer: true,
+        };
+      }),
+      ...manualPhone
+        .filter((m) => m.guestPhone)
+        .map((m) => ({
+          key: `m:${m.guestPhone}`,
+          name: m._max.guestName,
+          phone: m.guestPhone,
+          phoneMasked: null as string | null,
+          bookings: m._count._all,
+          spent: m._sum.totalAmount ?? 0,
+          lastVisit: m._max.slotStart,
+          sources: sourcesFor((r) => r.source === 'manual' && r.guestPhone === m.guestPhone),
+          isMatchenaPlayer: false,
+        })),
+      ...manualName
+        .filter((m) => m.guestName)
+        .map((m) => ({
+          key: `n:${m.guestName}`,
+          name: m.guestName,
+          phone: null as string | null,
+          phoneMasked: null as string | null,
+          bookings: m._count._all,
+          spent: m._sum.totalAmount ?? 0,
+          lastVisit: m._max.slotStart,
+          sources: sourcesFor(
+            (r) => r.source === 'manual' && !r.guestPhone && r.guestName === m.guestName,
+          ),
+          isMatchenaPlayer: false,
+        })),
+    ].sort((a, b) => b.bookings - a.bookings || (b.lastVisit?.getTime() ?? 0) - (a.lastVisit?.getTime() ?? 0));
+    return { items, total: items.length };
   }
 
   // ---- Staff invites ----
-  async inviteStaff(ownerId: string, dto: CreateStaffInviteDto) {
+  async inviteStaff(user: AuthenticatedUser, dto: CreateStaffInviteDto) {
     if (!dto.inviteeEmail && !dto.inviteePhone) {
       throw new BadRequestException('inviteeEmail or inviteePhone is required');
     }
-    await this.assertVenueOwnership(dto.venueId, ownerId);
+    await this.requireVenue(user, dto.venueId, true);
     const duplicate = await this.prisma.staffInvite.findFirst({
       where: {
         venueId: dto.venueId,
@@ -493,7 +674,7 @@ export class OwnerService {
     return this.prisma.staffInvite.create({
       data: {
         venueId: dto.venueId,
-        invitedById: ownerId,
+        invitedById: user.id,
         inviteePhone: dto.inviteePhone,
         inviteeEmail: dto.inviteeEmail,
         inviteeUserId: inviteeUser?.id,
@@ -503,8 +684,8 @@ export class OwnerService {
     });
   }
 
-  async listStaffInvites(ownerId: string, venueId: string) {
-    await this.assertVenueOwnership(venueId, ownerId);
+  async listStaffInvites(user: AuthenticatedUser, venueId: string) {
+    await this.requireVenue(user, venueId, false);
     return this.prisma.staffInvite.findMany({ where: { venueId } });
   }
 
@@ -540,12 +721,12 @@ export class OwnerService {
     ]);
   }
 
-  async revokeStaffInvite(ownerId: string, inviteId: string) {
-    return this.setStaffStatus(ownerId, inviteId, 'revoked');
+  async revokeStaffInvite(user: AuthenticatedUser, inviteId: string) {
+    return this.setStaffStatus(user, inviteId, 'revoked');
   }
 
   async setStaffStatus(
-    ownerId: string,
+    user: AuthenticatedUser,
     inviteId: string,
     status: 'accepted' | 'suspended' | 'revoked',
   ) {
@@ -553,7 +734,7 @@ export class OwnerService {
       where: { id: inviteId },
     });
     if (!invite) throw new NotFoundException('Invite not found');
-    await this.assertVenueOwnership(invite.venueId, ownerId);
+    await this.requireVenue(user, invite.venueId, true);
     if (status === 'accepted' && (invite.status !== 'suspended' || !invite.inviteeUserId)) throw new BadRequestException('The invited user must accept their invitation first');
     return this.prisma.$transaction(async tx => {
     if (status !== 'accepted' && invite.inviteeUserId) {
@@ -572,8 +753,8 @@ export class OwnerService {
     });
   }
 
-  async createCalendarBlock(ownerId: string, dto: CreateCalendarBlockDto) {
-    await this.assertVenueOwnership(dto.venueId, ownerId);
+  async createCalendarBlock(user: AuthenticatedUser, dto: CreateCalendarBlockDto) {
+    await this.requireVenue(user, dto.venueId, true);
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     if (!(endsAt > startsAt)) {
@@ -605,17 +786,17 @@ export class OwnerService {
         startsAt,
         endsAt,
         note: dto.note,
-        createdById: ownerId,
+        createdById: user.id,
       },
     });
   }
 
-  async deleteCalendarBlock(ownerId: string, blockId: string) {
+  async deleteCalendarBlock(user: AuthenticatedUser, blockId: string) {
     const block = await this.prisma.calendarBlock.findUnique({
       where: { id: blockId },
     });
     if (!block) throw new NotFoundException('Block not found');
-    await this.assertVenueOwnership(block.venueId, ownerId);
+    await this.requireVenue(user, block.venueId, true);
     await this.prisma.calendarBlock.delete({ where: { id: blockId } });
   }
 
@@ -675,8 +856,8 @@ export class OwnerService {
     await this.prisma.payoutMethod.delete({ where: { id } });
   }
 
-  async financeCsv(ownerId: string, venueId: string, from: string, to: string) {
-    const summary = await this.finance(ownerId, venueId, from, to);
+  async financeCsv(user: AuthenticatedUser, venueId: string, from: string, to: string) {
+    const summary = await this.finance(user, venueId, from, to);
     const { start, end } = this.parseFinanceRange(from, to);
     const bookings = await this.prisma.booking.findMany({
       where: {

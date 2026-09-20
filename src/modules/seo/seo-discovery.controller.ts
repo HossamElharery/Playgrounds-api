@@ -5,6 +5,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { IndexNowService } from './index-now.service';
 import { SitemapService } from './sitemap.service';
+import { LlmsService } from './llms.service';
 import { PageSeoService } from './page-seo.service';
 import { UpdatePageSeoDto } from './page-seo.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -16,6 +17,7 @@ export class SeoDiscoveryController {
     private readonly sitemap: SitemapService,
     private readonly indexNow: IndexNowService,
     private readonly pageSeo: PageSeoService,
+    private readonly llmsService: LlmsService,
   ) {}
 
   @Public()
@@ -32,6 +34,36 @@ export class SeoDiscoveryController {
   @Get('sitemaps/landings.xml')
   @Header('Content-Type', 'application/xml; charset=utf-8')
   async landings(@Res() response: Response) { response.send(await this.sitemap.landings()); }
+
+  @Public()
+  @Get('sitemaps/blog.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async blog(@Res() response: Response) { response.send(await this.sitemap.blog()); }
+
+  @Public()
+  @Get('sitemaps/sports.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async sports(@Res() response: Response) { response.send(await this.sitemap.sports()); }
+
+  @Public()
+  @Get('sitemaps/posts.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async posts(@Res() response: Response) { response.send(await this.sitemap.posts()); }
+
+  @Public()
+  @Get('sitemaps/hashtags.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  async hashtags(@Res() response: Response) { response.send(await this.sitemap.hashtags()); }
+
+  @Public()
+  @Get('llms.txt')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  async llms(@Res() response: Response) { response.send(await this.llmsService.summary()); }
+
+  @Public()
+  @Get('llms-full.txt')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  async llmsFull(@Res() response: Response) { response.send(await this.llmsService.full()); }
 
   @Public()
   @Get('sitemaps/static.xml')

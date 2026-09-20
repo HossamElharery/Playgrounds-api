@@ -21,6 +21,7 @@ import { ResolveReportDto } from './dto/resolve-report.dto';
 import { UpsertFeatureFlagDto } from './dto/feature-flag.dto';
 import { PageQueryDto } from '../../common/dto/page-query.dto';
 import { ListReportsQueryDto } from './dto/list-reports-query.dto';
+import { AdminFinanceService } from './admin-finance.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -30,6 +31,7 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly notifications: NotificationsService,
+    private readonly finance: AdminFinanceService,
   ) {}
 
   // Any authenticated user can file a report.
@@ -43,8 +45,12 @@ export class AdminController {
 
   @Roles('admin')
   @Get('admin/overview')
-  overview() {
-    return this.admin.overview();
+  async overview() {
+    const [base, finance] = await Promise.all([
+      this.admin.overview(),
+      this.finance.platformKpis(),
+    ]);
+    return { ...base, finance };
   }
 
   @Roles('admin')

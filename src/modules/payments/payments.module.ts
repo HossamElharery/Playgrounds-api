@@ -4,6 +4,7 @@ import { MockPaymentProvider } from './mock-payment.provider';
 import { WalletService } from './wallet.service';
 import { WalletController } from './wallet.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PaymentsConfigService } from './payments-config.service';
 
 @Module({
   imports: [NotificationsModule],
@@ -11,8 +12,9 @@ import { NotificationsModule } from '../notifications/notifications.module';
     MockPaymentProvider,
     { provide: PAYMENT_PROVIDER, useExisting: MockPaymentProvider },
     WalletService,
+    PaymentsConfigService,
   ],
   controllers: [WalletController],
-  exports: [PAYMENT_PROVIDER, WalletService],
+  exports: [PAYMENT_PROVIDER, WalletService, PaymentsConfigService],
 })
 export class PaymentsModule {}

@@ -12,6 +12,8 @@ import { ChargeResult, PaymentProvider } from './payment-provider.interface';
  */
 @Injectable()
 export class MockPaymentProvider implements PaymentProvider {
+  readonly isLive = false;
+
   async charge(
     _amount: number,
     _currency: string,

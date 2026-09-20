@@ -65,7 +65,10 @@ async function deleteVenueTree(venueId: string) {
     where: { venueId },
     data: { venueId: null },
   });
-  await prisma.commissionSetting.deleteMany({ where: { venueId } });
+    await prisma.venueLedgerEntry.deleteMany({ where: { venueId } });
+    await prisma.venueSettlement.deleteMany({ where: { venueId } });
+    await prisma.venueBookingSource.deleteMany({ where: { venueId } });
+    await prisma.commissionSetting.deleteMany({ where: { venueId } });
   await prisma.payout.deleteMany({ where: { venueId } });
   await prisma.staffInvite.deleteMany({ where: { venueId } });
   await prisma.partnerApplication.updateMany({
@@ -1141,6 +1144,19 @@ async function main() {
       });
     }
   }
+
+  await prisma.commissionSetting.findFirst({ where: { venueId: null } }).then(async (global) => {
+    if (global) {
+      await prisma.commissionSetting.update({
+        where: { id: global.id },
+        data: { percentageBps: 1000 },
+      });
+    } else {
+      await prisma.commissionSetting.create({
+        data: { venueId: null, percentageBps: 1000 },
+      });
+    }
+  });
 
   console.log('Seed complete.');
   console.log('---------------------------------------------');

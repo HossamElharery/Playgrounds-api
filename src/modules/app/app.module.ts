@@ -41,6 +41,7 @@ import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 import { PostsModule } from '../posts/posts.module';
+import { FinanceModule } from '../finance/finance.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { PostsModule } from '../posts/posts.module';
     TournamentsModule,
     SeoDiscoveryModule,
     PostsModule,
+    FinanceModule,
   ],
   controllers: [AppController],
   providers: [
