@@ -3,7 +3,8 @@ import { MatchPostsService } from './match-posts.service';
 describe('Match lifecycle regressions', () => {
   const prisma = {
     $transaction: jest.fn(), $executeRaw: jest.fn(),
-    matchPost: { findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
+    matchPost: { findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    sportCategory: { findFirst: jest.fn().mockResolvedValue({ id: 'sport-football' }) },
     matchPostJoinRequest: { findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
     chatThreadParticipant: { deleteMany: jest.fn() },
     user: { updateMany: jest.fn() },
@@ -13,6 +14,8 @@ describe('Match lifecycle regressions', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     prisma.$transaction.mockImplementation(fn => fn(prisma));
+    prisma.sportCategory.findFirst.mockResolvedValue({ id: 'sport-football' });
+    prisma.matchPost.updateMany.mockResolvedValue({ count: 0 });
     prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'open', dateTime: new Date(Date.now() + 86_400_000), joinRequests: [{ userId: 'member' }] });
     notifications.create.mockResolvedValue(null);
     service = new MatchPostsService(prisma as never, {} as never, notifications as never);
@@ -54,6 +57,29 @@ describe('Match lifecycle regressions', () => {
     prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'open', dateTime: new Date(Date.now() - 3_600_000), joinRequests: [] });
     await expect(service.requestJoin('member', 'match')).rejects.toThrow('already started');
     expect(prisma.matchPostJoinRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('does not list elapsed matches in the open feed', async () => {
+    prisma.matchPost.findMany.mockResolvedValue([]);
+    await service.feed({}, 'member');
+    const where = prisma.matchPost.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('open');
+    expect(where.dateTime.gt.getTime()).toBeGreaterThan(Date.now() - 5_000);
+  });
+
+  it('does not reopen a full match after kickoff when someone leaves', async () => {
+    prisma.matchPost.findUnique.mockResolvedValue({
+      id: 'match', authorId: 'captain', status: 'full', dateTime: new Date(Date.now() - 3_600_000),
+    });
+    prisma.matchPostJoinRequest.findUnique.mockResolvedValue({ status: 'approved', user: { name: 'Sam' } });
+    await service.leave('member', 'match');
+    expect(prisma.matchPost.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses to publish a match in the past', async () => {
+    await expect(
+      service.create('captain', { sportId: 'football', dateTime: new Date(Date.now() - 3_600_000).toISOString(), playersNeeded: 4 } as never),
+    ).rejects.toThrow('future');
   });
   it('does not downgrade an accepted membership when joining again', async () => {
     prisma.matchPostJoinRequest.findUnique.mockResolvedValue({ id: 'request', status: 'approved' });

@@ -48,7 +48,15 @@ import { PostsModule } from '../posts/posts.module';
       isGlobal: true,
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 120 }] }),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 120 }],
+      // Signed-in dashboard reads (owner board, inbox, friends) burst on
+      // load. Abuse protection stays on anonymous traffic and on writes.
+      skipIf: (ctx) => {
+        const req = ctx.switchToHttp().getRequest<{ method?: string; user?: unknown }>();
+        return req.method === 'GET' && Boolean(req.user);
+      },
+    }),
     ScheduleModule.forRoot(),
     PrismaModule,
     PresenceModule,

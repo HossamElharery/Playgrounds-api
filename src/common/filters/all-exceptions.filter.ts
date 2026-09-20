@@ -19,6 +19,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
+      if (status === HttpStatus.TOO_MANY_REQUESTS) {
+        response.status(status).json({
+          statusCode: status,
+          message: 'Too many requests. Please wait a moment and try again.',
+          code: 'RATE_LIMITED',
+        });
+        return;
+      }
       const body = exception.getResponse();
       if (typeof body === 'string') {
         const code = /^[A-Z][A-Z0-9_]+$/.test(body) ? body : undefined;

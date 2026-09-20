@@ -8,5 +8,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [RealtimeModule, NotificationsModule],
   providers: [SquadService],
   controllers: [SquadController],
+  exports: [SquadService],
 })
 export class SquadModule {}

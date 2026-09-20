@@ -146,3 +146,29 @@ describe('Pulse rescue opportunity sync', () => {
     });
   });
 });
+
+describe('Elapsed match post expiry', () => {
+  const prisma = {
+    matchPost: { updateMany: jest.fn() },
+    pulseOpportunity: { updateMany: jest.fn() },
+  };
+  let service: JobsService;
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, { create: jest.fn() } as never);
+  });
+
+  it('closes open and full matches whose kickoff has passed', async () => {
+    prisma.matchPost.updateMany.mockResolvedValue({ count: 2 });
+    prisma.pulseOpportunity.updateMany.mockResolvedValue({ count: 1 });
+    await service.expireElapsedMatchPosts();
+    const arg = prisma.matchPost.updateMany.mock.calls[0][0];
+    expect(arg.data).toEqual({ status: 'expired' });
+    expect(arg.where.status.in).toEqual(['open', 'full']);
+    expect(arg.where.dateTime.lte).toBeInstanceOf(Date);
+    expect(prisma.pulseOpportunity.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'expired' } }),
+    );
+  });
+});

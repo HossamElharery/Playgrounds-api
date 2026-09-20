@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY } from '../sms/otp-delivery.interface';
 import { EmailService } from '../email/email.service';
+import { SquadService } from '../squad/squad.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -43,6 +44,10 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: SquadService,
+          useValue: { leaveCurrentSquad: jest.fn().mockResolvedValue(undefined) },
+        },
         {
           provide: JwtService,
           useValue: {

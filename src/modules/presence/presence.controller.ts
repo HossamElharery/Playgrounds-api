@@ -1,5 +1,6 @@
 import { Controller, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +16,7 @@ export class PresenceController {
   ) {}
 
   /** Cheap HTTP keepalive so presence works even when the websocket proxy is down. */
+  @SkipThrottle()
   @Post('heartbeat')
   async heartbeat(@CurrentUser() user: AuthenticatedUser) {
     if (!user?.id) throw new UnauthorizedException('Authentication required');

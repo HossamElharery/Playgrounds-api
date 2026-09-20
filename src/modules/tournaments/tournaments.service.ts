@@ -384,13 +384,15 @@ export class TournamentsService {
       where: { id: matchId },
     });
     if (!match || !match.slotAId || !match.slotBId) return;
+    const kickoff = match.scheduledAt;
+    if (!kickoff || kickoff.getTime() <= Date.now()) return;
     const post = await this.matchPosts.create(
       match.slotAId,
       {
         sportId,
         gameId,
         venueId: tournament.venueId ?? undefined,
-        dateTime: (match.scheduledAt ?? new Date()).toISOString(),
+        dateTime: kickoff.toISOString(),
         playersNeeded: 2,
         notes: `Tournament round: ${tournament.nameEn} — round ${match.round}`,
       } as never,

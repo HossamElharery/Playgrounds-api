@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { pulseStatusFromOccupancy } from '../pulse/pulse-status.util';
+import { elapsedLiveMatchWhere } from '../social/match-lifecycle';
 
 /**
  * Background sweeps that release time-bounded holds. This is what actually
@@ -236,6 +237,30 @@ export class JobsService {
         data: { streakCount: 0 },
       });
       if (count) this.logger.log(`Reset ${count} broken streak(s)`);
+    });
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async expireElapsedMatchPosts() {
+    await this.runJob('expireElapsedMatchPosts', async () => {
+      const now = new Date();
+      const { count } = await this.prisma.matchPost.updateMany({
+        where: elapsedLiveMatchWhere(now),
+        data: { status: 'expired' },
+      });
+      const { count: pulseCount } = await this.prisma.pulseOpportunity.updateMany({
+        where: {
+          matchPostId: { not: null },
+          status: { in: ['open', 'held', 'full'] },
+          OR: [
+            { expiresAt: { lte: now } },
+            { matchPost: { dateTime: { lte: now } } },
+          ],
+        },
+        data: { status: 'expired' },
+      });
+      if (count) this.logger.log(`Expired ${count} elapsed match post(s)`);
+      if (pulseCount) this.logger.log(`Closed ${pulseCount} elapsed Pulse rescue(s)`);
     });
   }
 

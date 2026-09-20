@@ -8,6 +8,7 @@ import {
   Logger,
   NotImplementedException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -34,6 +35,7 @@ import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { SquadService } from '../squad/squad.service';
 import { EmailService } from '../email/email.service';
 
 export interface TokenPair {
@@ -54,6 +56,8 @@ export class AuthService {
     private readonly config: ConfigService,
     @Inject(OTP_DELIVERY) private readonly otpDelivery: OtpDelivery,
     private readonly email: EmailService,
+    @Inject(forwardRef(() => SquadService))
+    private readonly squad: SquadService,
   ) {}
 
   // ---------- password / token primitives ----------
@@ -677,10 +681,18 @@ export class AuthService {
 
   async logout(refreshToken: string): Promise<void> {
     const tokenHash = this.sha256(refreshToken);
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      select: { userId: true },
+    });
     await this.prisma.refreshToken.updateMany({
       where: { tokenHash, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    // Signing out ends the voice lobby too. Doing it server-side means it also
+    // holds when the tab is closed mid-request or the client never gets to run
+    // its own teardown.
+    if (stored) await this.squad.leaveCurrentSquad(stored.userId).catch(() => undefined);
   }
 
   async logoutAll(userId: string): Promise<void> {

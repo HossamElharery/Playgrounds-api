@@ -9,6 +9,7 @@ import { CreateMatchPostDto } from './dto/create-match-post.dto';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Prisma } from '@prisma/client';
+import { elapsedLiveMatchWhere, matchHasKickedOff } from './match-lifecycle';
 
 const FIRST_JOINERS_COIN_BONUS = 30;
 const FIRST_JOINERS_COUNT = 2;
@@ -36,6 +37,10 @@ export class MatchPostsService {
     extraParticipantIds: string[] = [],
   ) {
     const sportId = await this.resolveSportId(dto.sportId);
+    const when = new Date(dto.dateTime);
+    if (Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) {
+      throw new BadRequestException('Match time must be in the future');
+    }
     const thread = await this.prisma.chatThread.create({
       data: {
         type: 'match',
@@ -55,7 +60,7 @@ export class MatchPostsService {
         venueId: dto.venueId,
         courtId: dto.courtId,
         districtId: dto.districtId,
-        dateTime: new Date(dto.dateTime),
+        dateTime: when,
         playersNeeded: dto.playersNeeded,
         skillTier: dto.skillTier as never,
         costPerPlayerAmount: dto.costPerPlayerAmount,
@@ -82,9 +87,14 @@ export class MatchPostsService {
     const sportId = filters.sportId
       ? await this.resolveSportId(filters.sportId)
       : undefined;
+    const now = new Date();
+    await this.expireElapsed(now);
+    const status = (filters.status as never) ?? 'open';
+    const listingLive = status === 'open' || status === 'full';
     const posts = await this.prisma.matchPost.findMany({
       where: {
-        status: (filters.status as never) ?? 'open',
+        status,
+        ...(listingLive ? { dateTime: { gt: now } } : {}),
         ...(sportId ? { sportId } : {}),
         ...(filters.districtId ? { districtId: filters.districtId } : {}),
       },
@@ -143,12 +153,14 @@ export class MatchPostsService {
       },
     });
     if (!post) throw new NotFoundException('Match post not found');
+    const status = (await this.expireOneIfElapsed(post)) ?? post.status;
     const viewerRequest = viewerId
       ? post.joinRequests.find((request) => request.userId === viewerId)
       : undefined;
     const { joinRequests, ...safePost } = post;
     return {
       ...safePost,
+      status,
       joined: joinRequests.filter((request) => request.status === 'approved').map((request) => ({
         userId: request.user.id,
         name: request.user.name,
@@ -177,11 +189,12 @@ export class MatchPostsService {
   async listJoinRequests(organizerId: string, matchPostId: string) {
     const post = await this.prisma.matchPost.findUnique({
       where: { id: matchPostId },
-      select: { authorId: true },
+      select: { id: true, authorId: true, status: true, dateTime: true },
     });
     if (!post) throw new NotFoundException('Match post not found');
     if (post.authorId !== organizerId)
       throw new ForbiddenException('Not your match post');
+    if (await this.expireOneIfElapsed(post)) return [];
     return this.prisma.matchPostJoinRequest.findMany({
       where: { matchPostId, status: 'pending' },
       include: { user: { select: { id: true, name: true, avatarUrl: true } } },
@@ -190,6 +203,7 @@ export class MatchPostsService {
   }
 
   async requestJoin(userId: string, matchPostId: string) {
+    await this.expireElapsed();
     const post = await this.prisma.matchPost.findUnique({
       where: { id: matchPostId },
       include: { author: { select: { name: true } } },
@@ -197,19 +211,24 @@ export class MatchPostsService {
     if (!post) throw new NotFoundException('Match post not found');
     if (post.authorId === userId)
       throw new BadRequestException('You are the organizer');
-    if (post.status !== 'open')
-      throw new BadRequestException('This match is not accepting players');
+    if (post.status !== 'open' || matchHasKickedOff(post.dateTime))
+      throw new BadRequestException(
+        matchHasKickedOff(post.dateTime)
+          ? 'This match has already started'
+          : 'This match is not accepting players',
+      );
 
     const request = await this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT 1 FROM "MatchPost" WHERE "id" = ${matchPostId} FOR UPDATE`;
       const current = await tx.matchPost.findUnique({ where: { id: matchPostId } });
       if (!current) throw new NotFoundException('Match post not found');
       if (current.authorId === userId) throw new BadRequestException('You are the organizer');
-      if (current.status !== 'open') throw new BadRequestException('This match is not accepting players');
-      // Nothing flips a past match out of `open`, so without a clock check
-      // players can still request to join a game that kicked off last week.
-      if (current.dateTime.getTime() <= Date.now())
-        throw new BadRequestException('This match has already started');
+      if (current.status !== 'open' || matchHasKickedOff(current.dateTime))
+        throw new BadRequestException(
+          matchHasKickedOff(current.dateTime)
+            ? 'This match has already started'
+            : 'This match is not accepting players',
+        );
       const existing = await tx.matchPostJoinRequest.findUnique({ where: { matchPostId_userId: { matchPostId, userId } } });
       if (existing && existing.status !== 'declined')
         throw new BadRequestException(existing.status === 'approved' ? 'Already a match member' : 'Join request already pending');
@@ -254,7 +273,7 @@ export class MatchPostsService {
         where: { threadId: post.chatThreadId, userId },
       });
     }
-    if (post.status === 'full') {
+    if (post.status === 'full' && !matchHasKickedOff(post.dateTime)) {
       await this.prisma.matchPost.update({
         where: { id: matchPostId },
         data: { status: 'open' },
@@ -289,6 +308,13 @@ export class MatchPostsService {
       if (!request) throw new NotFoundException('Join request not found');
       if (request.matchPost.authorId !== organizerId) throw new ForbiddenException('Not your match post');
       if (request.status !== 'pending') throw new BadRequestException('Already resolved');
+      if (matchHasKickedOff(request.matchPost.dateTime)) {
+        await tx.matchPost.updateMany({
+          where: { id: request.matchPost.id, ...elapsedLiveMatchWhere() },
+          data: { status: 'expired' },
+        });
+        throw new BadRequestException('This match has already started');
+      }
       const changed = await tx.matchPostJoinRequest.updateMany({
         where: { id: requestId, status: 'pending' }, data: { status: approve ? 'approved' : 'declined' },
       });
@@ -374,7 +400,7 @@ export class MatchPostsService {
     ];
     await this.prisma.$transaction(async tx => {
       const changed = await tx.matchPost.updateMany({
-        where: { id, status: { in: ['open', 'full'] } },
+        where: { id, status: { in: ['open', 'full', 'expired'] } },
         data: { status: 'played' },
       });
       if (!changed.count) {
@@ -524,5 +550,23 @@ export class MatchPostsService {
       _count: { _all: true },
     });
     return rows.map((r) => ({ emoji: r.emoji, count: r._count._all }));
+  }
+
+  /** Persist `expired` for any live match whose kickoff has passed. */
+  async expireElapsed(now = new Date()) {
+    return this.prisma.matchPost.updateMany({
+      where: elapsedLiveMatchWhere(now),
+      data: { status: 'expired' },
+    });
+  }
+
+  private async expireOneIfElapsed(post: { id: string; status: string; dateTime: Date }) {
+    if (post.status !== 'open' && post.status !== 'full') return null;
+    if (!matchHasKickedOff(post.dateTime)) return null;
+    await this.prisma.matchPost.updateMany({
+      where: { id: post.id, ...elapsedLiveMatchWhere() },
+      data: { status: 'expired' },
+    });
+    return 'expired' as const;
   }
 }
