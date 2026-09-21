@@ -5,9 +5,10 @@ import { AuthModule } from '../auth/auth.module';
 import { StorageModule } from '../storage/storage.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { VenuesModule } from '../venues/venues.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
-  imports: [AuthModule, StorageModule, NotificationsModule, VenuesModule],
+  imports: [AuthModule, StorageModule, NotificationsModule, VenuesModule, SubscriptionsModule],
   providers: [PartnersService],
   controllers: [PartnersController],
   exports: [PartnersService],

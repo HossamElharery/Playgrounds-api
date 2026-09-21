@@ -8,7 +8,11 @@ import {
 } from '@nestjs/common';
 import { Booking, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { loadStaffScope, scopeCan } from '../../common/access/staff-scope';
+import { PlatformRequestsService } from './requests/platform-requests.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
+import { assertSlotNotInPast } from '../../common/utils/past-slot.util';
 import { LedgerService } from '../finance/ledger.service';
 import { CommissionService } from '../finance/commission.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -70,6 +74,8 @@ export class OwnerBookingsService {
     private readonly ledger: LedgerService,
     private readonly commission: CommissionService,
     private readonly notifications: NotificationsService,
+    private readonly email?: EmailService,
+    private readonly requests?: PlatformRequestsService,
   ) {}
 
   async createManualBooking(
@@ -91,6 +97,7 @@ export class OwnerBookingsService {
     }
     const slotStart = new Date(dto.startsAt);
     const slotEnd = new Date(slotStart.getTime() + dto.durationMinutes * 60_000);
+    assertSlotNotInPast(slotStart);
     if (dto.paymentStatus === 'partial') {
       if (!dto.paidAmount || dto.paidAmount <= 0 || dto.paidAmount >= dto.priceAmount) {
         throw new BadRequestException('paidAmount is required and must be between 0 and priceAmount');
@@ -126,65 +133,27 @@ export class OwnerBookingsService {
     try {
       const booking = await this.prisma.$transaction(
         async (tx) => {
-          await this.assertSlotFree(tx, dto.courtId, dto.venueId, slotStart, slotEnd);
-          let code = generateManualCode();
-          for (let i = 0; i < 5; i++) {
-            const clash = await tx.booking.findUnique({ where: { code } });
-            if (!clash) break;
-            code = generateManualCode();
-          }
-          const paymentStatus = mapPaymentStatus(dto.paymentStatus);
-          const paymentMethod = mapPaymentMethod(dto.paymentMethod);
-          const created = await tx.booking.create({
-            data: {
-              code,
-              courtId: dto.courtId,
-              venueId: dto.venueId,
-              userId: user.id,
-              slotStart,
-              slotEnd,
-              baseAmount: dto.priceAmount,
-              feeAmount: 0,
-              discountAmount: 0,
-              totalAmount: dto.priceAmount,
-              status: 'confirmed',
-              paymentStatus,
-              paymentMethod,
-              guestName: dto.customerName?.trim() || null,
-              guestPhone: normalizeOptionalPhone(dto.customerPhone) ?? null,
-              source: 'manual',
-              sourceKey: sourceLabel ? null : (sourceKey ?? 'walk_in'),
-              sourceLabel,
-              notes: dto.notes?.trim() || null,
-              createdByUserId: user.id,
-            },
+          const created = await this.insertManualBooking(tx, {
+            userId: user.id,
+            venueId: dto.venueId,
+            courtId: dto.courtId,
+            slotStart,
+            slotEnd,
+            priceAmount: dto.priceAmount,
+            paymentStatus: dto.paymentStatus,
+            paidAmount: dto.paidAmount,
+            paymentMethod: dto.paymentMethod,
+            customerName: dto.customerName,
+            customerPhone: dto.customerPhone,
+            sourceKey,
+            sourceLabel,
+            notes: dto.notes,
           });
-          const paidNow =
-            paymentStatus === 'paid'
-              ? dto.priceAmount
-              : paymentStatus === 'partial'
-                ? dto.paidAmount!
-                : 0;
-          if (paidNow > 0) {
-            await tx.payment.create({
-              data: {
-                bookingId: created.id,
-                amount: paidNow,
-                currency: created.currency,
-                method: paymentMethod,
-                status: 'paid',
-              },
-            });
-          }
-          if (sourceLabel) {
-            await this.touchCustomSource(tx, dto.venueId, sourceLabel);
-          }
-          await this.ledger.syncBookingLedger(tx, created.id);
           return created;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
-      return { ...(await this.toOwnerBookingDto(booking)), warnings };
+      return { ...(await this.toOwnerBookingDto(booking, user)), warnings };
     } catch (error) {
       if (error instanceof ConflictException || error instanceof ApiException) throw error;
       if (isBookingSlotConflict(error)) {
@@ -192,6 +161,90 @@ export class OwnerBookingsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * The one place a manual booking row (plus its first payment and ledger sync) is
+   * written, shared by the single-booking flow and fixed-booking series so both apply
+   * the same conflict check and payment rules. Runs inside the caller's transaction.
+   */
+  async insertManualBooking(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      venueId: string;
+      courtId: string;
+      slotStart: Date;
+      slotEnd: Date;
+      priceAmount: number;
+      paymentStatus?: 'paid' | 'unpaid' | 'partial';
+      paidAmount?: number;
+      paymentMethod?: string;
+      customerName?: string | null;
+      customerPhone?: string | null;
+      sourceKey?: string;
+      sourceLabel?: string | null;
+      notes?: string | null;
+      recurringSeriesId?: string;
+    },
+  ) {
+    await this.assertSlotFree(tx, input.courtId, input.venueId, input.slotStart, input.slotEnd);
+    let code = generateManualCode();
+    for (let i = 0; i < 5; i++) {
+      const clash = await tx.booking.findUnique({ where: { code } });
+      if (!clash) break;
+      code = generateManualCode();
+    }
+    const paymentStatus = mapPaymentStatus(input.paymentStatus);
+    const paymentMethod = mapPaymentMethod(input.paymentMethod);
+    const { sourceLabel } = input;
+    const created = await tx.booking.create({
+      data: {
+        code,
+        courtId: input.courtId,
+        venueId: input.venueId,
+        userId: input.userId,
+        slotStart: input.slotStart,
+        slotEnd: input.slotEnd,
+        baseAmount: input.priceAmount,
+        feeAmount: 0,
+        discountAmount: 0,
+        totalAmount: input.priceAmount,
+        status: 'confirmed',
+        paymentStatus,
+        paymentMethod,
+        guestName: input.customerName?.trim() || null,
+        guestPhone: normalizeOptionalPhone(input.customerPhone ?? undefined) ?? null,
+        source: 'manual',
+        sourceKey: sourceLabel ? null : (input.sourceKey ?? 'walk_in'),
+        sourceLabel: sourceLabel ?? null,
+        notes: input.notes?.trim() || null,
+        createdByUserId: input.userId,
+        recurringSeriesId: input.recurringSeriesId ?? null,
+      },
+    });
+    const paidNow =
+      paymentStatus === 'paid'
+        ? input.priceAmount
+        : paymentStatus === 'partial'
+          ? input.paidAmount!
+          : 0;
+    if (paidNow > 0) {
+      await tx.payment.create({
+        data: {
+          bookingId: created.id,
+          amount: paidNow,
+          currency: created.currency,
+          method: paymentMethod,
+          status: 'paid',
+        },
+      });
+    }
+    if (sourceLabel) {
+      await this.touchCustomSource(tx, input.venueId, sourceLabel);
+    }
+    await this.ledger.syncBookingLedger(tx, created.id);
+    return created;
   }
 
   /** @deprecated thin alias of createManualBooking */
@@ -214,6 +267,14 @@ export class OwnerBookingsService {
       customerPhone: dto.customerPhone,
       sourceKey: 'walk_in',
     });
+  }
+
+  /** One booking by id, for the owner sheet — no date guessing. */
+  async getBooking(user: AuthenticatedUser, bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking) throw new NotFoundException('Booking not found');
+    await assertVenueAccess(this.prisma, user, booking.venueId, { write: false });
+    return this.toOwnerBookingDto(booking, user);
   }
 
   async updateManualBooking(
@@ -241,6 +302,13 @@ export class OwnerBookingsService {
       throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
     }
     const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
+    // Money/notes on an old booking stay editable (e.g. recording a late payment);
+    // moving it to a time that already passed is not.
+    const moved =
+      slotStart.getTime() !== booking.slotStart.getTime() ||
+      slotEnd.getTime() !== booking.slotEnd.getTime() ||
+      courtId !== booking.courtId;
+    if (moved) assertSlotNotInPast(slotStart);
     if (dto.courtId) {
       const court = await this.prisma.court.findUnique({ where: { id: dto.courtId } });
       if (!court || court.venueId !== booking.venueId) {
@@ -263,10 +331,6 @@ export class OwnerBookingsService {
         baseAmount: dto.priceAmount,
         totalAmount: dto.priceAmount,
       });
-    }
-    if (dto.paymentStatus) {
-      const mapped = mapPaymentStatus(dto.paymentStatus);
-      assign('paymentStatus', booking.paymentStatus, mapped, { paymentStatus: mapped });
     }
     if (dto.paymentMethod) {
       assign('paymentMethod', booking.paymentMethod, mapPaymentMethod(dto.paymentMethod), {
@@ -296,6 +360,7 @@ export class OwnerBookingsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.assertSlotFree(tx, courtId, booking.venueId, slotStart, slotEnd, booking.id);
+      await this.reconcilePayment(tx, booking, dto, next, changed);
       const row = await tx.booking.update({ where: { id: bookingId }, data: next });
       if (customLabel) await this.touchCustomSource(tx, booking.venueId, customLabel);
       await tx.auditLogEntry.create({
@@ -310,7 +375,7 @@ export class OwnerBookingsService {
       await this.ledger.syncBookingLedger(tx, bookingId);
       return row;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    return this.toOwnerBookingDto(updated);
+    return this.toOwnerBookingDto(updated, user);
   }
 
   async deleteManualBooking(user: AuthenticatedUser, bookingId: string) {
@@ -330,7 +395,7 @@ export class OwnerBookingsService {
       await this.ledger.syncBookingLedger(tx, bookingId, 'cancelled');
       return row;
     });
-    return this.toOwnerBookingDto(updated);
+    return this.toOwnerBookingDto(updated, user);
   }
 
   async restoreManualBooking(user: AuthenticatedUser, bookingId: string) {
@@ -340,6 +405,9 @@ export class OwnerBookingsService {
     }
     if (booking.status !== 'cancelled') {
       throw new BadRequestException('Only cancelled bookings can be restored');
+    }
+    if (booking.slotEnd.getTime() <= Date.now()) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'SLOT_IN_PAST', 'This time has already passed and cannot be restored');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.assertSlotFree(
@@ -357,7 +425,7 @@ export class OwnerBookingsService {
       await this.ledger.syncBookingLedger(tx, bookingId);
       return row;
     });
-    return this.toOwnerBookingDto(updated);
+    return this.toOwnerBookingDto(updated, user);
   }
 
   async addManualPayment(
@@ -370,35 +438,204 @@ export class OwnerBookingsService {
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
     }
-    const paid = await this.prisma.payment.aggregate({
-      where: { bookingId, status: 'paid' },
+    if (booking.status === 'cancelled') {
+      throw new BadRequestException('Restore the booking before recording a payment');
+    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        // Read inside the transaction so two quick taps cannot both pass the
+        // "does not exceed the balance" check.
+        const paid = await tx.payment.aggregate({
+          where: { bookingId, status: 'paid' },
+          _sum: { amount: true },
+        });
+        const already = paid._sum.amount ?? 0;
+        if (already + amount > booking.totalAmount) {
+          throw new ApiException(HttpStatus.BAD_REQUEST, 'OVERPAYMENT', 'Payment exceeds remaining balance');
+        }
+        const nextPaid = already + amount;
+        const paymentStatus: PaymentStatus = nextPaid >= booking.totalAmount ? 'paid' : 'partial';
+        await tx.payment.create({
+          data: {
+            bookingId,
+            amount,
+            currency: booking.currency,
+            method: mapPaymentMethod(method),
+            status: 'paid',
+          },
+        });
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { paymentStatus, paymentMethod: mapPaymentMethod(method) },
+        });
+        await tx.auditLogEntry.create({
+          data: {
+            actorUserId: user.id,
+            action: 'owner.booking.payment_recorded',
+            targetType: 'booking',
+            targetId: bookingId,
+            metadata: { bookingId, venueId: booking.venueId, amount, method: mapPaymentMethod(method), remaining: booking.totalAmount - nextPaid } as Prisma.InputJsonValue,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return this.toOwnerBookingDto(
+      await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
+      user,
+    );
+  }
+
+  /**
+   * Keeps `paymentStatus` truthful after an edit. The status is always derived
+   * from the payments actually recorded, so a booking can never read "paid"
+   * while money is still owed (or the reverse).
+   */
+  private async reconcilePayment(
+    tx: Prisma.TransactionClient,
+    booking: Booking,
+    dto: UpdateManualBookingDto,
+    next: Prisma.BookingUpdateInput,
+    changed: Record<string, [unknown, unknown]>,
+  ) {
+    const newTotal = dto.priceAmount ?? booking.totalAmount;
+    const agg = await tx.payment.aggregate({
+      where: { bookingId: booking.id, status: 'paid' },
       _sum: { amount: true },
     });
-    const already = paid._sum.amount ?? 0;
-    if (already + amount > booking.totalAmount) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'OVERPAYMENT', 'Payment exceeds remaining balance');
+    let paid = agg._sum.amount ?? 0;
+    if (paid > newTotal) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'PRICE_BELOW_PAID',
+        'The price cannot be lower than what was already paid',
+      );
     }
-    const nextPaid = already + amount;
-    const paymentStatus: PaymentStatus =
-      nextPaid >= booking.totalAmount ? 'paid' : 'partial';
-    await this.prisma.$transaction(async (tx) => {
+    const requested = dto.paymentStatus;
+    if (requested === 'unpaid' && paid > 0) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'PAYMENT_ALREADY_RECORDED',
+        'Money was already received on this booking',
+      );
+    }
+    if (requested === 'partial' && !(paid > 0 && paid < newTotal)) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'PARTIAL_NEEDS_PAYMENT',
+        'Record a partial payment first',
+      );
+    }
+    if (requested === 'paid' && paid < newTotal) {
       await tx.payment.create({
         data: {
-          bookingId,
-          amount,
+          bookingId: booking.id,
+          amount: newTotal - paid,
           currency: booking.currency,
-          method: mapPaymentMethod(method),
+          method: mapPaymentMethod(dto.paymentMethod ?? booking.paymentMethod ?? undefined),
           status: 'paid',
         },
       });
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { paymentStatus, paymentMethod: mapPaymentMethod(method) },
-      });
+      paid = newTotal;
+    }
+    const status: PaymentStatus =
+      paid >= newTotal ? 'paid' : paid > 0 ? 'partial' : 'pending';
+    if (status !== booking.paymentStatus) {
+      changed.paymentStatus = [booking.paymentStatus, status];
+      next.paymentStatus = status;
+    }
+  }
+
+  /**
+   * Matchena bookings belong to the player and to Matchena, so the venue cannot
+   * cancel or reshape them itself. This is the sanctioned route: it tells the
+   * admin (in-app + email) and leaves the booking untouched.
+   */
+  async requestPlatformChange(
+    user: AuthenticatedUser,
+    bookingId: string,
+    dto: { kind: 'cancel' | 'change'; reason: string },
+  ) {
+    const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
+    if (booking.source !== 'platform') {
+      throw new BadRequestException('Only Matchena bookings need an admin request');
+    }
+    if (booking.status !== 'confirmed' && booking.status !== 'held') {
+      throw new BadRequestException('This booking is no longer active');
+    }
+    const reason = dto.reason?.trim() ?? '';
+    if (reason.length < 5 || reason.length > 500) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'REASON_REQUIRED', 'Please explain the request (5–500 characters)');
+    }
+    const recent = await this.prisma.auditLogEntry.findFirst({
+      where: {
+        action: 'owner.booking.change_requested',
+        targetId: bookingId,
+        createdAt: { gte: new Date(Date.now() - 10 * 60_000) },
+      },
+      select: { id: true },
     });
-    return this.toOwnerBookingDto(
-      await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
+    if (recent) return { ok: true, duplicate: true };
+    const recorded = await this.requests?.record({
+      bookingId,
+      venueId: booking.venueId,
+      kind: dto.kind,
+      reason,
+      userId: user.id,
+    });
+    if (recorded?.duplicate) return { ok: true, duplicate: true, requestId: recorded.id };
+
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: booking.venueId },
+      select: { nameEn: true, nameAr: true },
+    });
+    const tz = await this.venueTz(booking.venueId);
+    const when = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(booking.slotStart);
+    await this.prisma.auditLogEntry.create({
+      data: {
+        actorUserId: user.id,
+        action: 'owner.booking.change_requested',
+        targetType: 'booking',
+        targetId: bookingId,
+        metadata: { bookingId, venueId: booking.venueId, kind: dto.kind, reason } as Prisma.InputJsonValue,
+      },
+    });
+
+    const admins = await this.prisma.user.findMany({
+      where: { roles: { has: 'admin' } },
+      select: { id: true, email: true },
+    });
+    const verbEn = dto.kind === 'cancel' ? 'cancel' : 'change';
+    const verbAr = dto.kind === 'cancel' ? 'إلغاء' : 'تعديل';
+    const subject = `Venue request: ${verbEn} booking ${booking.code}`;
+    const body =
+      `${venue?.nameEn ?? 'A venue'} asks to ${verbEn} Matchena booking ${booking.code} ` +
+      `(${when}, ${tz}). Reason: ${reason}. ` +
+      `— ${venue?.nameAr ?? ''} طلبت ${verbAr} الحجز ${booking.code}. السبب: ${reason}`;
+    await Promise.all(
+      admins.map(async (admin) => {
+        await this.notifications
+          .create({
+            userId: admin.id,
+            category: 'system',
+            titleEn: subject,
+            titleAr: `طلب ${verbAr} حجز ${booking.code} من ${venue?.nameAr ?? 'منشأة'}`,
+            bodyEn: `${when} · ${reason}`,
+            bodyAr: `${when} · ${reason}`,
+            deepLink: '/admin/bookings',
+            payload: { kind: 'booking_change_request', bookingId, venueId: booking.venueId },
+          })
+          .catch(() => undefined);
+        if (admin.email && this.email) {
+          await this.email.sendFinanceNotice(admin.email, subject, body).catch(() => undefined);
+        }
+      }),
     );
+    return { ok: true, duplicate: false, requestId: recorded?.id };
   }
 
   async listSources(user: AuthenticatedUser, venueId: string) {
@@ -482,12 +719,14 @@ export class OwnerBookingsService {
       where.source = 'manual';
       where.sourceLabel = query.source;
     }
+    const phonesVisible = await this.canSeePhones(user);
     if (query.q?.trim()) {
       const q = query.q.trim();
+      // Searching by number would reveal it one digit at a time, so it needs the same right.
       where.OR = [
         { code: { contains: q, mode: 'insensitive' } },
         { guestName: { contains: q, mode: 'insensitive' } },
-        { guestPhone: { contains: q } },
+        ...(phonesVisible ? [{ guestPhone: { contains: q } }] : []),
       ];
     }
     const rows = await this.prisma.booking.findMany({
@@ -504,12 +743,13 @@ export class OwnerBookingsService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
     return {
-      items: page.map((b) => this.mapLoaded(b)),
+      items: page.map((b) => (phonesVisible ? this.mapLoaded(b) : this.withoutPhone(this.mapLoaded(b)))),
       nextCursor: hasMore ? page[page.length - 1].id : undefined,
     };
   }
 
   async attention(user: AuthenticatedUser, venueId: string) {
+    const phonesVisible = await this.canSeePhones(user);
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const now = new Date();
     const windowStart = new Date(now.getTime() - 24 * 3_600_000);
@@ -544,8 +784,8 @@ export class OwnerBookingsService {
       orderBy: { slotStart: 'asc' },
     });
     return {
-      arrival: needsArrival.map((b) => this.mapLoaded(b)),
-      unpaid: unpaid.map((b) => this.mapLoaded(b)),
+      arrival: needsArrival.map((b) => (phonesVisible ? this.mapLoaded(b) : this.withoutPhone(this.mapLoaded(b)))),
+      unpaid: unpaid.map((b) => (phonesVisible ? this.mapLoaded(b) : this.withoutPhone(this.mapLoaded(b)))),
     };
   }
 
@@ -647,7 +887,20 @@ export class OwnerBookingsService {
     };
   }
 
-  async toOwnerBookingDto(booking: Booking) {
+  /**
+   * A customer's phone number is a `customers.view` matter: a staff account without it
+   * still sees the booking (name, time, money) but never the number.
+   */
+  private async canSeePhones(user: AuthenticatedUser): Promise<boolean> {
+    if (!user.roles.includes('staff') || user.roles.includes('admin') || user.roles.includes('owner')) return true;
+    return scopeCan(await loadStaffScope(this.prisma, user.id), 'customers.view');
+  }
+
+  private withoutPhone<T extends { customer: { phone?: string | null } }>(dto: T): T {
+    return { ...dto, customer: { ...dto.customer, phone: undefined } };
+  }
+
+  async toOwnerBookingDto(booking: Booking, user: AuthenticatedUser) {
     const loaded = await this.prisma.booking.findUniqueOrThrow({
       where: { id: booking.id },
       include: {
@@ -656,7 +909,8 @@ export class OwnerBookingsService {
         payments: { where: { status: 'paid' }, select: { amount: true } },
       },
     });
-    return this.mapLoaded(loaded);
+    const dto = this.mapLoaded(loaded);
+    return (await this.canSeePhones(user)) ? dto : this.withoutPhone(dto);
   }
 
   private mapLoaded(b: {
@@ -737,6 +991,38 @@ export class OwnerBookingsService {
     };
   }
 
+  /** Why a slot cannot be taken, or null when it is free. */
+  async slotConflict(
+    db: Prisma.TransactionClient | PrismaService,
+    courtId: string,
+    venueId: string,
+    slotStart: Date,
+    slotEnd: Date,
+    excludeId?: string,
+  ): Promise<'SLOT_ALREADY_HELD' | 'SLOT_BLOCKED' | null> {
+    const overlap = await db.booking.findFirst({
+      where: {
+        courtId,
+        status: { in: ['held', 'confirmed'] },
+        slotStart: { lt: slotEnd },
+        slotEnd: { gt: slotStart },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (overlap) return 'SLOT_ALREADY_HELD';
+    const blocked = await db.calendarBlock.findFirst({
+      where: {
+        venueId,
+        OR: [{ courtId }, { courtId: null }],
+        startsAt: { lt: slotEnd },
+        endsAt: { gt: slotStart },
+      },
+      select: { id: true },
+    });
+    return blocked ? 'SLOT_BLOCKED' : null;
+  }
+
   private async assertSlotFree(
     tx: Prisma.TransactionClient,
     courtId: string,
@@ -745,27 +1031,11 @@ export class OwnerBookingsService {
     slotEnd: Date,
     excludeId?: string,
   ) {
-    const overlap = await tx.booking.findFirst({
-      where: {
-        courtId,
-        status: { in: ['held', 'confirmed'] },
-        slotStart: { lt: slotEnd },
-        slotEnd: { gt: slotStart },
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
-    });
-    if (overlap) {
+    const conflict = await this.slotConflict(tx, courtId, venueId, slotStart, slotEnd, excludeId);
+    if (conflict === 'SLOT_ALREADY_HELD') {
       throw new ConflictException({ code: 'SLOT_ALREADY_HELD', message: 'Slot already held' });
     }
-    const blocked = await tx.calendarBlock.findFirst({
-      where: {
-        venueId,
-        OR: [{ courtId }, { courtId: null }],
-        startsAt: { lt: slotEnd },
-        endsAt: { gt: slotStart },
-      },
-    });
-    if (blocked) {
+    if (conflict === 'SLOT_BLOCKED') {
       throw new ConflictException({ code: 'SLOT_BLOCKED', message: 'Slot is blocked' });
     }
   }

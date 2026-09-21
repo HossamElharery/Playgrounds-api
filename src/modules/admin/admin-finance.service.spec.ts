@@ -120,6 +120,34 @@ describe('AdminFinanceService', () => {
     payments.isOnlinePaymentsLive.mockReturnValue(false);
   });
 
+  it('platformKpis: stale venues come back with names, not bare ids', async () => {
+    const prisma = makePrisma();
+    prisma.booking.groupBy = jest.fn().mockResolvedValue([]);
+    prisma.booking.aggregate = jest.fn().mockResolvedValue({ _sum: { totalAmount: 0, feeAmount: 0, commissionAmount: 0 } });
+    prisma.booking.findMany = jest.fn().mockResolvedValue([]);
+    prisma.venue.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'v-stale',
+        nameEn: 'Marina Football Hub',
+        nameAr: 'مارينا فوتبول هب',
+        owner: { id: 'o1', name: 'Hossam' },
+        bookings: [],
+      },
+    ]);
+    const out = await service(prisma).platformKpis();
+    expect(out.staleVenues).toEqual([
+      {
+        id: 'v-stale',
+        nameEn: 'Marina Football Hub',
+        nameAr: 'مارينا فوتبول هب',
+        ownerName: 'Hossam',
+        lastActivityAt: null,
+      },
+    ]);
+    // The id-only field stays for any older client still reading it.
+    expect(out.staleAvailabilityVenueIds).toEqual(['v-stale']);
+  });
+
   it('balances: constant number of queries for 600 venues (no N+1)', async () => {
     const venues = Array.from({ length: 600 }, (_, i) => ({
       ...venue,

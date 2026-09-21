@@ -45,6 +45,10 @@ model User {
   emailVerifiedAt   DateTime?
   username          String?       @unique
   passwordHash      String?
+  /// Throw-away identity created by a squad invite link ("play as guest").
+  /// Real User row so sockets, squads and voice work unchanged, but the
+  /// AuthGuard confines it to the squad surface. Swept after 24h idle.
+  isGuest           Boolean       @default(false)
   name              String
   avatarUrl         String?
   avatarConfig      Json?
@@ -90,90 +94,96 @@ model User {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  refreshTokens         RefreshToken[]
-  otpCodes              OtpCode[]
-  ownedVenues           Venue[]                   @relation("VenueOwner")
-  approvedVenues        Venue[]                   @relation("VenueApprovedBy")
-  bookings              Booking[]
-  splitShares           BookingSplitShare[]
-  recurringSeries       RecurringBookingSeries[]
-  venueReviews          VenueReview[]
-  ratingsGiven          PlayerRating[]            @relation("PlayerRatingRater")
-  ratingsReceived       PlayerRating[]            @relation("PlayerRatingRatee")
-  friendshipsInitiated  Friendship[]              @relation("FriendshipRequester")
-  friendshipsReceived   Friendship[]              @relation("FriendshipAddressee")
-  matchPosts            MatchPost[]
-  matchJoinRequests     MatchPostJoinRequest[]
-  teamsCaptained        Team[]                    @relation("TeamCaptain")
-  teamMemberships       TeamMember[]
-  chatParticipants      ChatThreadParticipant[]
-  chatMessages          ChatMessage[]
-  notifications         Notification[]
-  squadMemberships      SquadMember[]
-  sentSquadInvites      SquadInvite[]             @relation("SquadInviteFrom")
-  receivedSquadInvites  SquadInvite[]             @relation("SquadInviteTo")
-  squadJoinRequestsMade SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
-  squadJoinRequestsRes  SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
-  squadInviteHoldsHeld  SquadInviteHold[]         @relation("SquadInviteHoldHolder")
-  squadInviteHoldsFrom  SquadInviteHold[]         @relation("SquadInviteHoldFrom")
-  coinLedger            CoinLedgerEntry[]
-  walletLedger          WalletLedgerEntry[]
-  walletWithdrawals     WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
+  refreshTokens             RefreshToken[]
+  otpCodes                  OtpCode[]
+  ownedVenues               Venue[]                   @relation("VenueOwner")
+  approvedVenues            Venue[]                   @relation("VenueApprovedBy")
+  bookings                  Booking[]
+  splitShares               BookingSplitShare[]
+  recurringSeries           RecurringBookingSeries[]
+  venueReviews              VenueReview[]
+  ratingsGiven              PlayerRating[]            @relation("PlayerRatingRater")
+  ratingsReceived           PlayerRating[]            @relation("PlayerRatingRatee")
+  friendshipsInitiated      Friendship[]              @relation("FriendshipRequester")
+  friendshipsReceived       Friendship[]              @relation("FriendshipAddressee")
+  matchPosts                MatchPost[]
+  matchJoinRequests         MatchPostJoinRequest[]
+  teamsCaptained            Team[]                    @relation("TeamCaptain")
+  teamMemberships           TeamMember[]
+  chatParticipants          ChatThreadParticipant[]
+  chatMessages              ChatMessage[]
+  notifications             Notification[]
+  squadMemberships          SquadMember[]
+  sentSquadInvites          SquadInvite[]             @relation("SquadInviteFrom")
+  receivedSquadInvites      SquadInvite[]             @relation("SquadInviteTo")
+  squadJoinRequestsMade     SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
+  squadJoinRequestsRes      SquadJoinRequest[]        @relation("SquadJoinRequestResolvedBy")
+  squadInviteHoldsHeld      SquadInviteHold[]         @relation("SquadInviteHoldHolder")
+  squadInviteHoldsFrom      SquadInviteHold[]         @relation("SquadInviteHoldFrom")
+  coinLedger                CoinLedgerEntry[]
+  walletLedger              WalletLedgerEntry[]
+  walletWithdrawals         WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
   walletWithdrawalsResolved WalletWithdrawalRequest[] @relation("WalletWithdrawalResolvedBy")
-  questProgress         UserQuestProgress[]
-  badges                UserBadge[]
-  promoCodesCreated     PromoCode[]
-  promoRedemptions      PromoRedemption[]
-  pulseAvailability     PulseAvailability?
-  pulseOpportunities    PulseOpportunity[]        @relation("PulseOpportunityOrganizer")
-  pulseClaims           PulseClaim[]
-  staffInvitesSent      StaffInvite[]             @relation("StaffInviteInvitedBy")
-  staffInvitesReceived  StaffInvite[]             @relation("StaffInviteInvitee")
-  roleAssignments       UserRoleAssignment[]
-  ownedRoles            Role[]                    @relation("RoleOwner")
-  reportsFiled          ModerationReport[]        @relation("ModerationReportReporter")
-  reportsAgainstMe      ModerationReport[]        @relation("ModerationReportReportedUser")
-  reportsReviewed       ModerationReport[]        @relation("ModerationReportReviewedBy")
-  auditLogEntries       AuditLogEntry[]
-  assistantMessages     AssistantMessage[]
-  sportSkills           UserSportSkill[]
-  blogPosts             BlogPost[]
-  supportInquiries      SupportInquiry[]
-  deviceTokens          DeviceToken[]
-  blocksMade            UserBlock[]               @relation("Blocker")
-  blocksReceived        UserBlock[]               @relation("Blocked")
-  favoriteVenues        FavoriteVenue[]
-  matchComments         MatchPostComment[]
-  matchReactions        MatchPostReaction[]
-  partnerApplications   PartnerApplication[]
-  partnerAppEvents      PartnerApplicationEvent[]
-  payoutMethods         PayoutMethod[]
-  calendarBlocksCreated CalendarBlock[]
-  createdBookings       Booking[]                 @relation("BookingCreatedBy")
-  ledgerEntriesCreated  VenueLedgerEntry[]        @relation("LedgerCreatedBy")
-  settlementsRecorded   VenueSettlement[]         @relation("SettlementRecordedBy")
-  settlementsConfirmed  VenueSettlement[]         @relation("SettlementConfirmedBy")
-  membership            UserMembership?
-  tournamentEntries     TournamentParticipant[]
-  oauthIdentities       OAuthIdentity[]
-  webauthnCredentials   WebAuthnCredential[]
-  teamMembershipRequests TeamMembershipRequest[] @relation("TeamRequestPlayer")
-  teamRequestsSent       TeamMembershipRequest[] @relation("TeamRequestSender")
-  feedPosts              Post[]                  @relation("PostAuthor")
-  postsRemoved           Post[]                  @relation("PostRemovedBy")
-  postComments           PostComment[]
-  postLikes              PostLike[]
-  postSaves              PostSave[]
-  postShares             PostShare[]
-  followsMade            Follow[]                @relation("FollowFollower")
-  followsReceived        Follow[]                @relation("FollowFollowing")
-  postReportsFiled       PostReport[]
-  postReportsReviewed    PostReport[]            @relation("PostReportReviewedBy")
-  moderationActionsTaken ModerationAction[]      @relation("ModerationActionAdmin")
-  postingRestriction     UserPostingRestriction?
-  coinsRulesUpdated      CoinsRewardRule[]
-  mediaAssets            MediaAsset[]
+  questProgress             UserQuestProgress[]
+  badges                    UserBadge[]
+  promoCodesCreated         PromoCode[]
+  promoRedemptions          PromoRedemption[]
+  pulseAvailability         PulseAvailability?
+  pulseOpportunities        PulseOpportunity[]        @relation("PulseOpportunityOrganizer")
+  pulseClaims               PulseClaim[]
+  staffInvitesSent          StaffInvite[]             @relation("StaffInviteInvitedBy")
+  staffInvitesReceived      StaffInvite[]             @relation("StaffInviteInvitee")
+  roleAssignments           UserRoleAssignment[]
+  ownedRoles                Role[]                    @relation("RoleOwner")
+  reportsFiled              ModerationReport[]        @relation("ModerationReportReporter")
+  reportsAgainstMe          ModerationReport[]        @relation("ModerationReportReportedUser")
+  reportsReviewed           ModerationReport[]        @relation("ModerationReportReviewedBy")
+  auditLogEntries           AuditLogEntry[]
+  assistantMessages         AssistantMessage[]
+  sportSkills               UserSportSkill[]
+  blogPosts                 BlogPost[]
+  supportInquiries          SupportInquiry[]
+  deviceTokens              DeviceToken[]
+  blocksMade                UserBlock[]               @relation("Blocker")
+  blocksReceived            UserBlock[]               @relation("Blocked")
+  favoriteVenues            FavoriteVenue[]
+  matchComments             MatchPostComment[]
+  matchReactions            MatchPostReaction[]
+  partnerApplications       PartnerApplication[]
+  partnerAppEvents          PartnerApplicationEvent[]
+  payoutMethods             PayoutMethod[]
+  calendarBlocksCreated     CalendarBlock[]
+  createdBookings           Booking[]                 @relation("BookingCreatedBy")
+  ledgerEntriesCreated      VenueLedgerEntry[]        @relation("LedgerCreatedBy")
+  staffMember               StaffMember?              @relation("StaffMemberUser")
+  staffTeam                 StaffMember[]             @relation("StaffMemberOwner")
+  subscriptionPayments      SubscriptionPayment[]     @relation("SubscriptionPaymentRecordedBy")
+  settlementsRecorded       VenueSettlement[]         @relation("SettlementRecordedBy")
+  settlementsConfirmed      VenueSettlement[]         @relation("SettlementConfirmedBy")
+  membership                UserMembership?
+  tournamentEntries         TournamentParticipant[]
+  oauthIdentities           OAuthIdentity[]
+  webauthnCredentials       WebAuthnCredential[]
+  teamMembershipRequests    TeamMembershipRequest[]   @relation("TeamRequestPlayer")
+  teamRequestsSent          TeamMembershipRequest[]   @relation("TeamRequestSender")
+  feedPosts                 Post[]                    @relation("PostAuthor")
+  postsRemoved              Post[]                    @relation("PostRemovedBy")
+  postComments              PostComment[]
+  postLikes                 PostLike[]
+  postSaves                 PostSave[]
+  postShares                PostShare[]
+  followsMade               Follow[]                  @relation("FollowFollower")
+  followsReceived           Follow[]                  @relation("FollowFollowing")
+  postReportsFiled          PostReport[]
+  postReportsReviewed       PostReport[]              @relation("PostReportReviewedBy")
+  moderationActionsTaken    ModerationAction[]        @relation("ModerationActionAdmin")
+  postingRestriction        UserPostingRestriction?
+  coinsRulesUpdated         CoinsRewardRule[]
+  mediaAssets               MediaAsset[]
+  /// Fake accounts created for a demo venue.
+  isDemo                    Boolean                   @default(false)
 
+  @@index([isGuest, createdAt])
   @@index([status])
   @@index([countryCode])
   @@index([governorateId])
@@ -474,49 +484,49 @@ enum PayoutMethodKind {
 }
 
 model Venue {
-  id                 String        @id @default(uuid())
-  slug               String        @unique
-  ownerId            String
-  owner              User          @relation("VenueOwner", fields: [ownerId], references: [id])
-  countryCode        String        @default("EG")
-  country            CountryConfig @relation(fields: [countryCode], references: [code])
-  nameEn             String
-  nameAr             String
-  descriptionEn      String?       @db.Text
-  descriptionAr      String?       @db.Text
-  governorateId      String?
-  governorate        Governorate?  @relation(fields: [governorateId], references: [id])
-  districtId         String?
-  district           District?     @relation(fields: [districtId], references: [id])
-  address            String?
-  lat                Float
-  lng                Float
-  geohash            String
-  surface            String?
-  instantBook        Boolean       @default(true)
-  cancellationPolicy String?       @db.Text
-  weeklyHours        Json?
-  contactPhone       String?
-  legalBusinessName  String?
-  registrationNumber String?
-  houseRules         String?       @db.Text
-  status             VenueStatus   @default(pending)
-  featured           Boolean       @default(false)
-  paymentMode        VenuePaymentMode @default(at_venue)
-  paymentModeChangedAt DateTime?
-  approvedById       String?
-  approvedBy         User?         @relation("VenueApprovedBy", fields: [approvedById], references: [id])
-  approvedAt         DateTime?
-  ratingAvg          Float         @default(0)
-  ratingCount        Int           @default(0)
-  priceFromAmount    Int?
-  priceFromCurrency  String?
-  seoTitleOverrideAr       String? @db.VarChar(60)
-  seoTitleOverrideEn       String? @db.VarChar(60)
-  seoDescriptionOverrideAr String? @db.VarChar(160)
-  seoDescriptionOverrideEn String? @db.VarChar(160)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  id                       String           @id @default(uuid())
+  slug                     String           @unique
+  ownerId                  String
+  owner                    User             @relation("VenueOwner", fields: [ownerId], references: [id])
+  countryCode              String           @default("EG")
+  country                  CountryConfig    @relation(fields: [countryCode], references: [code])
+  nameEn                   String
+  nameAr                   String
+  descriptionEn            String?          @db.Text
+  descriptionAr            String?          @db.Text
+  governorateId            String?
+  governorate              Governorate?     @relation(fields: [governorateId], references: [id])
+  districtId               String?
+  district                 District?        @relation(fields: [districtId], references: [id])
+  address                  String?
+  lat                      Float
+  lng                      Float
+  geohash                  String
+  surface                  String?
+  instantBook              Boolean          @default(true)
+  cancellationPolicy       String?          @db.Text
+  weeklyHours              Json?
+  contactPhone             String?
+  legalBusinessName        String?
+  registrationNumber       String?
+  houseRules               String?          @db.Text
+  status                   VenueStatus      @default(pending)
+  featured                 Boolean          @default(false)
+  paymentMode              VenuePaymentMode @default(at_venue)
+  paymentModeChangedAt     DateTime?
+  approvedById             String?
+  approvedBy               User?            @relation("VenueApprovedBy", fields: [approvedById], references: [id])
+  approvedAt               DateTime?
+  ratingAvg                Float            @default(0)
+  ratingCount              Int              @default(0)
+  priceFromAmount          Int?
+  priceFromCurrency        String?
+  seoTitleOverrideAr       String?          @db.VarChar(60)
+  seoTitleOverrideEn       String?          @db.VarChar(60)
+  seoDescriptionOverrideAr String?          @db.VarChar(160)
+  seoDescriptionOverrideEn String?          @db.VarChar(160)
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
 
   courts             Court[]
   photos             VenuePhoto[]
@@ -539,7 +549,13 @@ model Venue {
   taggedPosts        Post[]
   ledgerEntries      VenueLedgerEntry[]
   settlements        VenueSettlement[]
+  subscription       VenueSubscription?
+  pricingDiscounts   PricingDiscount[]
   bookingSources     VenueBookingSource[]
+  expenses           VenueExpense[]
+  platformRequests   PlatformBookingRequest[]
+  /// A sales-demo venue: never shown publicly and never counted in any real figure.
+  isDemo             Boolean                  @default(false)
 
   @@index([geohash])
   @@index([lat, lng])
@@ -604,6 +620,7 @@ model Court {
   createdAt        DateTime      @default(now())
 
   pricingRules   PricingRule[]
+  discounts      PricingDiscount[]
   bookings       Booking[]
   recurring      RecurringBookingSeries[]
   matchPosts     MatchPost[]
@@ -614,16 +631,23 @@ model Court {
 }
 
 model PricingRule {
-  id          String @id @default(uuid())
+  id          String    @id @default(uuid())
   courtId     String
-  court       Court  @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  court       Court     @relation(fields: [courtId], references: [id], onDelete: Cascade)
   label       String // "base" | "peak" | "weekend" | custom
   daysOfWeek  Int[] // 0=Sun..6=Sat, empty = every day
   startTime   String // "18:00"
   endTime     String // "23:00"
   priceAmount Int // minor units (piasters)
-  currency    String @default("EGP")
-  priority    Int    @default(0)
+  currency    String    @default("EGP")
+  priority    Int       @default(0)
+  /// `base` (the everyday price) or `discount` (time-boxed, created from an insight or by hand).
+  kind        String    @default("base")
+  /// `manual` | `suggestion`
+  source      String    @default("manual")
+  /// When set the rule only applies to slots that START inside [validFrom, validUntil).
+  validFrom   DateTime?
+  validUntil  DateTime?
 
   @@index([courtId])
 }
@@ -692,73 +716,74 @@ enum SettlementStatus {
 }
 
 model Booking {
-  id                 String                  @id @default(uuid())
-  code               String                  @unique // human-friendly booking code
-  courtId            String
-  court              Court                   @relation(fields: [courtId], references: [id])
-  venueId            String
-  venue              Venue                   @relation(fields: [venueId], references: [id])
-  userId             String
-  user               User                    @relation(fields: [userId], references: [id])
-  slotStart          DateTime
-  slotEnd            DateTime
-  baseAmount         Int
-  feeAmount          Int                     @default(0)
-  discountAmount     Int                     @default(0)
-  totalAmount        Int
-  currency           String                  @default("EGP")
-  promoCodeId        String?
-  promoCode          PromoCode?              @relation(fields: [promoCodeId], references: [id])
-  coinsRedeemed      Int                     @default(0)
-  paymentMethod      PaymentMethod?
-  paymentStatus      PaymentStatus           @default(pending)
-  status             BookingStatus           @default(held)
-  holdExpiresAt      DateTime?
-  isSplitPayment     Boolean                 @default(false)
-  qrPayload          String?                 @unique
-  checkedInAt        DateTime?
-  checkedInByUserId  String?
-  cancelledAt        DateTime?
-  cancellationReason String?
-  guestName          String?
-  guestPhone         String?
-  recurringSeriesId  String?
-  recurringSeries    RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
+  id                  String                  @id @default(uuid())
+  code                String                  @unique // human-friendly booking code
+  courtId             String
+  court               Court                   @relation(fields: [courtId], references: [id])
+  venueId             String
+  venue               Venue                   @relation(fields: [venueId], references: [id])
+  userId              String
+  user                User                    @relation(fields: [userId], references: [id])
+  slotStart           DateTime
+  slotEnd             DateTime
+  baseAmount          Int
+  feeAmount           Int                     @default(0)
+  discountAmount      Int                     @default(0)
+  totalAmount         Int
+  currency            String                  @default("EGP")
+  promoCodeId         String?
+  promoCode           PromoCode?              @relation(fields: [promoCodeId], references: [id])
+  coinsRedeemed       Int                     @default(0)
+  paymentMethod       PaymentMethod?
+  paymentStatus       PaymentStatus           @default(pending)
+  status              BookingStatus           @default(held)
+  holdExpiresAt       DateTime?
+  isSplitPayment      Boolean                 @default(false)
+  qrPayload           String?                 @unique
+  checkedInAt         DateTime?
+  checkedInByUserId   String?
+  cancelledAt         DateTime?
+  cancellationReason  String?
+  guestName           String?
+  guestPhone          String?
+  recurringSeriesId   String?
+  recurringSeries     RecurringBookingSeries? @relation(fields: [recurringSeriesId], references: [id])
   // Matchena gaming expansion — MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.7/§7.3.
   // Links the N linked Booking rows created atomically by a bundle purchase.
-  bundleId           String?
-  bundle             Bundle?                 @relation(fields: [bundleId], references: [id])
+  bundleId            String?
+  bundle              Bundle?                 @relation(fields: [bundleId], references: [id])
   // §3.8 — true when this booking's charge was covered by an active
   // membership's included hours instead of a real payment.
-  membershipCovered  Boolean                 @default(false)
-  source             BookingSource           @default(platform)
-  sourceKey          String?
-  sourceLabel        String?
-  notes              String?                 @db.Text
-  createdByUserId    String?
-  createdByUser      User?                   @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
+  membershipCovered   Boolean                 @default(false)
+  source              BookingSource           @default(platform)
+  sourceKey           String?
+  sourceLabel         String?
+  notes               String?                 @db.Text
+  createdByUserId     String?
+  createdByUser       User?                   @relation("BookingCreatedBy", fields: [createdByUserId], references: [id])
   paymentModeSnapshot VenuePaymentMode?
-  ownerFundedDiscount Int                    @default(0)
-  commissionBps      Int?
-  commissionAmount   Int?
-  ownerNetAmount     Int?
-  createdAt          DateTime                @default(now())
-  updatedAt          DateTime                @updatedAt
+  ownerFundedDiscount Int                     @default(0)
+  commissionBps       Int?
+  commissionAmount    Int?
+  ownerNetAmount      Int?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
 
-  splitShares       BookingSplitShare[]
-  payments          Payment[]
-  ledgerEntries     VenueLedgerEntry[]
-  reviews           VenueReview[]
-  ratings           PlayerRating[]
-  promoRedemptions  PromoRedemption[]
-  coinLedgerEntries CoinLedgerEntry[]
+  splitShares         BookingSplitShare[]
+  payments            Payment[]
+  ledgerEntries       VenueLedgerEntry[]
+  reviews             VenueReview[]
+  ratings             PlayerRating[]
+  promoRedemptions    PromoRedemption[]
+  coinLedgerEntries   CoinLedgerEntry[]
   walletLedgerEntries WalletLedgerEntry[]
-  pulseOpportunity  PulseOpportunity?
-  pulseClaims       PulseClaim[]
+  pulseOpportunity    PulseOpportunity?
+  pulseClaims         PulseClaim[]
   // Live-slot uniqueness is a partial unique index (courtId, slotStart) plus a
   // GiST EXCLUDE on trigger-maintained slotRange. Prisma cannot declare either;
   // see prisma/migrations/20260904031300_booking_slot_uniqueness and
   // prisma/migrations/20260905090000_booking_slot_range_exclude.
+  platformRequests    PlatformBookingRequest[]
 
   @@index([courtId, slotStart])
   @@index([userId])
@@ -805,21 +830,103 @@ model Payment {
   @@index([bookingId])
 }
 
+/// An owner's request to change or cancel a booking that came from Matchena. The owner cannot do it
+/// themselves (the player was promised the slot and money may be refunded), so an admin decides here.
+model PlatformBookingRequest {
+  id           String    @id @default(uuid())
+  bookingId    String
+  booking      Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  venueId      String
+  venue        Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  /// cancel | change
+  kind         String
+  reason       String
+  /// open | approved | declined | answered | closed
+  status       String    @default("open")
+  adminReply   String?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  @@index([venueId, status])
+  @@index([status, createdAt])
+  @@index([bookingId])
+}
+
+/// A cost the owner records so the dashboard can show real profit (revenue − commission − expenses).
+/// Amounts are minor units; `incurredOn` is the venue-LOCAL calendar date (YYYY-MM-DD).
+model VenueExpense {
+  id                String         @id @default(uuid())
+  venueId           String
+  venue             Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  /// electricity | water | rent | salaries | maintenance | marketing | supplies | other
+  category          String
+  /// Free text when category = other.
+  categoryLabel     String?
+  amount            Int
+  currency          String         @default("EGP")
+  incurredOn        String
+  note              String?
+  /// A template row repeats every month on the same day until `recurringUntil` (inclusive month).
+  recurringMonthly  Boolean        @default(false)
+  recurringUntil    String?
+  /// Set on the monthly copies generated from a template; each copy can be edited on its own.
+  recurringParentId String?
+  recurringParent   VenueExpense?  @relation("ExpenseRecurrence", fields: [recurringParentId], references: [id], onDelete: SetNull)
+  children          VenueExpense[] @relation("ExpenseRecurrence")
+  createdById       String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @default(now()) @updatedAt
+
+  @@unique([recurringParentId, incurredOn])
+  @@index([venueId, incurredOn])
+}
+
 model RecurringBookingSeries {
   id           String   @id @default(uuid())
   courtId      String
   court        Court    @relation(fields: [courtId], references: [id])
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  /// Player-owned series have a user; owner "fixed bookings" have none (customer is name/phone).
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
   dayOfWeek    Int
   startTime    String
   durationMins Int
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
+  // ---- owner fixed bookings (source = manual) ----
+  venueId         String?
+  /// `player` (legacy) | `manual`
+  kind            String   @default("player")
+  customerName    String?
+  customerPhone   String?
+  /// `per_session` | `prepaid`
+  paymentPlan     String   @default("per_session")
+  /// Manual price for every session in minor units; null = quote each session.
+  priceAmount     Int?
+  /// Local (venue timezone) date of the first session, YYYY-MM-DD.
+  startDate       String?
+  /// Last local date a session may fall on (inclusive); null = open-ended.
+  until           String?
+  /// active | ended
+  status          String   @default("active")
+  /// Local dates the owner removed; the horizon job never regenerates them.
+  skippedDates    String[] @default([])
+  /// Local dates already reported as conflicting, so the owner is told once.
+  conflictDates   String[] @default([])
+  sourceKey       String?
+  sourceLabel     String?
+  notes           String?  @db.Text
+  createdByUserId String?
+  updatedAt       DateTime @default(now()) @updatedAt
+
   bookings Booking[]
 
   @@index([userId])
+  @@index([venueId, status])
 }
 
 // ============================================================
@@ -862,7 +969,6 @@ model PlayerRating {
   mvpVote       Boolean    @default(false)
   createdAt     DateTime   @default(now())
 
-  @@index([rateeId])
   // Postgres allows multiple NULLs through a unique index, so these only bite
   // on the path they actually apply to (bookingId is null for matchPost
   // ratings and vice versa) — exactly what's needed to stop the same rater
@@ -870,6 +976,7 @@ model PlayerRating {
   // the 10-coin reward repeatedly.
   @@unique([bookingId, raterId, rateeId])
   @@unique([matchPostId, raterId, rateeId])
+  @@index([rateeId])
 }
 
 // ============================================================
@@ -1005,21 +1112,21 @@ model Team {
   archivedAt   DateTime?
 
   members            TeamMember[]
-  challengesMade     TeamChallenge[] @relation("TeamChallengeChallenger")
-  challengesReceived TeamChallenge[] @relation("TeamChallengeChallenged")
+  challengesMade     TeamChallenge[]         @relation("TeamChallengeChallenger")
+  challengesReceived TeamChallenge[]         @relation("TeamChallengeChallenged")
   membershipRequests TeamMembershipRequest[]
 }
 
 model TeamMembershipRequest {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   teamId        String
-  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team          Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
   userId        String
-  user          User     @relation("TeamRequestPlayer", fields: [userId], references: [id], onDelete: Cascade)
+  user          User      @relation("TeamRequestPlayer", fields: [userId], references: [id], onDelete: Cascade)
   requestedById String
-  requestedBy   User     @relation("TeamRequestSender", fields: [requestedById], references: [id], onDelete: Cascade)
-  status        String   @default("pending")
-  createdAt     DateTime @default(now())
+  requestedBy   User      @relation("TeamRequestSender", fields: [requestedById], references: [id], onDelete: Cascade)
+  status        String    @default("pending")
+  createdAt     DateTime  @default(now())
   respondedAt   DateTime?
 
   @@index([teamId, status])
@@ -1149,6 +1256,21 @@ model Squad {
   members      SquadMember[]
   invites      SquadInvite[]
   joinRequests SquadJoinRequest[]
+  inviteLink   SquadInviteLink?
+}
+
+/// One shareable private link per squad. The public token is
+/// `<id>.<hmac(id)>` so it can be re-shown to members without storing a
+/// secret; revoking deletes the row (the old link stops resolving at once).
+model SquadInviteLink {
+  id          String   @id @default(uuid())
+  squadId     String   @unique
+  squad       Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  createdById String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model SquadMember {
@@ -1504,20 +1626,20 @@ model Payout {
 }
 
 model VenueLedgerEntry {
-  id           String          @id @default(uuid())
+  id           String           @id @default(uuid())
   venueId      String
-  venue        Venue           @relation(fields: [venueId], references: [id])
-  currency     String          @default("EGP")
+  venue        Venue            @relation(fields: [venueId], references: [id])
+  currency     String           @default("EGP")
   kind         LedgerEntryKind
   amount       Int // signed; + = Matchena owes owner more, − = owner owes Matchena more
   bookingId    String?
-  booking      Booking?        @relation(fields: [bookingId], references: [id])
+  booking      Booking?         @relation(fields: [bookingId], references: [id])
   settlementId String?
   settlement   VenueSettlement? @relation(fields: [settlementId], references: [id])
   reason       String?
   createdById  String?
-  createdBy    User?           @relation("LedgerCreatedBy", fields: [createdById], references: [id])
-  createdAt    DateTime        @default(now())
+  createdBy    User?            @relation("LedgerCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime         @default(now())
 
   @@index([venueId, currency, createdAt])
   @@index([bookingId])
@@ -1525,24 +1647,24 @@ model VenueLedgerEntry {
 }
 
 model VenueSettlement {
-  id              String               @id @default(uuid())
+  id              String              @id @default(uuid())
   venueId         String
-  venue           Venue                @relation(fields: [venueId], references: [id])
+  venue           Venue               @relation(fields: [venueId], references: [id])
   direction       SettlementDirection
   amount          Int // always positive
-  currency        String               @default("EGP")
+  currency        String              @default("EGP")
   method          String // bank | instapay | wallet | cash | other
   reference       String?
-  note            String?              @db.Text
+  note            String?             @db.Text
   receiptUrl      String?
-  status          SettlementStatus     @default(confirmed)
+  status          SettlementStatus    @default(confirmed)
   recordedById    String
-  recordedBy      User                 @relation("SettlementRecordedBy", fields: [recordedById], references: [id])
+  recordedBy      User                @relation("SettlementRecordedBy", fields: [recordedById], references: [id])
   confirmedById   String?
-  confirmedBy     User?                @relation("SettlementConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedBy     User?               @relation("SettlementConfirmedBy", fields: [confirmedById], references: [id])
   confirmedAt     DateTime?
   rejectionReason String?
-  createdAt       DateTime             @default(now())
+  createdAt       DateTime            @default(now())
 
   ledgerEntries VenueLedgerEntry[]
 
@@ -1718,12 +1840,12 @@ model FeatureFlag {
 }
 
 model PlatformSetting {
-  id                       Int      @id @default(1)
-  serviceFeePct            Float    @default(5)
-  coinsPerHundredEgp       Int      @default(10) // global fallback; CountryConfig.coinsPerHundredMajor wins
-  coinToEgpRate            Float    @default(20)
-  autoHideReportThreshold  Int      @default(5)
-  updatedAt                DateTime @updatedAt
+  id                      Int      @id @default(1)
+  serviceFeePct           Float    @default(5)
+  coinsPerHundredEgp      Int      @default(10) // global fallback; CountryConfig.coinsPerHundredMajor wins
+  coinToEgpRate           Float    @default(20)
+  autoHideReportThreshold Int      @default(5)
+  updatedAt               DateTime @updatedAt
 }
 
 model PageSeoOverride {
@@ -2204,8 +2326,8 @@ model PostShare {
   channel   String   @default("internal")
   createdAt DateTime @default(now())
 
-  @@index([postId, createdAt])
   @@unique([postId, userId])
+  @@index([postId, createdAt])
 }
 
 model Follow {
@@ -2221,10 +2343,10 @@ model Follow {
 }
 
 model Hashtag {
-  tag            String   @id
-  postCount      Int      @default(0)
-  trendingScore  Float    @default(0)
-  updatedAt      DateTime @updatedAt
+  tag           String   @id
+  postCount     Int      @default(0)
+  trendingScore Float    @default(0)
+  updatedAt     DateTime @updatedAt
 }
 
 model PostReport {
@@ -2261,24 +2383,24 @@ model ModerationAction {
 }
 
 model UserPostingRestriction {
-  userId           String    @id
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  suspendedUntil   DateTime?
-  permanent        Boolean   @default(false)
-  reason           String
-  issuedByAdminId  String
-  issuedAt         DateTime  @default(now())
+  userId          String    @id
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  suspendedUntil  DateTime?
+  permanent       Boolean   @default(false)
+  reason          String
+  issuedByAdminId String
+  issuedAt        DateTime  @default(now())
 }
 
 model CoinsRewardRule {
-  id              String   @id @default(uuid())
-  metric          String   @default("like_count")
-  threshold       Int      @default(200)
-  coinsAwarded    Int      @default(150)
-  active          Boolean  @default(true)
+  id               String   @id @default(uuid())
+  metric           String   @default("like_count")
+  threshold        Int      @default(200)
+  coinsAwarded     Int      @default(150)
+  active           Boolean  @default(true)
   updatedByAdminId String
-  updatedBy       User     @relation(fields: [updatedByAdminId], references: [id])
-  updatedAt       DateTime @updatedAt
+  updatedBy        User     @relation(fields: [updatedByAdminId], references: [id])
+  updatedAt        DateTime @updatedAt
 }
 
 model AnalyticsEvent {
@@ -2289,4 +2411,106 @@ model AnalyticsEvent {
   createdAt DateTime @default(now())
 
   @@index([name, createdAt])
+}
+
+/// A staff login created by a venue owner / manager (or the platform admin).
+/// Dashboard access for `staff` users comes ONLY from this row: which venues they
+/// may work on and exactly which permission keys they hold.
+model StaffMember {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation("StaffMemberUser", fields: [userId], references: [id])
+  /// The venue owner (organisation) this person works for.
+  ownerId     String
+  owner       User     @relation("StaffMemberOwner", fields: [ownerId], references: [id])
+  /// Free-text job title shown in the team list, e.g. "Reception".
+  title       String?
+  permissions String[]
+  venueIds    String[]
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+/// One manual subscription per venue. Nothing here blocks the venue: it drives the
+/// owner's "your plan" card, the daily reminders and the admin's renewals list.
+model VenueSubscription {
+  id                String   @id @default(uuid())
+  venueId           String   @unique
+  venue             Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  planKey           String   @default("pro")
+  /// Public list price (minor units) — shown struck through to the owner.
+  listPriceAmount   Int      @default(300000)
+  /// What was actually agreed. Admin-only, never sent to the owner.
+  agreedPriceAmount Int?
+  currency          String   @default("EGP")
+  startedAt         DateTime @default(now())
+  currentPeriodEnd  DateTime
+  graceDays         Int      @default(14)
+  notes             String?  @db.Text
+  /// venue-local yyyy-mm-dd of the last reminder, so the morning job runs once a day.
+  lastNoticeDate    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  payments SubscriptionPayment[]
+
+  @@index([currentPeriodEnd])
+}
+
+model SubscriptionPayment {
+  id              String            @id @default(uuid())
+  subscriptionId  String
+  subscription    VenueSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  venueId         String
+  /// Minor units received; 0 for a free extension.
+  amount          Int               @default(0)
+  currency        String            @default("EGP")
+  method          String?
+  daysAdded       Int
+  periodEndBefore DateTime
+  periodEndAfter  DateTime
+  paidAt          DateTime          @default(now())
+  note            String?           @db.Text
+  recordedById    String
+  recordedBy      User              @relation("SubscriptionPaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt       DateTime          @default(now())
+
+  @@index([venueId, paidAt])
+}
+
+/// A discount on an idle window (one court, one weekday, some hours) — applied from a suggestion
+/// or by hand, or a suggestion the owner dismissed. The price change itself lives in `PricingRule`
+/// rows (`ruleIds`); this row remembers why, and what occupancy was before, so the result can be measured.
+model PricingDiscount {
+  id                   String    @id @default(uuid())
+  venueId              String
+  venue                Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  courtId              String
+  court                Court     @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  /// 0 = Sunday … 6 = Saturday, venue-local
+  weekday              Int
+  startHour            Int
+  endHour              Int
+  percent              Int       @default(0)
+  /// active | ended | dismissed
+  status               String    @default("active")
+  /// suggestion | manual
+  source               String    @default("manual")
+  validFrom            DateTime?
+  validUntil           DateTime?
+  /// Occupancy of the window (0..1) when the discount was applied.
+  baselineOccupancy    Float?
+  estimatedMonthlyLoss Int?
+  ruleIds              String[]
+  /// A dismissed suggestion stays hidden until then.
+  dismissedUntil       DateTime?
+  endedAt              DateTime?
+  createdById          String
+  createdAt            DateTime  @default(now())
+
+  @@index([venueId, status])
+  @@index([courtId, weekday])
 }

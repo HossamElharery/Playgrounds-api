@@ -1,5 +1,7 @@
+import { createHash } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { ExpensesService } from './expenses/expenses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertVenueAccess } from '../../common/access/owner-access';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
@@ -207,7 +209,10 @@ export function openHourSet(weeklyHours: WeeklyHours | null | undefined): Set<nu
 
 @Injectable()
 export class OwnerSummaryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly expenses?: ExpensesService,
+  ) {}
 
   async getSummary(
     user: AuthenticatedUser,
@@ -299,7 +304,8 @@ export class OwnerSummaryService {
         spent: p.revenue,
       })),
       ...manCust.map((m) => ({
-        key: `m:${m.guestPhone ?? m.guestName ?? 'unknown'}`,
+        // Hashed: this list is open to `reports.view`, which must not reveal phone numbers (`customers.view`).
+        key: `m:${createHash('sha256').update(m.guestPhone ?? m.guestName ?? 'unknown').digest('hex').slice(0, 12)}`,
         name: m.guestName,
         phoneMasked: null as string | null,
         bookings: m.bookings,
@@ -320,6 +326,9 @@ export class OwnerSummaryService {
     });
     const openHours = openHourSet(venue.weeklyHours as WeeklyHours | null);
 
+    // Real profit = money kept after Matchena's commission − what the owner spent, same period.
+    const spent = this.expenses ? await this.expenses.totals(venueId, range.from, range.to) : { total: 0, byCategory: [] };
+
     return {
       range: { from: range.from, to: range.to, timezone: tz, key: range.range },
       currency: venue.priceFromCurrency ?? 'EGP',
@@ -330,6 +339,8 @@ export class OwnerSummaryService {
         ownRevenue: totalsRow.own,
         commission: totalsRow.commission,
         takeHome: collectedRevenue - totalsRow.commission,
+        expenses: spent.total,
+        netProfit: collectedRevenue - totalsRow.commission - spent.total,
         outstanding,
         expected,
         cashCollected: totalsRow.cash,
@@ -355,6 +366,7 @@ export class OwnerSummaryService {
           occupancyPct,
         };
       }),
+      expensesByCategory: spent.byCategory,
       byDay,
       byHour,
       quietHours: byHour
@@ -366,6 +378,39 @@ export class OwnerSummaryService {
           freeSlots: Math.max(0, courts.length * days.length - h.bookings),
         })),
       topCustomers,
+    };
+  }
+
+  /**
+   * "Expected cash today": what has been recorded as paid on today's bookings, split by
+   * payment method, plus what is still owed. Read-only — there is no shift closing; the
+   * owner compares this with the drawer. Derived from the existing Payment rows.
+   */
+  async cashToday(user: AuthenticatedUser, venueId: string) {
+    await assertVenueAccess(this.prisma, user, venueId, { write: false });
+    const tz =
+      (await this.prisma.venue.findUnique({ where: { id: venueId }, select: { country: { select: { timezone: true } } } }))
+        ?.country?.timezone ?? 'Africa/Cairo';
+    const { start, end } = resolveOwnerRange('today', tz);
+    const bookings = { venueId, status: { not: 'cancelled' as const }, slotStart: { gte: start, lt: end } };
+    const [paid, totals] = await Promise.all([
+      this.prisma.payment.groupBy({
+        by: ['method'],
+        where: { status: 'paid', booking: bookings },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.booking.aggregate({ where: bookings, _sum: { totalAmount: true }, _count: { _all: true } }),
+    ]);
+    const byMethod = paid.map((p) => ({ method: p.method as string, amount: p._sum.amount ?? 0, count: p._count._all }));
+    const received = byMethod.reduce((s, m) => s + m.amount, 0);
+    return {
+      date: resolveOwnerRange('today', tz).from,
+      byMethod,
+      received,
+      bookingsTotal: totals._sum.totalAmount ?? 0,
+      stillOwed: Math.max(0, (totals._sum.totalAmount ?? 0) - received),
+      bookings: totals._count._all,
     };
   }
 

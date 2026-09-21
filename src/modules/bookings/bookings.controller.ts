@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -131,6 +132,7 @@ export class BookingsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('owner', 'staff', 'admin')
+  @RequirePermission('bookings.checkin')
   @Post('bookings/checkin')
   checkIn(
     @CurrentUser() user: AuthenticatedUser,
@@ -142,6 +144,7 @@ export class BookingsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('owner', 'staff', 'admin')
+  @RequirePermission('bookings.view')
   @Get('owner/venues/:venueId/bookings')
   listForVenue(
     @CurrentUser() user: AuthenticatedUser,

@@ -791,7 +791,20 @@ export class BookingsService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
     await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
-    return this.settleCancellation(booking, reason ?? 'Cancelled by venue');
+    // A Matchena booking belongs to the player as well: the venue may not cancel
+    // it (and trigger a refund) on its own — it asks the admin instead.
+    if (booking.source === 'platform') {
+      throw new ApiException(
+        HttpStatus.FORBIDDEN,
+        'PLATFORM_BOOKING_LOCKED',
+        'Matchena bookings can only be cancelled by an admin. Send a change request instead.',
+      );
+    }
+    throw new ApiException(
+      HttpStatus.BAD_REQUEST,
+      'USE_DELETE',
+      'Manual bookings are removed with DELETE /owner/bookings/:id',
+    );
   }
 
   private async awardCompletionCoins(booking: Booking) {

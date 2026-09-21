@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
@@ -22,6 +23,11 @@ import {
 } from './squad-invite-hold';
 
 const SQUAD_MAX_SIZE = 7;
+
+/** A shared link stays valid this long; a fresh one is minted on demand after. */
+export const SQUAD_LINK_TTL_MS = 24 * 60 * 60 * 1000;
+/** Guests are throw-away: idle accounts older than this are deleted. */
+export const GUEST_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * A lobby invite is a *ring*, not an inbox item: it is only meaningful while
@@ -113,6 +119,195 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       if (this.presence.isOnline(member.userId, member.user.lastSeenAt)) continue;
       await this.leaveCurrentSquad(member.userId).catch(() => undefined);
     }
+  }
+
+  /**
+   * "Enter lobby" from the navbar: idempotent. Returns the caller's current
+   * squad, or opens a solo lobby (caller = leader) when they have none, so the
+   * lobby is reachable without first inviting someone.
+   */
+  async startLobby(userId: string) {
+    const existing = await this.prisma.squadMember.findFirst({ where: { userId } });
+    if (existing) return { squadId: existing.squadId, created: false };
+    const squad = await this.prisma.squad.create({
+      data: { members: { create: [{ userId, isLeader: true }] } },
+    });
+    this.presence.setInSquad(userId, true);
+    this.presence.setSquadConnected(userId, true);
+    return { squadId: squad.id, created: true };
+  }
+
+  // ---------- Private invite link ----------
+
+  private linkTokenFor(linkId: string): string {
+    const secret = this.config.get<string>('JWT_ACCESS_SECRET') ?? '';
+    const sig = createHmac('sha256', secret)
+      .update(`squad-link:${linkId}`)
+      .digest('base64url');
+    return `${linkId}.${sig}`;
+  }
+
+  /** Returns the link id when the token is well-formed and correctly signed. */
+  private parseLinkToken(token: string): string | null {
+    if (typeof token !== 'string' || token.length > 200) return null;
+    const [linkId, sig, extra] = token.split('.');
+    if (!linkId || !sig || extra !== undefined) return null;
+    const expected = this.linkTokenFor(linkId).split('.')[1]!;
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    return linkId;
+  }
+
+  private async resolveLink(token: string) {
+    const linkId = this.parseLinkToken(token);
+    // One indistinguishable answer for forged, unknown, revoked and expired
+    // tokens so the endpoint cannot be used to probe for valid links.
+    const gone = () =>
+      new ApiException(
+        HttpStatus.NOT_FOUND,
+        'SQUAD_LINK_INVALID',
+        'This invite link is no longer valid',
+      );
+    if (!linkId) throw gone();
+    const link = await this.prisma.squadInviteLink.findUnique({
+      where: { id: linkId },
+    });
+    if (!link || link.expiresAt.getTime() <= Date.now()) throw gone();
+    return link;
+  }
+
+  /** Any member can share the lobby; the link is created on first request. */
+  async getOrCreateInviteLink(userId: string) {
+    let membership = await this.prisma.squadMember.findFirst({
+      where: { userId },
+    });
+    if (!membership) {
+      const squad = await this.prisma.squad.create({
+        data: { members: { create: [{ userId, isLeader: true }] } },
+        include: { members: true },
+      });
+      this.presence.setInSquad(userId, true);
+      membership = squad.members[0]!;
+    }
+    const squadId = membership.squadId;
+    const existing = await this.prisma.squadInviteLink.findUnique({
+      where: { squadId },
+    });
+    if (existing && existing.expiresAt.getTime() > Date.now()) {
+      return { token: this.linkTokenFor(existing.id), expiresAt: existing.expiresAt };
+    }
+    // Expired or missing: replace atomically so two tabs racing cannot leave
+    // two live links behind (squadId is unique).
+    const expiresAt = new Date(Date.now() + SQUAD_LINK_TTL_MS);
+    await this.prisma.squadInviteLink
+      .deleteMany({ where: { squadId } })
+      .catch(() => undefined);
+    const link = await this.prisma.squadInviteLink
+      .create({ data: { squadId, createdById: userId, expiresAt } })
+      .catch(async () => {
+        // Lost the race to a concurrent create: use the winner.
+        const winner = await this.prisma.squadInviteLink.findUnique({ where: { squadId } });
+        if (!winner) throw new BadRequestException('Could not create the link');
+        return winner;
+      });
+    return { token: this.linkTokenFor(link.id), expiresAt: link.expiresAt };
+  }
+
+  /** Leader-only: kills the current link and returns a brand new one. */
+  async rotateInviteLink(userId: string) {
+    const membership = await this.prisma.squadMember.findFirst({ where: { userId } });
+    if (!membership) throw new NotFoundException('Not in a squad');
+    if (!membership.isLeader)
+      throw new ForbiddenException('Only the squad leader can reset the link');
+    await this.prisma.squadInviteLink.deleteMany({ where: { squadId: membership.squadId } });
+    return this.getOrCreateInviteLink(userId);
+  }
+
+  /** Public, minimal: enough for the landing page, nothing sensitive. */
+  async previewInviteLink(token: string) {
+    const link = await this.resolveLink(token);
+    const members = await this.prisma.squadMember.findMany({
+      where: { squadId: link.squadId },
+      select: { isLeader: true, user: { select: { name: true } } },
+    });
+    if (members.length === 0) {
+      throw new ApiException(
+        HttpStatus.NOT_FOUND,
+        'SQUAD_LINK_INVALID',
+        'This invite link is no longer valid',
+      );
+    }
+    const leader = members.find((m) => m.isLeader) ?? members[0]!;
+    return {
+      leaderName: leader.user.name,
+      memberCount: members.length,
+      maxSize: SQUAD_MAX_SIZE,
+      full: members.length >= SQUAD_MAX_SIZE,
+    };
+  }
+
+  /** Same locked seat-claim as accepting a friend invite, driven by a link. */
+  async joinViaInviteLink(userId: string, token: string) {
+    const link = await this.resolveLink(token);
+    const squadId = link.squadId;
+
+    const existing = await this.prisma.squadMember.findFirst({ where: { userId } });
+    if (existing?.squadId === squadId) return { squadId, alreadyMember: true };
+    if (existing) await this.leave(userId, existing.squadId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "Squad" WHERE "id" = ${squadId} FOR UPDATE`;
+      const squad = await tx.squad.findUnique({ where: { id: squadId } });
+      if (!squad)
+        throw new ApiException(
+          HttpStatus.NOT_FOUND,
+          'SQUAD_LINK_INVALID',
+          'This invite link is no longer valid',
+        );
+      const size = await tx.squadMember.count({ where: { squadId } });
+      if (size >= SQUAD_MAX_SIZE)
+        throw new ApiException(HttpStatus.CONFLICT, 'SQUAD_FULL', 'Squad is full');
+      await tx.squadMember.create({ data: { squadId, userId } });
+    });
+    this.presence.setInSquad(userId, true);
+    this.presence.setSquadConnected(userId, true);
+    await this.prisma.squadInvite.updateMany({
+      where: { toUserId: userId, status: 'pending' },
+      data: { status: 'expired' },
+    });
+    await this.prisma.squadJoinRequest.updateMany({
+      where: { fromUserId: userId, status: 'pending' },
+      data: { status: 'expired' },
+    });
+    this.emitter.emitToRoom(`squad:${squadId}`, {
+      type: 'squad.member.joined',
+      squadId,
+      userId,
+    });
+    return { squadId, alreadyMember: false };
+  }
+
+  /** Guests are disposable: delete idle ones together with their tokens. */
+  @Cron(CronExpression.EVERY_HOUR)
+  async sweepGuests(): Promise<void> {
+    const cutoff = new Date(Date.now() - GUEST_RETENTION_MS);
+    const stale = await this.prisma.user.findMany({
+      where: {
+        isGuest: true,
+        createdAt: { lt: cutoff },
+        OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }],
+        squadMemberships: { none: {} },
+      },
+      select: { id: true },
+      take: 200,
+    });
+    for (const g of stale) {
+      await this.prisma.user.delete({ where: { id: g.id } }).catch(() => undefined);
+    }
+    await this.prisma.squadInviteLink
+      .deleteMany({ where: { expiresAt: { lt: cutoff } } })
+      .catch(() => undefined);
   }
 
   iceServers() {
@@ -214,6 +409,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
                     name: true,
                     avatarUrl: true,
                     avatarConfig: true,
+                    isGuest: true,
                   },
                 },
               },

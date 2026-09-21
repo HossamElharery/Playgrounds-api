@@ -12,6 +12,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { GuestJoinDto } from './dto/guest-join.dto';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
@@ -42,6 +43,15 @@ export class AuthController {
   @Get('providers')
   providers() {
     return this.authService.listLoginProviders();
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @Post('guest/join-link')
+  @ApiOperation({ summary: 'Join a squad from an invite link as a guest' })
+  async guestJoin(@Body() dto: GuestJoinDto) {
+    const result = await this.authService.joinSquadAsGuest(dto);
+    return { message: 'authenticated', result };
   }
 
   @Public()

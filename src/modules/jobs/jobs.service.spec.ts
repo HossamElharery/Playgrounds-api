@@ -1,3 +1,11 @@
+// The advisory lock needs a real database; its behaviour is covered in job-lock.util.spec.ts.
+jest.mock('../../common/utils/job-lock.util', () => ({
+  withJobLock: async (_prisma: unknown, _name: string, work: () => Promise<void>) => {
+    await work();
+    return true;
+  },
+}));
+
 import { JobsService } from './jobs.service';
 
 describe('Coin inactivity expiry', () => {
@@ -218,5 +226,70 @@ describe('Stale platform booking auto-complete', () => {
     prisma.booking.updateMany.mockResolvedValue({ count: 0 });
     await service.completeStalePlatformBookingsNow();
     expect(ledger.syncBookingLedger).not.toHaveBeenCalled();
+  });
+});
+
+describe('Unpaid manual booking reminders', () => {
+  const prisma = {
+    booking: { findMany: jest.fn() },
+    notification: { findFirst: jest.fn() },
+  };
+  const notifications = { create: jest.fn() };
+  let service: JobsService;
+  const now = new Date('2026-09-21T08:30:00.000Z');
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'b1',
+    venueId: 'v1',
+    currency: 'EGP',
+    guestName: 'Ali',
+    totalAmount: 40000,
+    slotStart: new Date('2026-09-21T09:00:00.000Z'),
+    venue: { ownerId: 'owner-1', country: { timezone: 'Africa/Cairo' } },
+    payments: [{ amount: 15000 }],
+    ...over,
+  });
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    notifications.create.mockResolvedValue(null);
+    prisma.notification.findFirst.mockResolvedValue(null);
+    service = new JobsService(prisma as never, { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never, notifications as never, {} as never);
+  });
+
+  it('only looks at manual, confirmed, unpaid/partial bookings starting within the hour', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+    await service.remindUnpaidManualBookingsNow(now);
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.source).toBe('manual');
+    expect(where.status).toBe('confirmed');
+    expect(where.paymentStatus).toEqual({ in: ['pending', 'partial'] });
+    expect(where.slotStart.gt).toEqual(now);
+    expect(where.slotStart.lte).toEqual(new Date('2026-09-21T09:30:00.000Z'));
+  });
+
+  it('tells the owner exactly how much is still due (booking total minus payments) and when', async () => {
+    prisma.booking.findMany.mockResolvedValue([row()]);
+    const sent = await service.remindUnpaidManualBookingsNow(now);
+    expect(sent).toBe(1);
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'owner-1',
+        titleEn: expect.stringContaining('250 EGP'),
+        payload: { paymentReminderFor: 'b1', venueId: 'v1' },
+        deepLink: '/owner/today',
+      }),
+    );
+  });
+
+  it('never repeats a reminder it already sent', async () => {
+    prisma.booking.findMany.mockResolvedValue([row()]);
+    prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+    expect(await service.remindUnpaidManualBookingsNow(now)).toBe(0);
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('skips a booking that is actually settled', async () => {
+    prisma.booking.findMany.mockResolvedValue([row({ payments: [{ amount: 40000 }] })]);
+    expect(await service.remindUnpaidManualBookingsNow(now)).toBe(0);
   });
 });

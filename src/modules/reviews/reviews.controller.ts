@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { ReviewsService } from './reviews.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { requireStaffVenue } from '../../common/access/actor-access';
 import { CreateVenueReviewDto } from './dto/create-venue-review.dto';
 import { OwnerReplyDto } from './dto/owner-reply.dto';
 import { CreatePlayerRatingDto } from './dto/create-player-rating.dto';
@@ -13,7 +15,10 @@ import { PageQueryDto } from '../../common/dto/page-query.dto';
 @ApiTags('reviews')
 @Controller()
 export class ReviewsController {
-  constructor(private readonly reviews: ReviewsService) {}
+  constructor(
+    private readonly reviews: ReviewsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
@@ -28,17 +33,21 @@ export class ReviewsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Post('reviews/:id/reply')
-  reply(
+  async reply(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: OwnerReplyDto,
   ) {
-    return this.reviews.ownerReply(
-      id,
-      user.id,
-      user.roles.includes('admin'),
-      dto.text,
-    );
+    let ownerId = user.id;
+    if (!user.roles.includes('admin') && !user.roles.includes('owner') && user.roles.includes('staff')) {
+      // A staff reply needs the "reply to reviews" key on one of their own venues.
+      const review = await this.prisma.venueReview.findUnique({ where: { id }, select: { venueId: true } });
+      if (!review) throw new NotFoundException('Review not found');
+      const scope = await requireStaffVenue(this.prisma, user, review.venueId);
+      if (!scope.permissions.includes('reviews.reply')) throw new ForbiddenException('Insufficient permissions');
+      ownerId = scope.ownerId;
+    }
+    return this.reviews.ownerReply(id, ownerId, user.roles.includes('admin'), dto.text);
   }
 
   @Public()

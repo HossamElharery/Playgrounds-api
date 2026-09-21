@@ -241,9 +241,9 @@ export class VenuesService {
     return venue;
   }
 
-  async listMine(ownerId: string) {
+  async listMine(ownerId: string, onlyVenueIds?: string[]) {
     const venues = await this.prisma.venue.findMany({
-      where: { ownerId },
+      where: { ownerId, ...(onlyVenueIds ? { id: { in: onlyVenueIds } } : {}) },
       include: { courts: true, photos: { orderBy: { position: 'asc' } }, sports: { include: { sport: true } }, amenities: { include: { amenity: true } } },
     });
     return venues.map((venue) => this.stripSeoOverrides(venue));
@@ -470,8 +470,9 @@ export class VenuesService {
   }
 
   async refreshVenuePriceFrom(venueId: string) {
+    // "From" prices advertise the everyday price: a temporary discount must not rewrite it.
     const agg = await this.prisma.pricingRule.aggregate({
-      where: { court: { venueId } },
+      where: { court: { venueId }, kind: { not: 'discount' } },
       _min: { priceAmount: true },
     });
     const sample = await this.prisma.pricingRule.findFirst({

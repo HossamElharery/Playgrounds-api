@@ -891,10 +891,13 @@ export class AdminFinanceService {
         name: nameMap.get(t.venueId),
         gmv: t._sum.totalAmount ?? 0,
       })),
-      staleAvailabilityVenueIds: stale,
+      staleAvailabilityVenueIds: stale.map((v) => v.id),
+      staleVenues: stale,
     };
   }
 
+  /** Venues with units but no booking activity for a week — returned with their
+   *  names, because a screen full of UUIDs tells the admin nothing. */
   private async staleVenues() {
     const cutoff = new Date(Date.now() - 7 * 86_400_000);
     const active = await this.prisma.booking.findMany({
@@ -905,9 +908,23 @@ export class AdminFinanceService {
     const activeIds = new Set(active.map((a) => a.venueId));
     const venues = await this.prisma.venue.findMany({
       where: { status: 'active', courts: { some: {} } },
-      select: { id: true },
+      select: {
+        id: true,
+        nameEn: true,
+        nameAr: true,
+        owner: { select: { id: true, name: true } },
+        bookings: { select: { updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
+      },
     });
-    return venues.filter((v) => !activeIds.has(v.id)).map((v) => v.id);
+    return venues
+      .filter((v) => !activeIds.has(v.id))
+      .map((v) => ({
+        id: v.id,
+        nameEn: v.nameEn,
+        nameAr: v.nameAr,
+        ownerName: v.owner?.name ?? null,
+        lastActivityAt: v.bookings[0]?.updatedAt ?? null,
+      }));
   }
 
   private async notifyPayout(

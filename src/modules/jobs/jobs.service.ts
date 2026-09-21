@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { withJobLock } from '../../common/utils/job-lock.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -25,7 +26,8 @@ export class JobsService {
 
   private async runJob(name: string, work: () => Promise<void>): Promise<void> {
     try {
-      await work();
+      // One instance at a time: with replicas every @Cron fires everywhere.
+      await withJobLock(this.prisma, name, work);
     } catch (err) {
       this.logger.warn(
         `${name} skipped: ${err instanceof Error ? err.message : err}`,
@@ -200,6 +202,66 @@ export class JobsService {
         `Auto-completed ${stale.length} stale platform booking(s) after 24h`,
       );
     }
+  }
+
+  /**
+   * Cash-drawer safety net: a manual booking that starts within the hour but
+   * still has money outstanding nudges the venue once. Deduped on the
+   * notification payload, so a 5-minute sweep never repeats itself.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async remindUnpaidManualBookings() {
+    await this.runJob('remindUnpaidManualBookings', async () => {
+      await this.remindUnpaidManualBookingsNow();
+    });
+  }
+
+  async remindUnpaidManualBookingsNow(now: Date = new Date()) {
+    const soon = new Date(now.getTime() + 60 * 60_000);
+    const rows = await this.prisma.booking.findMany({
+      where: {
+        source: 'manual',
+        status: 'confirmed',
+        paymentStatus: { in: ['pending', 'partial'] },
+        slotStart: { gt: now, lte: soon },
+      },
+      include: {
+        venue: { select: { ownerId: true, country: { select: { timezone: true } } } },
+        payments: { where: { status: 'paid' }, select: { amount: true } },
+      },
+      take: 200,
+    });
+    let sent = 0;
+    for (const b of rows) {
+      const already = await this.prisma.notification.findFirst({
+        where: {
+          userId: b.venue.ownerId,
+          payload: { path: ['paymentReminderFor'], equals: b.id },
+        },
+        select: { id: true },
+      });
+      if (already) continue;
+      const paid = b.payments.reduce((sum, p) => sum + p.amount, 0);
+      const outstanding = Math.max(0, b.totalAmount - paid);
+      if (outstanding <= 0) continue;
+      const tz = b.venue.country?.timezone ?? 'Africa/Cairo';
+      const time = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' }).format(b.slotStart);
+      const major = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(outstanding / 100);
+      const who = b.guestName?.trim();
+      await this.notifications.create({
+        userId: b.venue.ownerId,
+        category: 'system',
+        titleEn: `${major} ${b.currency} still due at ${time}`,
+        titleAr: `متبقي ${major} ${b.currency} الساعة ${time}`,
+        bodyEn: `${who ?? 'A booking'} starts at ${time} and has not paid in full. Collect it before they play.`,
+        bodyAr: `${who ? `حجز ${who}` : 'حجز'} هيبدأ ${time} ولسه ما دفعش كامل. حصّل المبلغ قبل ما يلعب.`,
+        deepLink: '/owner/today',
+        payload: { paymentReminderFor: b.id, venueId: b.venueId },
+      });
+      sent += 1;
+    }
+    if (sent) this.logger.log(`Sent ${sent} unpaid-booking reminder(s)`);
+    return sent;
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)

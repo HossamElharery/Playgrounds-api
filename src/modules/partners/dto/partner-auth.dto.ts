@@ -67,7 +67,7 @@ export class PartnerLoginDto {
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @MinLength(8)
+  @MinLength(1)
   @MaxLength(128)
   password!: string;
 }

@@ -2,12 +2,16 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { Public } from '../../common/decorators/public.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
@@ -30,6 +34,40 @@ export class SquadController {
   @Get('ice-servers')
   iceServers() {
     return this.squad.iceServers();
+  }
+
+  @Post('start')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  start(@CurrentUser() user: AuthenticatedUser) {
+    return this.squad.startLobby(user.id);
+  }
+
+  @Post('invite-link')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  inviteLink(@CurrentUser() user: AuthenticatedUser) {
+    return this.squad.getOrCreateInviteLink(user.id);
+  }
+
+  @Post('invite-link/reset')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  resetInviteLink(@CurrentUser() user: AuthenticatedUser) {
+    return this.squad.rotateInviteLink(user.id);
+  }
+
+  @Public()
+  @Get('join-link/:token')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  previewLink(@Param('token') token: string) {
+    return this.squad.previewInviteLink(token);
+  }
+
+  @Post('join-link/:token/join')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  joinLink(@CurrentUser() user: AuthenticatedUser, @Param('token') token: string) {
+    return this.squad.joinViaInviteLink(user.id, token);
   }
 
   @Get('mine')

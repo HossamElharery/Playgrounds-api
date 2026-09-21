@@ -304,9 +304,11 @@ async function main() {
   // ---- Users ----
   const passwordHash = await bcrypt.hash('Password123!', 10);
 
+  // Keyed by email (unique, and what people log in with) so re-running against a database
+  // whose demo accounts already exist under another phone updates them instead of failing.
   const admin = await prisma.user.upsert({
-    where: { phone: '+201000000001' },
-    update: { email: 'admin@matchena.com', name: 'Matchena Admin' },
+    where: { email: 'admin@matchena.com' },
+    update: { name: 'Matchena Admin' },
     create: {
       phone: '+201000000001',
       email: 'admin@matchena.com',
@@ -317,8 +319,8 @@ async function main() {
   });
 
   const owner = await prisma.user.upsert({
-    where: { phone: '+201000000002' },
-    update: { username: 'elmalek', email: 'owner@matchena.com' },
+    where: { email: 'owner@matchena.com' },
+    update: { username: 'elmalek' },
     create: {
       phone: '+201000000002',
       email: 'owner@matchena.com',
@@ -1158,10 +1160,47 @@ async function main() {
     }
   });
 
+  // A demo reception login so the team + permissions screens can be tried straight away:
+  // it may see and create bookings, take payments and check players in — nothing else.
+  const ownerVenues = await prisma.venue.findMany({ where: { ownerId: owner.id }, select: { id: true } });
+  const reception = await prisma.user.upsert({
+    where: { email: 'reception@matchena.com' },
+    update: { status: 'active', roles: ['staff'] },
+    create: {
+      email: 'reception@matchena.com',
+      emailVerifiedAt: new Date(),
+      username: 'reception1',
+      passwordHash,
+      name: 'Mohamed Reception',
+      roles: ['staff'],
+    },
+  });
+  const receptionAccess = {
+    ownerId: owner.id,
+    title: 'Reception',
+    permissions: ['bookings.view', 'bookings.create', 'bookings.checkin', 'payments.record', 'customers.view'],
+    venueIds: ownerVenues.map((v) => v.id),
+    createdById: owner.id,
+  };
+  await prisma.staffMember.upsert({
+    where: { userId: reception.id },
+    update: receptionAccess,
+    create: { userId: reception.id, ...receptionAccess },
+  });
+  // Every venue gets a subscription (90 days), so the owner card and admin renewals list are never empty.
+  for (const v of ownerVenues) {
+    await prisma.venueSubscription.upsert({
+      where: { venueId: v.id },
+      update: {},
+      create: { venueId: v.id, currentPeriodEnd: new Date(Date.now() + 90 * 86_400_000) },
+    });
+  }
+
   console.log('Seed complete.');
   console.log('---------------------------------------------');
   console.log('Admin login : admin@matchena.com / Password123!');
   console.log('Owner login : owner@matchena.com / Password123!');
+  console.log('Reception   : reception1 (or reception@matchena.com) / Password123!  — limited staff account');
   console.log('Players     : phone +2010000010X (OTP via console, X=0..9)');
   console.log('---------------------------------------------');
 }

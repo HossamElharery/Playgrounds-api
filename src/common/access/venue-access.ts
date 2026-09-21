@@ -1,4 +1,5 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { loadStaffScope } from './staff-scope';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 import type { AuthenticatedUser } from '../types/authenticated-user.interface';
 
@@ -24,11 +25,10 @@ export async function assertVenueStaffAccess(
   if (user.roles.includes('owner') && venue.ownerId === user.id) return venue;
 
   if (user.roles.includes('staff')) {
-    const assignment = await prisma.userRoleAssignment.findFirst({
-      where: { userId: user.id, venueId },
-      select: { id: true },
-    });
-    if (assignment) return venue;
+    const scope = await loadStaffScope(prisma, user.id);
+    if (scope && scope.ownerId === venue.ownerId && scope.venueIds.includes(venueId)) {
+      return venue;
+    }
   }
 
   throw new ForbiddenException('Not your venue');

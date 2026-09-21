@@ -5,9 +5,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { loadStaffScope } from '../../common/access/staff-scope';
+import { PERMISSION_KEYS } from '../../common/access/permissions';
+import { assertSlotNotInPast } from '../../common/utils/past-slot.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateStaffInviteDto } from './dto/staff-invite.dto';
 import {
   CreateAssistantMessageDto,
   CreateCalendarBlockDto,
@@ -100,6 +102,32 @@ export class OwnerService {
       throw new BadRequestException('Date range cannot exceed 93 days');
     }
     return { start, end };
+  }
+
+  /**
+   * What the signed-in person may do in the owner dashboard. The frontend uses it to
+   * build the menu and hide actions; the API enforces the same keys on every route.
+   */
+  async access(user: AuthenticatedUser) {
+    if (user.roles.includes('admin') || user.roles.includes('owner')) {
+      return {
+        role: user.roles.includes('admin') ? ('admin' as const) : ('owner' as const),
+        permissions: [...PERMISSION_KEYS],
+        venueIds: null as string[] | null,
+        ownerId: user.id,
+        title: null as string | null,
+        canManageTeam: true,
+      };
+    }
+    const scope = await loadStaffScope(this.prisma, user.id);
+    return {
+      role: 'staff' as const,
+      permissions: scope?.permissions ?? [],
+      venueIds: scope?.venueIds ?? [],
+      ownerId: scope?.ownerId ?? null,
+      title: scope?.title ?? null,
+      canManageTeam: !!scope?.permissions.includes('team.manage'),
+    };
   }
 
   async overview(ownerId: string) {
@@ -273,7 +301,10 @@ export class OwnerService {
         slotEnd: { gt: dayStart },
         status: { in: ['held', 'confirmed', 'completed'] },
       },
-      include: { user: { select: { name: true } } },
+      include: {
+        user: { select: { name: true } },
+        payments: { where: { status: 'paid' }, select: { amount: true } },
+      },
     });
     const now = new Date();
     const attentionFrom = new Date(now.getTime() - 24 * 3_600_000);
@@ -281,7 +312,21 @@ export class OwnerService {
       courts.map(async (court) => {
         const slots = await this.bookings.getSlotGrid(court.id, date);
         const kind = court.sport?.activityKind ?? null;
-        const enriched = slots.map((slot) => {
+        // The first grid cell a booking touches is its head; the rest are
+        // continuation cells (spanSlots 0) that the client folds away. Matching
+        // on an exact start time used to lose any booking that did not begin on
+        // a slot boundary — e.g. a walk-in entered at 15:53.
+        const headSlotFor = new Map<string, number>();
+        slots.forEach((slot, index) => {
+          const start = new Date(slot.start);
+          const end = new Date(slot.end);
+          for (const b of dayBookings) {
+            if (b.courtId !== court.id) continue;
+            if (b.slotStart >= end || b.slotEnd <= start) continue;
+            if (!headSlotFor.has(b.id)) headSlotFor.set(b.id, index);
+          }
+        });
+        const enriched = slots.map((slot, index) => {
           const start = new Date(slot.start);
           const end = new Date(slot.end);
           const booking = dayBookings.find(
@@ -290,13 +335,13 @@ export class OwnerService {
           const spanSlots = booking
             ? Math.max(
                 1,
-                Math.round(
+                Math.ceil(
                   (booking.slotEnd.getTime() - booking.slotStart.getTime()) /
                     (court.slotDurationMins * 60_000),
                 ),
               )
             : 1;
-          const isSpanHead = !!booking && booking.slotStart.getTime() === start.getTime();
+          const isSpanHead = !!booking && headSlotFor.get(booking.id) === index;
           let state: 'free' | 'booked_platform' | 'booked_manual' | 'blocked' | 'past' =
             slot.state === 'blocked' ? 'blocked' : slot.state === 'past' ? 'past' : 'free';
           if (booking?.source === 'platform') state = 'booked_platform';
@@ -320,6 +365,7 @@ export class OwnerService {
               : undefined,
             price: booking?.totalAmount,
             paymentStatus: booking?.paymentStatus,
+            paidAmount: booking ? booking.payments.reduce((sum, p) => sum + p.amount, 0) : undefined,
             needsAttention,
             startsAt: booking?.slotStart.toISOString(),
             endsAt: booking?.slotEnd.toISOString(),
@@ -335,7 +381,8 @@ export class OwnerService {
         };
       }),
     );
-    return { venueId, date, courts: rows };
+    // The client formats every time in venue-local time, never the device tz.
+    return { venueId, date, timezone: timeZone, courts: rows };
   }
 
   /**
@@ -436,6 +483,7 @@ export class OwnerService {
     if (!(slotEnd > slotStart)) {
       throw new BadRequestException('slotEnd must be after slotStart');
     }
+    assertSlotNotInPast(slotStart);
 
     const amount = dto.priceAmount ?? 0;
     try {
@@ -645,112 +693,6 @@ export class OwnerService {
         })),
     ].sort((a, b) => b.bookings - a.bookings || (b.lastVisit?.getTime() ?? 0) - (a.lastVisit?.getTime() ?? 0));
     return { items, total: items.length };
-  }
-
-  // ---- Staff invites ----
-  async inviteStaff(user: AuthenticatedUser, dto: CreateStaffInviteDto) {
-    if (!dto.inviteeEmail && !dto.inviteePhone) {
-      throw new BadRequestException('inviteeEmail or inviteePhone is required');
-    }
-    await this.requireVenue(user, dto.venueId, true);
-    const duplicate = await this.prisma.staffInvite.findFirst({
-      where: {
-        venueId: dto.venueId,
-        status: { in: ['pending', 'accepted'] },
-        OR: [
-          dto.inviteeEmail ? { inviteeEmail: dto.inviteeEmail } : undefined,
-          dto.inviteePhone ? { inviteePhone: dto.inviteePhone } : undefined,
-        ].filter(Boolean) as object[],
-      },
-    });
-    if (duplicate) {
-      throw new ConflictException('STAFF_ALREADY_INVITED');
-    }
-    const inviteeUser = dto.inviteePhone
-      ? await this.prisma.user.findUnique({ where: { phone: dto.inviteePhone } })
-      : dto.inviteeEmail
-        ? await this.prisma.user.findUnique({ where: { email: dto.inviteeEmail } })
-        : null;
-    return this.prisma.staffInvite.create({
-      data: {
-        venueId: dto.venueId,
-        invitedById: user.id,
-        inviteePhone: dto.inviteePhone,
-        inviteeEmail: dto.inviteeEmail,
-        inviteeUserId: inviteeUser?.id,
-        roleId: dto.roleId,
-        operationalRole: dto.operationalRole,
-      },
-    });
-  }
-
-  async listStaffInvites(user: AuthenticatedUser, venueId: string) {
-    await this.requireVenue(user, venueId, false);
-    return this.prisma.staffInvite.findMany({ where: { venueId } });
-  }
-
-  async acceptStaffInvite(userId: string, inviteId: string) {
-    const invite = await this.prisma.staffInvite.findUnique({
-      where: { id: inviteId },
-    });
-    if (!invite) throw new NotFoundException('Invite not found');
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-    });
-    if (invite.status !== 'pending') throw new BadRequestException('Only pending invitations can be accepted');
-    if (!((invite.inviteePhone && invite.inviteePhone === user.phone) ||
-      (invite.inviteeEmail && user.email && invite.inviteeEmail.toLowerCase() === user.email.toLowerCase())))
-      throw new ForbiddenException('This invite is not for you');
-
-    await this.prisma.$transaction([
-      this.prisma.staffInvite.update({
-        where: { id: inviteId },
-        data: { status: 'accepted', inviteeUserId: userId },
-      }),
-      this.prisma.user.update({
-        where: { id: userId },
-        data: { roles: { set: Array.from(new Set([...user.roles, 'staff'])) } },
-      }),
-      ...(invite.roleId
-        ? [
-            this.prisma.userRoleAssignment.create({
-              data: { userId, roleId: invite.roleId, venueId: invite.venueId },
-            }),
-          ]
-        : []),
-    ]);
-  }
-
-  async revokeStaffInvite(user: AuthenticatedUser, inviteId: string) {
-    return this.setStaffStatus(user, inviteId, 'revoked');
-  }
-
-  async setStaffStatus(
-    user: AuthenticatedUser,
-    inviteId: string,
-    status: 'accepted' | 'suspended' | 'revoked',
-  ) {
-    const invite = await this.prisma.staffInvite.findUnique({
-      where: { id: inviteId },
-    });
-    if (!invite) throw new NotFoundException('Invite not found');
-    await this.requireVenue(user, invite.venueId, true);
-    if (status === 'accepted' && (invite.status !== 'suspended' || !invite.inviteeUserId)) throw new BadRequestException('The invited user must accept their invitation first');
-    return this.prisma.$transaction(async tx => {
-    if (status !== 'accepted' && invite.inviteeUserId) {
-      await tx.userRoleAssignment.deleteMany({
-        where: { userId: invite.inviteeUserId, venueId: invite.venueId },
-      });
-    }
-    if (status === 'accepted' && invite.inviteeUserId && invite.roleId) {
-      const existing = await tx.userRoleAssignment.findFirst({ where: { userId: invite.inviteeUserId, venueId: invite.venueId, roleId: invite.roleId } });
-      if (!existing) await tx.userRoleAssignment.create({ data: { userId: invite.inviteeUserId, venueId: invite.venueId, roleId: invite.roleId } });
-    }
-    return tx.staffInvite.update({
-      where: { id: inviteId },
-      data: { status },
-    });
-    });
   }
 
   async createCalendarBlock(user: AuthenticatedUser, dto: CreateCalendarBlockDto) {

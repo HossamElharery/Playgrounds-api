@@ -95,20 +95,34 @@ describe('PartnersService admin decisions', () => {
     };
     const notifications = { create: jest.fn().mockResolvedValue({}) };
     const venues = { refreshVenuePriceFrom: jest.fn().mockResolvedValue(undefined) };
+    const subscriptions = {
+      startOrExtendOnApproval: jest.fn().mockResolvedValue(undefined),
+      ensure: jest.fn().mockResolvedValue({}),
+    };
+    (prisma as any).venueSubscription = { findUnique: jest.fn().mockResolvedValue(null) };
     const svc = new PartnersService(
       prisma,
       {} as any,
       notifications as any,
       venues as any,
+      subscriptions as any,
     );
-    return { svc, prisma, notifications };
+    return { svc, prisma, notifications, subscriptions };
   }
 
-  it('approves without a partner note', async () => {
+  it('approves without a partner note, starting the subscription with the days the admin typed', async () => {
+    const { svc, subscriptions } = serviceWith();
+    await expect(
+      svc.decide('admin-1', 'app-1', { action: 'approve', version: 1, subscriptionDays: 90, agreedPriceAmount: 200000 }),
+    ).resolves.toMatchObject({ status: 'approved' });
+    expect(subscriptions.startOrExtendOnApproval).toHaveBeenCalledWith(expect.anything(), 'admin-1', expect.any(String), 90, 200000);
+  });
+
+  it('refuses to approve a new venue without a subscription length', async () => {
     const { svc } = serviceWith();
     await expect(
       svc.decide('admin-1', 'app-1', { action: 'approve', version: 1 }),
-    ).resolves.toMatchObject({ status: 'approved' });
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SUBSCRIPTION_DAYS_REQUIRED' }) });
   });
 
   it('suspends without a partner note', async () => {

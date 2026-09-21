@@ -18,7 +18,6 @@ const MUTATING = new Set([
 const WRITE_EXCEPTIONS = new Set([
   'assistant/interpret',
   'bookings/verify-qr',
-  'staff-invites/:id/accept',
   'payout-methods',
   'payout-methods/:id',
 ]);
@@ -115,5 +114,18 @@ describe('owner mutating routes are admin-read-only', () => {
         kind: 'maintenance',
       } as never),
     ).rejects.toBeInstanceOf(ApiException);
+  });
+
+  it('with edit mode ON the admin can write, and the same venue check still applies', async () => {
+    const prisma = {
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner-1' }) },
+    };
+    await expect(
+      assertVenueAccess(prisma as never, { ...admin, adminEdit: true }, 'v1', { write: true }),
+    ).resolves.toMatchObject({ id: 'v1' });
+    // The flag means nothing for anyone who is not an admin.
+    await expect(
+      assertVenueAccess(prisma as never, { id: 'u9', phone: '', name: 'x', roles: ['owner'], adminEdit: true }, 'v1', { write: true }),
+    ).rejects.toBeDefined();
   });
 });

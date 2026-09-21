@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { VenuesService } from '../venues/venues.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { ApiException } from '../../common/errors/api-exception';
 import { encodeGeohash } from '../../common/utils/geo.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
@@ -50,6 +51,7 @@ export class PartnersService {
     private readonly auth: AuthService,
     private readonly notifications: NotificationsService,
     private readonly venues: VenuesService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   usernameAvailability(raw: string) {
@@ -528,6 +530,17 @@ export class PartnersService {
         );
       }
       await this.assertGeoAndSports(payload);
+      // A venue never goes live without saying how long its subscription runs.
+      const hasSubscription = app.venueId
+        ? !!(await this.prisma.venueSubscription.findUnique({ where: { venueId: app.venueId }, select: { id: true } }))
+        : false;
+      if (!hasSubscription && !dto.subscriptionDays) {
+        throw new ApiException(
+          HttpStatus.BAD_REQUEST,
+          'SUBSCRIPTION_DAYS_REQUIRED',
+          'Enter how many days this venue is covered for before approving',
+        );
+      }
     }
 
     let updated;
@@ -542,6 +555,17 @@ export class PartnersService {
             payload,
             venueId,
           );
+          if (dto.subscriptionDays) {
+            await this.subscriptions.startOrExtendOnApproval(
+              tx,
+              adminId,
+              venueId,
+              dto.subscriptionDays,
+              dto.agreedPriceAmount,
+            );
+          } else {
+            await this.subscriptions.ensure(venueId, undefined, tx);
+          }
         } else if (dto.action === 'suspend' && venueId) {
           await tx.venue.update({
             where: { id: venueId },

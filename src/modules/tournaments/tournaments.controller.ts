@@ -14,6 +14,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { TournamentsService } from './tournaments.service';
+import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import {
   CreateTournamentDto,
   ListTournamentsQueryDto,
@@ -39,7 +40,8 @@ export class TournamentsController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('tournaments.manage')
   @Post()
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -66,7 +68,8 @@ export class TournamentsController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('tournaments.manage')
   @Post(':id/bracket/generate')
   generateBracket(
     @Param('id') id: string,

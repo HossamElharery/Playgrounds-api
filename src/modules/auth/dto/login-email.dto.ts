@@ -11,6 +11,8 @@ export class LoginEmailDto {
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @MinLength(8)
+  // Sign-in only checks the password; strength rules apply where passwords are CHOSEN.
+  // A manager may give staff a short one, and it must still be able to sign in.
+  @MinLength(1)
   password!: string;
 }

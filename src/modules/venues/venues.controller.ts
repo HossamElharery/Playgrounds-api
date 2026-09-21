@@ -28,10 +28,15 @@ import { SearchVenuesDto } from './dto/search-venues.dto';
 import { CreateCourtDto, UpdateCourtDto } from './dto/court.dto';
 import { UpsertPricingRuleDto } from './dto/pricing-rule.dto';
 import { IMAGE_UPLOAD_OPTIONS } from '../../common/uploads/image-upload';
-
-function isPrivileged(user: AuthenticatedUser) {
-  return user.roles.includes('admin');
-}
+import { RequireAnyPermission, RequirePermission } from '../../common/decorators/permissions.decorator';
+import {
+  actingOwnerId,
+  venueActorPrivilege,
+  venueIdOfCourt,
+  venueIdOfPricingRule,
+} from '../../common/access/actor-access';
+import { loadStaffScope } from '../../common/access/staff-scope';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('venues')
 @Controller()
@@ -39,6 +44,7 @@ export class VenuesController {
   constructor(
     private readonly venues: VenuesService,
     private readonly storage: StorageService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Public()
@@ -100,35 +106,47 @@ export class VenuesController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequireAnyPermission(
+    'bookings.view', 'venue.manage', 'pricing.manage', 'promotions.manage',
+    'tournaments.manage', 'reviews.reply', 'reports.view', 'account.view', 'team.manage',
+  )
   @Get('owner/venues')
-  listMine(@CurrentUser() user: AuthenticatedUser) {
+  async listMine(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.roles.includes('owner') && user.roles.includes('staff')) {
+      const scope = await loadStaffScope(this.prisma, user.id);
+      return scope ? this.venues.listMine(scope.ownerId, scope.venueIds) : [];
+    }
     return this.venues.listMine(user.id);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequireAnyPermission('venue.manage', 'pricing.manage')
   @Get('owner/venues/:id')
-  ownedDetail(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.venues.getOwnedDetail(id, user.id, isPrivileged(user));
+  async ownedDetail(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    const privileged = await venueActorPrivilege(this.prisma, user, id);
+    return this.venues.getOwnedDetail(id, await actingOwnerId(this.prisma, user), privileged);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Patch('owner/venues/:id')
-  update(
+  async update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdateVenueDto,
   ) {
-    return this.venues.update(id, user.id, isPrivileged(user), dto);
+    return this.venues.update(id, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, id), dto);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Post('owner/venues/:id/photos')
   @UseInterceptors(FileInterceptor('photo', IMAGE_UPLOAD_OPTIONS))
   async addPhoto(
@@ -137,35 +155,38 @@ export class VenuesController {
     @UploadedFile() file: MulterFile,
   ) {
     if (!file?.buffer) throw new BadRequestException('photo file is required');
+    const privileged = await venueActorPrivilege(this.prisma, user, id);
     const uploaded = await this.storage.uploadBuffer(
       file.buffer,
       file.originalname,
       file.mimetype,
       'venues',
     );
-    return this.venues.addPhoto(id, user.id, isPrivileged(user), uploaded.url);
+    return this.venues.addPhoto(id, await actingOwnerId(this.prisma, user), privileged, uploaded.url);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Patch('owner/venues/:id/photos/reorder')
-  reorderPhotos(
+  async reorderPhotos(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body('orderedIds') orderedIds: string[],
   ) {
     return this.venues.reorderPhotos(
       id,
-      user.id,
-      isPrivileged(user),
+      await actingOwnerId(this.prisma, user),
+      await venueActorPrivilege(this.prisma, user, id),
       orderedIds,
     );
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Delete('owner/venues/:id/photos/:photoId')
   async deletePhoto(
     @CurrentUser() user: AuthenticatedUser,
@@ -175,8 +196,8 @@ export class VenuesController {
     const photo = await this.venues.deletePhoto(
       id,
       photoId,
-      user.id,
-      isPrivileged(user),
+      await actingOwnerId(this.prisma, user),
+      await venueActorPrivilege(this.prisma, user, id),
     );
     const key = this.storage.keyFromUrl(photo.url);
     if (key) await this.storage.deleteObject(key);
@@ -185,82 +206,93 @@ export class VenuesController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Post('owner/venues/:id/courts')
-  addCourt(
+  async addCourt(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: CreateCourtDto,
   ) {
-    return this.venues.addCourt(id, user.id, isPrivileged(user), dto);
+    return this.venues.addCourt(id, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, id), dto);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Patch('owner/courts/:courtId')
-  updateCourt(
+  async updateCourt(
     @CurrentUser() user: AuthenticatedUser,
     @Param('courtId') courtId: string,
     @Body() dto: UpdateCourtDto,
   ) {
-    return this.venues.updateCourt(courtId, user.id, isPrivileged(user), dto);
+    const venueId = await venueIdOfCourt(this.prisma, courtId);
+    return this.venues.updateCourt(courtId, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, venueId), dto);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('venue.manage')
   @Delete('owner/courts/:courtId')
-  deleteCourt(
+  async deleteCourt(
     @CurrentUser() user: AuthenticatedUser,
     @Param('courtId') courtId: string,
   ) {
-    return this.venues.deleteCourt(courtId, user.id, isPrivileged(user));
+    const venueId = await venueIdOfCourt(this.prisma, courtId);
+    return this.venues.deleteCourt(courtId, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, venueId));
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('pricing.manage')
   @Post('owner/courts/:courtId/pricing-rules')
-  addPricingRule(
+  async addPricingRule(
     @CurrentUser() user: AuthenticatedUser,
     @Param('courtId') courtId: string,
     @Body() dto: UpsertPricingRuleDto,
   ) {
+    const venueId = await venueIdOfCourt(this.prisma, courtId);
     return this.venues.addPricingRule(
       courtId,
-      user.id,
-      isPrivileged(user),
+      await actingOwnerId(this.prisma, user),
+      await venueActorPrivilege(this.prisma, user, venueId),
       dto,
     );
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('pricing.manage')
   @Patch('owner/pricing-rules/:ruleId')
-  updatePricingRule(
+  async updatePricingRule(
     @CurrentUser() user: AuthenticatedUser,
     @Param('ruleId') ruleId: string,
     @Body() dto: UpsertPricingRuleDto,
   ) {
+    const venueId = await venueIdOfPricingRule(this.prisma, ruleId);
     return this.venues.updatePricingRule(
       ruleId,
-      user.id,
-      isPrivileged(user),
+      await actingOwnerId(this.prisma, user),
+      await venueActorPrivilege(this.prisma, user, venueId),
       dto,
     );
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'staff', 'admin')
+  @RequirePermission('pricing.manage')
   @Delete('owner/pricing-rules/:ruleId')
-  deletePricingRule(
+  async deletePricingRule(
     @CurrentUser() user: AuthenticatedUser,
     @Param('ruleId') ruleId: string,
   ) {
-    return this.venues.deletePricingRule(ruleId, user.id, isPrivileged(user));
+    const venueId = await venueIdOfPricingRule(this.prisma, ruleId);
+    return this.venues.deletePricingRule(ruleId, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, venueId));
   }
 
   // ---- Admin ----

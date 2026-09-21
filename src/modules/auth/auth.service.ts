@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
+import { GuestJoinDto } from './dto/guest-join.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -700,6 +701,41 @@ export class AuthService {
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+  }
+
+  /**
+   * "Play as guest" from a squad invite link: validates the link first (so no
+   * junk accounts are minted for dead links), creates a throw-away player and
+   * seats it in the squad. The nickname is optional; without one the guest
+   * gets a neutral "Guest 1234" label. Cleaned up by SquadService.sweepGuests.
+   */
+  async joinSquadAsGuest(
+    dto: GuestJoinDto,
+    deviceInfo?: string,
+  ): Promise<TokenPair & { user: Partial<User>; squadId: string }> {
+    await this.squad.previewInviteLink(dto.token); // 404 for bad/expired, 409-free
+    const lang = dto.lang === 'en' ? 'en' : 'ar';
+    // Strip control/bidi-override characters and collapse whitespace.
+    const cleaned = (dto.name ?? '')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 24);
+    const suffix = String(1000 + Math.floor(Math.random() * 9000));
+    const name = cleaned || (lang === 'ar' ? `ضيف ${suffix}` : `Guest ${suffix}`);
+
+    const user = await this.prisma.user.create({
+      data: { name, isGuest: true, roles: ['player'], preferredLang: lang },
+    });
+    try {
+      const joined = await this.squad.joinViaInviteLink(user.id, dto.token);
+      const tokens = await this.issueTokenPair(user, deviceInfo);
+      return { ...tokens, user: this.sanitize(user), squadId: joined.squadId };
+    } catch (err) {
+      // Full squad / link died in between: do not leave an orphan guest.
+      await this.prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+      throw err;
+    }
   }
 
   private sanitize(user: User): Partial<User> {

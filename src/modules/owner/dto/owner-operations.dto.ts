@@ -53,33 +53,6 @@ export class CreateWalkInDto {
   priceAmount?: number;
 }
 
-export class CreateStaffInviteDto {
-  @ApiProperty({ example: 'venue-uuid' })
-  @IsString()
-  venueId!: string;
-
-  @ApiPropertyOptional({ example: '+201001234567' })
-  @Transform(({ value }) => normalizeOptionalPhone(value) ?? undefined)
-  @ValidateIf((o: CreateStaffInviteDto) => !o.inviteeEmail)
-  @IsPhoneNumber()
-  inviteePhone?: string;
-
-  @ApiPropertyOptional({ example: 'reception@venue.com' })
-  @ValidateIf((o: CreateStaffInviteDto) => !o.inviteePhone)
-  @IsEmail()
-  inviteeEmail?: string;
-
-  @ApiPropertyOptional({ example: 'role-staff-uuid' })
-  @IsOptional()
-  @IsString()
-  roleId?: string;
-
-  @ApiPropertyOptional({ enum: ['reception', 'manager', 'accountant'] })
-  @IsOptional()
-  @IsIn(['reception', 'manager', 'accountant'])
-  operationalRole?: 'reception' | 'manager' | 'accountant';
-}
-
 export class CreateCalendarBlockDto {
   @ApiProperty()
   @IsString()
@@ -212,4 +185,16 @@ export class UndoAssistantMessageDto {
   @ApiProperty()
   @IsString()
   messageId!: string;
+}
+
+export class PlatformChangeRequestDto {
+  @ApiProperty({ enum: ['cancel', 'change'] })
+  @IsIn(['cancel', 'change'])
+  kind!: 'cancel' | 'change';
+
+  @ApiProperty({ minLength: 5, maxLength: 500 })
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  reason!: string;
 }

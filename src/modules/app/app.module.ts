@@ -17,7 +17,8 @@ import { StorageModule } from '../storage/storage.module';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from '../email/email.module';
 import { SmsModule } from '../sms/sms.module';
-import { RbacModule } from '../rbac/rbac.module';
+import { TeamModule } from '../team/team.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ContentModule } from '../content/content.module';
 import { GeoModule } from '../geo/geo.module';
 import { VenuesModule } from '../venues/venues.module';
@@ -65,7 +66,8 @@ import { FinanceModule } from '../finance/finance.module';
     EmailModule,
     SmsModule,
     AuthModule,
-    RbacModule,
+    TeamModule,
+    SubscriptionsModule,
     StorageModule,
     UsersModule,
     ContentModule,

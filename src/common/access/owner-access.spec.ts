@@ -18,8 +18,13 @@ function db(venue: Record<string, unknown> | null, assignment = false) {
         venue ? { id: 'b1', venueId: 'v1' } : null,
       ),
     },
-    userRoleAssignment: {
-      findFirst: jest.fn().mockResolvedValue(assignment ? { id: 'a1' } : null),
+    // Staff reach a venue only through their StaffMember row (same owner, venue in the list).
+    staffMember: {
+      findUnique: jest.fn().mockResolvedValue(
+        assignment
+          ? { id: 's1', ownerId: 'owner-1', permissions: [], venueIds: ['v1'], title: null }
+          : null,
+      ),
     },
   };
 }
@@ -45,7 +50,7 @@ describe('assertVenueAccess matrix', () => {
     { name: 'admin write', roles: ['admin'], id: 'admin-1', write: true, code: 'ADMIN_READ_ONLY' },
     { name: 'other owner', roles: ['owner'], id: 'other', write: false, error: ForbiddenException },
     { name: 'player', roles: ['player'], id: 'player-1', write: false, error: ForbiddenException },
-    { name: 'staff without assignment', roles: ['staff'], id: 'staff-1', write: false, error: ForbiddenException },
+    { name: 'staff without a StaffMember row', roles: ['staff'], id: 'staff-1', write: false, error: ForbiddenException },
   ];
 
   it.each(cases)('$name', async (c) => {

@@ -33,24 +33,4 @@ describe('Owner dashboard integrity', () => {
     db.booking.findMany.mockResolvedValue([{currency:'EGP'},{currency:'SAR'}]);
     await expect(service.finance(owner as never,'v1','2026-09-01','2026-09-07')).rejects.toBeInstanceOf(BadRequestException);
   });
-  it('does not accept an invite merely because both email fields are null', async () => {
-    db.staffInvite.findUnique.mockResolvedValue({status:'pending',inviteePhone:'+201000000001',inviteeEmail:null});
-    db.user.findUniqueOrThrow.mockResolvedValue({phone:'+201000000002',email:null});
-    await expect(service.acceptStaffInvite('u1','invite')).rejects.toBeInstanceOf(ForbiddenException);
-  });
-  it('rejects accepting a revoked invitation', async () => {
-    db.staffInvite.findUnique.mockResolvedValue({status:'revoked',inviteeEmail:'a@example.com'});
-    db.user.findUniqueOrThrow.mockResolvedValue({email:'a@example.com'});
-    await expect(service.acceptStaffInvite('u1','invite')).rejects.toBeInstanceOf(BadRequestException);
-  });
-  it('revoking an invite also removes its venue access', async () => {
-    db.staffInvite.findUnique.mockResolvedValue({status:'accepted',venueId:'v1',inviteeUserId:'u1'});
-    await service.revokeStaffInvite(owner as never, 'invite');
-    expect(db.userRoleAssignment.deleteMany).toHaveBeenCalledWith({where:{userId:'u1',venueId:'v1'}});
-    expect(db.staffInvite.update).toHaveBeenCalledWith({where:{id:'invite'},data:{status:'revoked'}});
-  });
-  it('owner cannot accept a pending invitation on behalf of a staff member', async () => {
-    db.staffInvite.findUnique.mockResolvedValue({status:'pending',venueId:'v1',inviteeUserId:'u1'});
-    await expect(service.setStaffStatus(owner as never,'invite','accepted')).rejects.toBeInstanceOf(BadRequestException);
-  });
 });

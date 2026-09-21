@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  NotFoundException,
   Delete,
   Get,
   Param,
@@ -16,6 +18,9 @@ import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { RewardsService } from './rewards.service';
+import { RequirePermission } from '../../common/decorators/permissions.decorator';
+import { requireStaffVenue } from '../../common/access/actor-access';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreatePromoCodeDto } from './dto/create-promo-code.dto';
 import { UpdatePromoCodeDto } from './dto/update-promo-code.dto';
 import { CreateQuestDto } from './dto/create-quest.dto';
@@ -27,7 +32,31 @@ import { UpdatePlatformSettingDto } from './dto/update-platform-setting.dto';
 @ApiTags('rewards')
 @Controller()
 export class RewardsController {
-  constructor(private readonly rewards: RewardsService) {}
+  constructor(
+    private readonly rewards: RewardsService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /**
+   * Who a promo-code action runs as. Staff act as the owner they work for, and only
+   * on a venue in their list (a promo without a venue is platform-wide: admin only).
+   */
+  private async promoActor(
+    user: AuthenticatedUser,
+    venueId?: string | null,
+  ): Promise<{ userId: string; isAdmin: boolean }> {
+    if (user.roles.includes('admin')) return { userId: user.id, isAdmin: true };
+    if (user.roles.includes('owner')) return { userId: user.id, isAdmin: false };
+    if (!venueId) throw new BadRequestException('venueId is required');
+    const scope = await requireStaffVenue(this.prisma, user, venueId);
+    return { userId: scope.ownerId, isAdmin: false };
+  }
+
+  private async promoVenueId(id: string): Promise<string | null> {
+    const promo = await this.prisma.promoCode.findUnique({ where: { id }, select: { venueId: true } });
+    if (!promo) throw new NotFoundException('Promo code not found');
+    return promo.venueId;
+  }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
@@ -80,64 +109,55 @@ export class RewardsController {
   // ---- Promo codes ----
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('admin', 'owner')
+  @Roles('admin', 'owner', 'staff')
+  @RequirePermission('promotions.manage')
   @Post('promo-codes')
-  createPromo(
+  async createPromo(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreatePromoCodeDto,
   ) {
-    return this.rewards.createPromoCode(
-      user.id,
-      dto,
-      user.roles.includes('admin'),
-    );
+    const actor = await this.promoActor(user, dto.venueId);
+    return this.rewards.createPromoCode(actor.userId, dto, actor.isAdmin);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('admin', 'owner')
+  @Roles('admin', 'owner', 'staff')
+  @RequirePermission('promotions.manage')
   @Get('promo-codes')
-  listPromo(
+  async listPromo(
     @CurrentUser() user: AuthenticatedUser,
     @Query('venueId') venueId?: string,
   ) {
-    return this.rewards.listPromoCodes(
-      user.id,
-      user.roles.includes('admin'),
-      venueId,
-    );
+    const actor = await this.promoActor(user, venueId);
+    return this.rewards.listPromoCodes(actor.userId, actor.isAdmin, venueId);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('admin', 'owner')
+  @Roles('admin', 'owner', 'staff')
+  @RequirePermission('promotions.manage')
   @Patch('promo-codes/:id')
-  setPromoActive(
+  async setPromoActive(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdatePromoCodeDto,
   ) {
-    return this.rewards.updatePromoCode(
-      id,
-      user.id,
-      user.roles.includes('admin'),
-      dto,
-    );
+    const actor = await this.promoActor(user, await this.promoVenueId(id));
+    return this.rewards.updatePromoCode(id, actor.userId, actor.isAdmin, dto);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Roles('admin', 'owner')
+  @Roles('admin', 'owner', 'staff')
+  @RequirePermission('promotions.manage')
   @Delete('promo-codes/:id')
-  deactivatePromo(
+  async deactivatePromo(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.rewards.deactivatePromoCode(
-      id,
-      user.id,
-      user.roles.includes('admin'),
-    );
+    const actor = await this.promoActor(user, await this.promoVenueId(id));
+    return this.rewards.deactivatePromoCode(id, actor.userId, actor.isAdmin);
   }
 
   // ---- Admin config ----

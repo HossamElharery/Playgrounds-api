@@ -1,5 +1,5 @@
 import { zonedHhmm } from './timezone.util';
-import type { PricingRuleLike } from './pricing-rule.util';
+import { ruleActiveAt, type PricingRuleLike } from './pricing-rule.util';
 import { zonedWeekday } from './timezone.util';
 
 export interface PriceQuoteSegment {
@@ -31,6 +31,7 @@ export function quoteDurationPrice(
     const day = zonedWeekday(segStart, timeZone);
     const candidates = rules.filter(
       (r) =>
+        ruleActiveAt(r, segStart) &&
         (r.daysOfWeek.length === 0 || r.daysOfWeek.includes(day)) &&
         r.startTime <= hhmm &&
         hhmm < r.endTime,

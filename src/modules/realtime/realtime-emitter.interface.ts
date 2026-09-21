@@ -7,6 +7,8 @@ import { Injectable } from '@nestjs/common';
  */
 @Injectable()
 export abstract class RealtimeGatewayEmitter {
+  /** Drops every open socket of a user (suspended / removed accounts must not keep a live connection). */
+  abstract disconnectUser(userId: string): void;
   abstract revokeRoomAccess(userId: string, room: string): void;
   abstract emitToUser(
     userId: string,

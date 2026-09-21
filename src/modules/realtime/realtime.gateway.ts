@@ -310,6 +310,10 @@ export class RealtimeGateway
     this.server?.to(`user:${userId}`).emit(event.type, event);
   }
 
+  disconnectUser(userId: string): void {
+    this.server?.in(`user:${userId}`).disconnectSockets(true);
+  }
+
   revokeRoomAccess(userId: string, room: string): void {
     this.server?.in(`user:${userId}`).socketsLeave(room);
   }

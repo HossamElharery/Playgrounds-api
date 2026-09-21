@@ -363,4 +363,42 @@ describe('finance integration (real Postgres)', () => {
     console.log(`summary 20k bookings: p50=${p50.toFixed(0)}ms p95=${p95.toFixed(0)}ms`);
     expect(p95).toBeLessThan(1000);
   });
+
+  it('board: a booking that does not start on a slot boundary still has a head cell', async () => {
+    const { OwnerService } = await import('../src/modules/owner/owner.service');
+    const { venue, courts, user } = await makeVenue('board');
+    // 15:53–16:53 Cairo spans the 15:00 and 16:00 hourly cells, starting inside the first.
+    const slotStart = new Date('2026-09-20T12:53:00Z');
+    await insert(
+      venue.id,
+      user.id,
+      {
+        courtId: courts[0].id,
+        slotStart,
+        slotEnd: new Date(slotStart.getTime() + 60 * 60_000),
+        source: 'manual',
+        mode: null,
+        status: 'confirmed',
+        paymentStatus: 'paid',
+        checkedIn: false,
+        base: 12000,
+        ownerDisc: 0,
+        bps: 1000,
+      },
+      99,
+    );
+    const { NestFactory } = await import('@nestjs/core');
+    const { AppModule } = await import('../src/modules/app/app.module');
+    const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+    let board: { courts: { court: { id: string }; slots: Record<string, unknown>[] }[] };
+    try {
+      board = await app.get(OwnerService).board(user, venue.id, '2026-09-20');
+    } finally {
+      await app.close();
+    }
+    const row = board.courts.find((c) => c.court.id === courts[0].id)!;
+    const heads = row.slots.filter((slot) => slot['bookingId'] && Number(slot['spanSlots']) > 0);
+    expect(heads.length).toBe(1);
+    expect(heads[0]['state']).toBe('booked_manual');
+  });
 });

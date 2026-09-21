@@ -341,6 +341,21 @@ export class PartnerDecisionDto {
   @IsInt()
   @Min(1)
   version?: number;
+
+  @ApiPropertyOptional({
+    description: 'Approve only: how many days the venue is covered for (1–3650), e.g. 90 for three months paid.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  subscriptionDays?: number;
+
+  @ApiPropertyOptional({ description: 'Approve only: the price agreed with the owner, minor units. Admin-only.' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  agreedPriceAmount?: number;
 }
 
 export class AdminPartnerApplicationsQueryDto extends CursorPaginationQueryDto {
