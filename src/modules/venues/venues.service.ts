@@ -22,6 +22,7 @@ import {
 import { normalizeCountryCode } from '../../common/geo/country.util';
 import { zonedWallTimeToUtc } from '../../common/utils/timezone.util';
 import { buildPagination } from '../../common/dto/page-query.dto';
+import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
 
 @Injectable()
 export class VenuesService {
@@ -132,6 +133,10 @@ export class VenuesService {
     dto: UpdateVenueDto,
   ) {
     await this.assertOwnership(venueId, ownerId, isPrivileged);
+    if (dto.weeklyHours) {
+      const errors = validateWeeklyHours(dto.weeklyHours);
+      if (errors.length) throw new BadRequestException(errors.join('; '));
+    }
     const geo =
       dto.lat != null && dto.lng != null
         ? {
@@ -169,6 +174,7 @@ export class VenuesService {
         surface: dto.surface,
         instantBook: dto.instantBook,
         cancellationPolicy: dto.cancellationPolicy,
+        ...(dto.weeklyHours ? { weeklyHours: dto.weeklyHours as unknown as Prisma.InputJsonValue } : {}),
         ...geo,
       },
     });

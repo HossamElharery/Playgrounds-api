@@ -35,10 +35,13 @@ export class QuickstartService {
       this.prisma.booking.findFirst({ where: { venueId, status: { not: 'cancelled' } }, select: { id: true } }),
     ]);
     const hoursSet = !!weeklyHours && Object.values(weeklyHours).some((d) => d && !d.closed && d.open && d.close);
+    // Hours, courts and prices are all edited on the venue's own management page
+    // (`/owner/venues/:id`) — there is no separate screen for any of them.
+    const venuePage = `/owner/venues/${venueId}`;
     const steps: QuickstartStep[] = [
-      { key: 'hours', done: hoursSet, optional: false, route: '/owner/settings' },
-      { key: 'courts', done: courts.length > 0, optional: false, route: '/owner/settings' },
-      { key: 'prices', done: courts.length > 0 && courts.every((c) => c._count.pricingRules > 0), optional: false, route: '/owner/settings' },
+      { key: 'hours', done: hoursSet, optional: false, route: venuePage },
+      { key: 'courts', done: courts.length > 0, optional: false, route: venuePage },
+      { key: 'prices', done: courts.length > 0 && courts.every((c) => c._count.pricingRules > 0), optional: false, route: venuePage },
       { key: 'team', done: staff > 0, optional: true, route: '/owner/staff' },
       { key: 'firstBooking', done: !!anyBooking, optional: false, route: '/owner/today' },
     ];

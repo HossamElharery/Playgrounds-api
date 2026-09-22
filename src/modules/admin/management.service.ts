@@ -15,6 +15,7 @@ import {
 } from './dto/management.dto';
 import { encode as encodeGeohash } from 'ngeohash';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
+import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
 
 const userSelect = {
   id: true,
@@ -170,7 +171,8 @@ export class ManagementService {
               where: { id: data.governorateId },
               select: { id: true },
             });
-            if (!governorate) throw new BadRequestException('Governorate not found');
+            if (!governorate)
+              throw new BadRequestException('Governorate not found');
           }
           const removesAdmin =
             (data.roles && !data.roles.includes('admin')) ||
@@ -295,8 +297,12 @@ export class ManagementService {
     return v;
   }
   async updateVenue(actor: string, id: string, dto: AdminVenueDto) {
-    const { reason: rawReason, sportIds, amenityKeys, ...data } = dto;
+    const { reason: rawReason, sportIds, amenityKeys, weeklyHours, ...data } = dto;
     const reason = rawReason?.trim() || 'Admin edit';
+    if (weeklyHours) {
+      const errors = validateWeeklyHours(weeklyHours);
+      if (errors.length) throw new BadRequestException(errors.join('; '));
+    }
     return this.db.$transaction(async (tx) => {
       const before = await tx.venue.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('Venue not found');
@@ -322,8 +328,9 @@ export class ManagementService {
       if (sportIds) {
         const uniqueIds = [...new Set(sportIds)];
         if (
-          (await tx.sportCategory.count({ where: { id: { in: uniqueIds } } })) !==
-          uniqueIds.length
+          (await tx.sportCategory.count({
+            where: { id: { in: uniqueIds } },
+          })) !== uniqueIds.length
         )
           throw new BadRequestException('Unknown sport');
         if (
@@ -367,6 +374,7 @@ export class ManagementService {
         where: { id },
         data: {
           ...data,
+          ...(weeklyHours ? { weeklyHours: weeklyHours as unknown as Prisma.InputJsonValue } : {}),
           ...(data.lat !== undefined || data.lng !== undefined
             ? {
                 geohash: encodeGeohash(

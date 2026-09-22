@@ -4,9 +4,11 @@ import {
   IsBoolean,
   IsLatitude,
   IsLongitude,
+  IsObject,
   IsOptional,
   IsString,
 } from 'class-validator';
+import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
 
 export class CreateVenueDto {
   @ApiProperty({ example: 'El Dawlia Pitch' })
@@ -27,7 +29,10 @@ export class CreateVenueDto {
   @IsString()
   descriptionAr?: string;
 
-  @ApiPropertyOptional({ example: 'SA', description: 'ISO 3166-1 alpha-2. Derived from governorate when omitted.' })
+  @ApiPropertyOptional({
+    example: 'SA',
+    description: 'ISO 3166-1 alpha-2. Derived from governorate when omitted.',
+  })
   @IsOptional()
   @IsString()
   countryCode?: string;
@@ -81,4 +86,11 @@ export class CreateVenueDto {
   @IsArray()
   @IsString({ each: true })
   amenityKeys?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Weekly opening hours, keyed "0" (Sunday) through "6". Validated in the service (`validateWeeklyHours`) — at least one open day, valid 15-minute times.',
+  })
+  @IsOptional()
+  @IsObject()
+  weeklyHours?: WeeklyHours;
 }
