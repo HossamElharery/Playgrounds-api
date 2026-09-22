@@ -1,5 +1,52 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+
+class PushKeysDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(400)
+  p256dh!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  auth!: string;
+}
+
+export class PushSubscribeDto {
+  @ApiProperty()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @MaxLength(600)
+  endpoint!: string;
+
+  @ApiProperty({ type: PushKeysDto })
+  @ValidateNested()
+  @Type(() => PushKeysDto)
+  keys!: PushKeysDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  userAgent?: string;
+}
+
+export class PushUnsubscribeDto {
+  @ApiProperty()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @MaxLength(600)
+  endpoint!: string;
+}
 
 export class RegisterDeviceTokenDto {
   @ApiProperty({ example: 'fcm-or-web-push-token' })

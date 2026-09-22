@@ -14,7 +14,10 @@ import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { NotificationsService } from './notifications.service';
+import { WebPushService } from './web-push.service';
 import {
+  PushSubscribeDto,
+  PushUnsubscribeDto,
   RegisterDeviceTokenDto,
   UpdateNotificationPrefsDto,
 } from './dto/device-token.dto';
@@ -25,7 +28,26 @@ import { clampLimit } from '../../common/utils/page-limit.util';
 @UseGuards(AuthGuard)
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notifications: NotificationsService) {}
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly webPush: WebPushService,
+  ) {}
+
+  @Get('push/config')
+  pushConfig() {
+    const publicKey = this.webPush.publicKey();
+    return { enabled: !!publicKey, publicKey };
+  }
+
+  @Post('push/subscribe')
+  subscribePush(@CurrentUser() user: AuthenticatedUser, @Body() dto: PushSubscribeDto) {
+    return this.webPush.subscribe(user.id, dto);
+  }
+
+  @Delete('push/subscribe')
+  unsubscribePush(@CurrentUser() user: AuthenticatedUser, @Body() dto: PushUnsubscribeDto) {
+    return this.webPush.unsubscribe(user.id, dto.endpoint);
+  }
 
   @Get()
   list(

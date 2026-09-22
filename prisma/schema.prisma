@@ -182,6 +182,7 @@ model User {
   mediaAssets               MediaAsset[]
   /// Fake accounts created for a demo venue.
   isDemo                    Boolean                   @default(false)
+  pushSubscriptions         PushSubscription[]
 
   @@index([isGuest, createdAt])
   @@index([status])
@@ -226,6 +227,20 @@ model WebAuthnCredential {
   friendlyName String?
   createdAt    DateTime  @default(now())
   lastUsedAt   DateTime?
+
+  @@index([userId])
+}
+
+model PushSubscription {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
 
   @@index([userId])
 }

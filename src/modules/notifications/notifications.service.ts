@@ -6,6 +6,7 @@ import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
 import { UpdateNotificationPrefsDto } from './dto/device-token.dto';
 import { sanitizeNotificationCtaUrl } from './cta-url';
+import { WebPushService } from './web-push.service';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -41,6 +42,7 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly emitter: RealtimeGatewayEmitter,
     private readonly config: ConfigService,
+    private readonly webPush: WebPushService,
   ) {}
 
   categoryEnabled(
@@ -54,7 +56,7 @@ export class NotificationsService {
   async create(input: CreateNotificationInput) {
     const user = await this.prisma.user.findUnique({
       where: { id: input.userId },
-      select: { notificationPrefs: true },
+      select: { notificationPrefs: true, preferredLang: true },
     });
     const prefs = (user?.notificationPrefs ?? {}) as Record<string, boolean>;
     if (!this.categoryEnabled(prefs, input.category)) return null;
@@ -75,7 +77,18 @@ export class NotificationsService {
       type: 'notification.created',
       notification,
     });
-    void this.dispatchPush(input.userId, notification.titleEn, notification.bodyEn);
+    void this.dispatchPush(
+      input.userId,
+      notification.titleEn,
+      notification.bodyEn,
+    );
+    const ar = user?.preferredLang !== 'en';
+    void this.webPush.send(
+      input.userId,
+      ar ? input.titleAr : input.titleEn,
+      ar ? input.bodyAr : input.bodyEn,
+      input.deepLink,
+    );
     return notification;
   }
 
@@ -170,13 +183,21 @@ export class NotificationsService {
           : input.governorateId
             ? { governorateId: input.governorateId }
             : {};
-    const pickedIds = [...new Set((input.recipientIds ?? []).map((id) => id.trim()).filter(Boolean))];
+    const pickedIds = [
+      ...new Set(
+        (input.recipientIds ?? []).map((id) => id.trim()).filter(Boolean),
+      ),
+    ];
     if (input.audience === 'individual' && !pickedIds.length) {
       throw new BadRequestException('Select at least one recipient');
     }
     const where: Prisma.UserWhereInput =
       input.audience === 'owners'
-        ? { roles: { has: 'owner' as const }, status: 'active' as const, ...areaFilter }
+        ? {
+            roles: { has: 'owner' as const },
+            status: 'active' as const,
+            ...areaFilter,
+          }
         : input.audience === 'players'
           ? {
               roles: { has: 'player' as const },
@@ -201,7 +222,9 @@ export class NotificationsService {
       select: { id: true },
     });
     if (input.audience === 'individual' && !users.length) {
-      throw new BadRequestException('None of the selected accounts could receive this notification');
+      throw new BadRequestException(
+        'None of the selected accounts could receive this notification',
+      );
     }
     const recipientIds: string[] = [];
     for (const { id: userId } of users) {
