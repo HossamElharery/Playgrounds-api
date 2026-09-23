@@ -228,7 +228,9 @@ export class UsersService {
         teamMemberships: { include: { team: true } },
       },
     });
-    if (!user) throw new NotFoundException('Player not found');
+    // A guest is not a player anyone can look up later — there is no account
+    // behind the name once the squad session that created it ends.
+    if (!user || user.isGuest) throw new NotFoundException('Player not found');
     return this.toPublic(user);
   }
 
@@ -236,6 +238,10 @@ export class UsersService {
     const where: Prisma.UserWhereInput = {
       status: 'active',
       roles: { has: 'player' },
+      // Squad-link guests are throw-away identities (no email/phone/password,
+      // never reachable again once their session ends) — they must never
+      // surface on the public, unauthenticated player directory.
+      isGuest: false,
       ...(query.search
         ? { name: { contains: query.search, mode: 'insensitive' } }
         : {}),

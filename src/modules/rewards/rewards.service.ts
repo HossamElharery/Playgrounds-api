@@ -98,9 +98,13 @@ export class RewardsService {
     // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
     // streak is the single canonical streak; a purchased freeze protects it
     // from resetting to 1 when exactly one day is missed.
-    const canUseFreeze = !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
-    const newStreak = isConsecutiveDay || canUseFreeze ? user.streakCount + 1 : 1;
-    const streakFreezes = canUseFreeze ? user.streakFreezes - 1 : user.streakFreezes;
+    const canUseFreeze =
+      !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
+    const newStreak =
+      isConsecutiveDay || canUseFreeze ? user.streakCount + 1 : 1;
+    const streakFreezes = canUseFreeze
+      ? user.streakFreezes - 1
+      : user.streakFreezes;
     const multiplier = Math.min(
       STREAK_MAX_MULTIPLIER,
       1 + Math.floor(newStreak / 7),
@@ -126,7 +130,12 @@ export class RewardsService {
     if (newStreak === 7) await this.awardBadgeIfExists(userId, 'week-streak');
     if (newStreak === 30) await this.awardBadgeIfExists(userId, 'iron-man');
 
-    return { coins, streak: newStreak, streakFreezes, usedFreeze: canUseFreeze };
+    return {
+      coins,
+      streak: newStreak,
+      streakFreezes,
+      usedFreeze: canUseFreeze,
+    };
   }
 
   /** 400 coins -> one streak-freeze token (§4.3). */
@@ -153,7 +162,10 @@ export class RewardsService {
         },
       }),
     ]);
-    return { coinsBalance: updated.coinsBalance, streakFreezes: updated.streakFreezes };
+    return {
+      coinsBalance: updated.coinsBalance,
+      streakFreezes: updated.streakFreezes,
+    };
   }
 
   // ---- Quests ----
@@ -198,7 +210,9 @@ export class RewardsService {
     ctx: ActivityContext = {},
     amount = 1,
   ) {
-    const quests = await this.prisma.quest.findMany({ where: { active: true } });
+    const quests = await this.prisma.quest.findMany({
+      where: { active: true },
+    });
     const matching = quests.filter((q) => {
       const rule = (q.rule as unknown as QuestRule) ?? { target: 1 };
       const questEvent = rule.event ?? 'booking.completed';
@@ -213,7 +227,8 @@ export class RewardsService {
     const scope = rule.scope;
     if (!scope) return true;
     if (scope.activityId && scope.activityId !== ctx.activityId) return false;
-    if (scope.activityKind && scope.activityKind !== ctx.activityKind) return false;
+    if (scope.activityKind && scope.activityKind !== ctx.activityKind)
+      return false;
     return true;
   }
 
@@ -311,7 +326,9 @@ export class RewardsService {
    * content team populating it.
    */
   async awardBadgeIfExists(userId: string, badgeKey: string) {
-    const badge = await this.prisma.badge.findUnique({ where: { key: badgeKey } });
+    const badge = await this.prisma.badge.findUnique({
+      where: { key: badgeKey },
+    });
     if (!badge) return;
     await this.prisma.userBadge.upsert({
       where: { userId_badgeId: { userId, badgeId: badge.id } },
@@ -347,7 +364,9 @@ export class RewardsService {
     );
     if (sportId) {
       const sport = await this.prisma.sportCategory.findFirst({
-        where: { OR: [{ id: sportId }, { slug: sportId }, { id: `sport-${sportId}` }] },
+        where: {
+          OR: [{ id: sportId }, { slug: sportId }, { id: `sport-${sportId}` }],
+        },
       });
       sportId = sport?.id;
     }
@@ -374,6 +393,7 @@ export class RewardsService {
         where: {
           roles: { has: 'player' },
           status: 'active',
+          isGuest: false,
           ...(friendIds ? { id: { in: friendIds } } : {}),
         },
         orderBy: [{ matchesPlayed: 'desc' }, { reputation: 'desc' }],
@@ -413,7 +433,18 @@ export class RewardsService {
           },
         },
       },
-      include: { user: { select: { id: true, name: true, avatarUrl: true, matchesPlayed: true, streakCount: true, reputation: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            matchesPlayed: true,
+            streakCount: true,
+            reputation: true,
+          },
+        },
+      },
       orderBy: { eloScore: 'desc' },
       take: 50,
     });
@@ -436,7 +467,8 @@ export class RewardsService {
     dto: CreatePromoCodeDto,
     isAdmin: boolean,
   ) {
-    if (!isAdmin && !dto.venueId) throw new BadRequestException('Owners must scope promotions to a venue');
+    if (!isAdmin && !dto.venueId)
+      throw new BadRequestException('Owners must scope promotions to a venue');
     if (dto.validFrom && dto.validUntil && dto.validFrom >= dto.validUntil) {
       throw new BadRequestException('validUntil must be after validFrom');
     }
@@ -478,11 +510,21 @@ export class RewardsService {
     });
   }
 
-  async setPromoActive(id: string, userId: string, isAdmin: boolean, active: boolean) {
+  async setPromoActive(
+    id: string,
+    userId: string,
+    isAdmin: boolean,
+    active: boolean,
+  ) {
     return this.updatePromoCode(id, userId, isAdmin, { active });
   }
 
-  async updatePromoCode(id: string, userId: string, isAdmin: boolean, dto: UpdatePromoCodeDto) {
+  async updatePromoCode(
+    id: string,
+    userId: string,
+    isAdmin: boolean,
+    dto: UpdatePromoCodeDto,
+  ) {
     const promo = await this.prisma.promoCode.findUnique({ where: { id } });
     if (!promo) throw new NotFoundException('Promo code not found');
     if (!isAdmin && promo.createdById !== userId) {
@@ -497,13 +539,23 @@ export class RewardsService {
       }
     }
     if (dto.venueId && !isAdmin) {
-      const venue = await this.prisma.venue.findUnique({ where: { id: dto.venueId } });
-      if (!venue || venue.ownerId !== userId) throw new ForbiddenException('Not your venue');
+      const venue = await this.prisma.venue.findUnique({
+        where: { id: dto.venueId },
+      });
+      if (!venue || venue.ownerId !== userId)
+        throw new ForbiddenException('Not your venue');
     }
     const validFrom = dto.validFrom ? new Date(dto.validFrom) : promo.validFrom;
-    const validUntil = dto.validUntil ? new Date(dto.validUntil) : promo.validUntil;
-    if (validUntil <= validFrom) throw new BadRequestException('validUntil must be after validFrom');
-    if ((dto.type ?? promo.type) === 'percentage' && (dto.value ?? promo.value) > 100) throw new BadRequestException('Percentage value cannot exceed 100');
+    const validUntil = dto.validUntil
+      ? new Date(dto.validUntil)
+      : promo.validUntil;
+    if (validUntil <= validFrom)
+      throw new BadRequestException('validUntil must be after validFrom');
+    if (
+      (dto.type ?? promo.type) === 'percentage' &&
+      (dto.value ?? promo.value) > 100
+    )
+      throw new BadRequestException('Percentage value cannot exceed 100');
     return this.prisma.promoCode.update({
       where: { id },
       data: { ...dto, validFrom, validUntil },
@@ -595,14 +647,24 @@ export class RewardsService {
         data: { coinsBalance: { increment: REFERRAL_BONUS_COINS } },
       }),
       this.prisma.coinLedgerEntry.create({
-        data: { userId, amount: REFERRAL_BONUS_COINS, reason: 'referral_bonus', bookingId },
+        data: {
+          userId,
+          amount: REFERRAL_BONUS_COINS,
+          reason: 'referral_bonus',
+          bookingId,
+        },
       }),
       this.prisma.user.update({
         where: { id: referrerId },
         data: { coinsBalance: { increment: REFERRAL_BONUS_COINS } },
       }),
       this.prisma.coinLedgerEntry.create({
-        data: { userId: referrerId, amount: REFERRAL_BONUS_COINS, reason: 'referral_bonus', bookingId },
+        data: {
+          userId: referrerId,
+          amount: REFERRAL_BONUS_COINS,
+          reason: 'referral_bonus',
+          bookingId,
+        },
       }),
     ]);
     await this.bumpQuestsForEvent(referrerId, 'referral.completed');
@@ -615,7 +677,11 @@ export class RewardsService {
   }
 
   /** Call from `ReviewsService.createVenueReview`. §5.1: 50 coins for a review with a photo. */
-  async onReviewSubmitted(userId: string, hasPhoto: boolean, bookingId: string) {
+  async onReviewSubmitted(
+    userId: string,
+    hasPhoto: boolean,
+    bookingId: string,
+  ) {
     await this.bumpQuestsForEvent(userId, 'review.submitted');
     if (!hasPhoto) return;
     await this.prisma.$transaction([
@@ -624,7 +690,12 @@ export class RewardsService {
         data: { coinsBalance: { increment: REVIEW_PHOTO_BONUS_COINS } },
       }),
       this.prisma.coinLedgerEntry.create({
-        data: { userId, amount: REVIEW_PHOTO_BONUS_COINS, reason: 'review_with_photo', bookingId },
+        data: {
+          userId,
+          amount: REVIEW_PHOTO_BONUS_COINS,
+          reason: 'review_with_photo',
+          bookingId,
+        },
       }),
     ]);
   }

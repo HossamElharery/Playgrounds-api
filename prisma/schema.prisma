@@ -1982,7 +1982,13 @@ model FaqEntry {
   questionAr String
   answerEn   String @db.Text
   answerAr   String @db.Text
-  position   Int    @default(0)
+  /// booking | payments | account | play | owners | policies
+  category   String  @default("booking")
+  position   Int     @default(0)
+  /// App path without locale, e.g. register, app/bookings, owner/today. mailto: and https: allowed.
+  ctaPath    String?
+  ctaLabelEn String?
+  ctaLabelAr String?
 }
 
 model SupportInquiry {

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { IndexNowService } from '../seo/index-now.service';
+import { EmailService } from '../email/email.service';
 import { PublishStatus } from '@prisma/client';
 import { CreateBlogPostDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateBlogCategoryDto } from './dto/blog-category.dto';
@@ -20,9 +21,12 @@ function slugify(input: string): string {
 
 @Injectable()
 export class ContentService {
+  private readonly logger = new Logger(ContentService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly indexNow: IndexNowService,
+    private readonly email: EmailService,
   ) {}
 
   /** Tell IndexNow-enabled engines (Bing, Yandex, …) about a published article; never blocks the save. */
@@ -206,27 +210,97 @@ export class ContentService {
   }
 
   // ---- FAQ ----
+  private pingHelp(): void {
+    void this.indexNow
+      .notifyUrls(['/ar/help', '/en/help'])
+      .catch(() => undefined);
+  }
+
   listFaq() {
-    return this.prisma.faqEntry.findMany({ orderBy: { position: 'asc' } });
+    return this.prisma.faqEntry.findMany({
+      orderBy: [{ position: 'asc' }, { questionEn: 'asc' }],
+    });
   }
 
-  createFaq(dto: UpsertFaqDto) {
-    return this.prisma.faqEntry.create({ data: dto });
+  async createFaq(dto: UpsertFaqDto) {
+    const position =
+      dto.position ??
+      ((await this.prisma.faqEntry.aggregate({ _max: { position: true } }))._max
+        .position ?? -1) + 1;
+    const created = await this.prisma.faqEntry.create({
+      data: {
+        questionEn: dto.questionEn,
+        questionAr: dto.questionAr,
+        answerEn: dto.answerEn,
+        answerAr: dto.answerAr,
+        category: dto.category ?? 'booking',
+        position,
+        ...this.faqCta(dto),
+      },
+    });
+    this.pingHelp();
+    return created;
   }
 
-  updateFaq(id: string, dto: Partial<UpsertFaqDto>) {
-    return this.prisma.faqEntry.update({ where: { id }, data: dto });
+  async updateFaq(id: string, dto: Partial<UpsertFaqDto>) {
+    const updated = await this.prisma.faqEntry.update({
+      where: { id },
+      data: {
+        ...dto,
+        ...this.faqCta(dto),
+      },
+    });
+    this.pingHelp();
+    return updated;
   }
 
-  deleteFaq(id: string) {
-    return this.prisma.faqEntry.delete({ where: { id } });
+  private faqCta(dto: Partial<UpsertFaqDto>): {
+    ctaPath?: string | null;
+    ctaLabelEn?: string | null;
+    ctaLabelAr?: string | null;
+  } {
+    const blank = (value?: string) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : null;
+    };
+    return {
+      ...(dto.ctaPath !== undefined ? { ctaPath: blank(dto.ctaPath) } : {}),
+      ...(dto.ctaLabelEn !== undefined ? { ctaLabelEn: blank(dto.ctaLabelEn) } : {}),
+      ...(dto.ctaLabelAr !== undefined ? { ctaLabelAr: blank(dto.ctaLabelAr) } : {}),
+    };
+  }
+
+  async deleteFaq(id: string) {
+    const deleted = await this.prisma.faqEntry.delete({ where: { id } });
+    this.pingHelp();
+    return deleted;
   }
 
   // ---- Support inquiries ----
-  createSupportInquiry(dto: CreateSupportInquiryDto) {
-    return this.prisma.supportInquiry.create({
-      data: { ...dto, phone: dto.phone ?? '' },
+  async createSupportInquiry(dto: CreateSupportInquiryDto, userId?: string) {
+    const inquiry = await this.prisma.supportInquiry.create({
+      data: {
+        fullName: dto.fullName,
+        email: dto.email,
+        phone: dto.phone ?? '',
+        message: dto.message,
+        ...(userId ? { userId } : {}),
+      },
     });
+    try {
+      await this.email.sendSupportInquiry({
+        fullName: inquiry.fullName,
+        email: inquiry.email,
+        phone: inquiry.phone || undefined,
+        message: inquiry.message,
+      });
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Support inquiry ${inquiry.id} saved but email failed: ${detail}`,
+      );
+    }
+    return inquiry;
   }
 
   async listSupportInquiries(page: number, perPage: number, status?: string) {
@@ -237,16 +311,22 @@ export class ContentService {
         skip: (page - 1) * perPage,
         take: perPage,
         orderBy: { createdAt: 'desc' },
+        include: { user: { select: { id: true, name: true } } },
       }),
       this.prisma.supportInquiry.count({ where }),
     ]);
     return { items, pagination: buildPagination(page, perPage, total) };
   }
 
-  markSupportInquiryRead(id: string) {
+  async markSupportInquiryRead(id: string) {
+    const existing = await this.prisma.supportInquiry.findUnique({
+      where: { id },
+    });
+    if (!existing) throw new NotFoundException('Support inquiry not found');
     return this.prisma.supportInquiry.update({
       where: { id },
       data: { status: 'read', readAt: new Date() },
+      include: { user: { select: { id: true, name: true } } },
     });
   }
 

@@ -32,9 +32,14 @@ export class FriendsService {
       async (tx) => {
         const recipient = await tx.user.findUnique({
           where: { id: addresseeId },
-          select: { status: true },
+          select: { status: true, isGuest: true },
         });
-        if (!recipient || recipient.status !== 'active')
+        // Guests are throw-away squad-link identities: they have no way to
+        // ever come back and accept/decline, so a request to one would sit
+        // pending forever. (The reverse direction — a guest sending a
+        // request — is already blocked earlier, by AuthGuard's GUEST_ALLOWED
+        // allow-list, which does not include this route.)
+        if (!recipient || recipient.status !== 'active' || recipient.isGuest)
           throw new NotFoundException('Player not found');
         const blocked = await tx.userBlock.findFirst({
           where: {

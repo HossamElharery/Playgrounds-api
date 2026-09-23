@@ -41,9 +41,12 @@ export class ChatService {
   private async canMessage(fromId: string, toId: string) {
     const to = await this.prisma.user.findUnique({
       where: { id: toId },
-      select: { messagePolicy: true, status: true },
+      select: { messagePolicy: true, status: true, isGuest: true },
     });
-    if (!to || to.status !== 'active')
+    // A guest has no client access to /chat (blocked by AuthGuard) and no
+    // way back once their session ends, so a thread with one would sit
+    // permanently unread on both sides.
+    if (!to || to.status !== 'active' || to.isGuest)
       throw new NotFoundException('Player not found');
     const policy = to?.messagePolicy ?? 'everyone';
     if (policy === 'nobody')
@@ -156,40 +159,40 @@ export class ChatService {
 
   async findOrCreateTeamThread(userId: string, teamId: string, title?: string) {
     const threadId = await this.prisma.$transaction(async (tx) => {
-    // Use the same lock as membership changes, so opening chat cannot restore
-    // a participant concurrently removed by leaving or archiving the team.
-    await tx.$executeRaw`SELECT 1 FROM "Team" WHERE "id" = ${teamId} FOR UPDATE`;
-    const member = await tx.teamMember.findUnique({
-      where: { teamId_userId: { teamId, userId } },
-    });
-    if (!member) throw new ForbiddenException('Not a member of this team');
-    const team = await tx.team.findUniqueOrThrow({
-      where: { id: teamId },
-      include: { members: true },
-    });
-    if (team.archivedAt) throw new ForbiddenException('Team is archived');
-    if (team.chatThreadId) {
-      await tx.chatThreadParticipant.upsert({
-        where: { threadId_userId: { threadId: team.chatThreadId, userId } },
-        update: {},
-        create: { threadId: team.chatThreadId, userId },
+      // Use the same lock as membership changes, so opening chat cannot restore
+      // a participant concurrently removed by leaving or archiving the team.
+      await tx.$executeRaw`SELECT 1 FROM "Team" WHERE "id" = ${teamId} FOR UPDATE`;
+      const member = await tx.teamMember.findUnique({
+        where: { teamId_userId: { teamId, userId } },
       });
-      return team.chatThreadId;
-    }
-    const thread = await tx.chatThread.create({
-      data: {
-        type: 'team',
-        title: title ?? team.name,
-        participants: {
-          create: team.members.map((m) => ({ userId: m.userId })),
+      if (!member) throw new ForbiddenException('Not a member of this team');
+      const team = await tx.team.findUniqueOrThrow({
+        where: { id: teamId },
+        include: { members: true },
+      });
+      if (team.archivedAt) throw new ForbiddenException('Team is archived');
+      if (team.chatThreadId) {
+        await tx.chatThreadParticipant.upsert({
+          where: { threadId_userId: { threadId: team.chatThreadId, userId } },
+          update: {},
+          create: { threadId: team.chatThreadId, userId },
+        });
+        return team.chatThreadId;
+      }
+      const thread = await tx.chatThread.create({
+        data: {
+          type: 'team',
+          title: title ?? team.name,
+          participants: {
+            create: team.members.map((m) => ({ userId: m.userId })),
+          },
         },
-      },
-    });
-    await tx.team.update({
-      where: { id: teamId },
-      data: { chatThreadId: thread.id },
-    });
-    return thread.id;
+      });
+      await tx.team.update({
+        where: { id: teamId },
+        data: { chatThreadId: thread.id },
+      });
+      return thread.id;
     });
     return this.getThread(userId, threadId);
   }
@@ -267,7 +270,10 @@ export class ChatService {
             id: other.user.id,
             name: other.user.name,
             avatarUrl: other.user.avatarUrl,
-            presence: this.presence.stateFor(other.user.id, other.user.lastSeenAt),
+            presence: this.presence.stateFor(
+              other.user.id,
+              other.user.lastSeenAt,
+            ),
             lastSeenAt: other.user.lastSeenVisible
               ? other.user.lastSeenAt
               : undefined,

@@ -59,4 +59,26 @@ describe('EmailService', () => {
     expect(html).toContain('&lt;img src=x&gt;');
     expect(html).not.toContain('<img src=x>');
   });
+
+  it('emails the support inbox and sets Reply-To to the sender', async () => {
+    await service.sendSupportInquiry({
+      fullName: 'Omar <script>',
+      email: 'omar@mail.com',
+      message: 'Need help with a booking.',
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'support@matchena.com',
+        replyTo: 'omar@mail.com',
+        subject: 'Contact · Omar <script>',
+        text: expect.stringContaining('Need help with a booking.'),
+      }),
+    );
+    const html = sendMail.mock.calls[0][0].html as string;
+    expect(html).toContain('Omar &lt;script&gt;');
+    expect(html).not.toContain('Omar <script>');
+    expect(html).not.toContain('Phone');
+  });
 });
+

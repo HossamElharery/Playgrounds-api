@@ -50,6 +50,7 @@
     "class-validator": "^0.14.2",
     "cookie-parser": "^1.4.7",
     "fflate": "^0.8.2",
+    "google-auth-library": "^11.1.0",
     "helmet": "^8.3.0",
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",

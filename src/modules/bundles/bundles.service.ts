@@ -11,6 +11,10 @@ import {
   zonedWallTimeToUtc,
   zonedWeekday,
 } from '../../common/utils/timezone.util';
+import {
+  isTimeWithinDayHours,
+  WeeklyHours,
+} from '../../common/utils/weekly-hours.util';
 import { signQrPayload } from '../../common/utils/qr.util';
 import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
@@ -132,61 +136,24 @@ export class BundlesService {
     });
   }
 
+  async quote(dto: PurchaseBundleDto) {
+    const priced = await this.price(dto);
+    return {
+      baseAmount: priced.combinedBase,
+      feeAmount: priced.feeAmount,
+      discountAmount: priced.discountAmount,
+      totalAmount: priced.totalAmount,
+      currency: priced.currency,
+    };
+  }
+
   async purchase(userId: string, dto: PurchaseBundleDto) {
-    const bundle = await this.prisma.bundle.findUnique({
-      where: { id: dto.bundleId },
-      include: {
-        venue: { include: { country: true } },
-        items: { include: { court: { include: { pricingRules: true } } } },
-      },
-    });
-    if (!bundle || !bundle.active)
-      throw new NotFoundException('Bundle not found');
-
-    const timeZone = bundle.venue.country.timezone;
-    const platformSetting = await this.prisma.platformSetting.findUnique({
-      where: { id: 1 },
-    });
-    const feePct =
-      bundle.venue.country.serviceFeePct ?? platformSetting?.serviceFeePct ?? 5;
-
-    const priced = bundle.items.map((item) => {
-      const hhmm = dto.startTimes[item.courtId];
-      if (!hhmm) {
-        throw new BadRequestException(
-          `Missing start time for court ${item.courtId}`,
-        );
-      }
-      const slotStart = zonedWallTimeToUtc(dto.date, hhmm, timeZone);
-      if (slotStart < new Date())
-        throw new BadRequestException('Cannot book a past slot');
-      const slotEnd = new Date(
-        slotStart.getTime() +
-          item.court.slotDurationMins * item.durationUnits * 60_000,
-      );
-      const rule = matchPricingRule(
-        item.court.pricingRules,
-        zonedWeekday(slotStart, timeZone),
-        slotStart,
-        timeZone,
-      );
-      if (!rule)
-        throw new BadRequestException(
-          'One of the bundle courts has no pricing configured',
-        );
-      const baseAmount = rule.priceAmount * item.durationUnits;
-      return { item, slotStart, slotEnd, baseAmount, currency: rule.currency };
-    });
-
-    const combinedBase = priced.reduce((sum, p) => sum + p.baseAmount, 0);
-    const discountAmount = Math.round(
-      (combinedBase * bundle.discountPercent) / 100,
-    );
-    const feeAmount = Math.round(combinedBase * (feePct / 100));
-    const totalAmount = Math.max(0, combinedBase + feeAmount - discountAmount);
+    const priced = await this.price(dto);
+    const { bundle, lines, feeAmount, discountAmount, totalAmount } = priced;
     const qrSecret = this.config.get<string>('QR_SIGNING_SECRET')!;
     const commissionBps = await this.commission.resolveBps(bundle.venueId);
     const payAtVenue = bundle.venue.paymentMode === 'at_venue';
+    const combinedBase = priced.combinedBase;
 
     try {
       return await this.prisma.$transaction(
@@ -199,7 +166,17 @@ export class BundlesService {
             });
           }
           const bookings: Booking[] = [];
-          for (const p of priced) {
+          for (const p of lines) {
+            const blocked = await tx.calendarBlock.findFirst({
+              where: {
+                venueId: bundle.venueId,
+                OR: [{ courtId: p.item.courtId }, { courtId: null }],
+                startsAt: { lt: p.slotEnd },
+                endsAt: { gt: p.slotStart },
+              },
+            });
+            if (blocked) throw new ConflictException('SLOT_BLOCKED');
+
             const overlap = await tx.booking.findFirst({
               where: {
                 courtId: p.item.courtId,
@@ -247,6 +224,18 @@ export class BundlesService {
               where: { id: created.id },
               data: { qrPayload },
             });
+            if (!payAtVenue) {
+              await tx.payment.create({
+                data: {
+                  bookingId: created.id,
+                  amount: money.total,
+                  currency: p.currency,
+                  method: 'wallet',
+                  status: 'paid',
+                  providerRef: 'wallet',
+                },
+              });
+            }
             await this.ledger.syncBookingLedger(tx, created.id, 'payment_paid');
             bookings.push(withQr);
           }
@@ -260,5 +249,91 @@ export class BundlesService {
         throw new ConflictException('SLOT_ALREADY_HELD');
       throw error;
     }
+  }
+
+  private unitsFor(
+    dto: PurchaseBundleDto,
+    courtId: string,
+    fallback: number,
+  ): number {
+    const raw = dto.unitsByCourt?.[courtId] ?? dto.units ?? fallback;
+    const units = Number(raw);
+    if (!Number.isInteger(units) || units < 1 || units > 4) {
+      throw new BadRequestException(`Invalid duration for court ${courtId}`);
+    }
+    return units;
+  }
+
+  private async price(dto: PurchaseBundleDto) {
+    const bundle = await this.prisma.bundle.findUnique({
+      where: { id: dto.bundleId },
+      include: {
+        venue: { include: { country: true } },
+        items: { include: { court: { include: { pricingRules: true } } } },
+      },
+    });
+    if (!bundle || !bundle.active)
+      throw new NotFoundException('Bundle not found');
+
+    const timeZone = bundle.venue.country.timezone;
+    const weeklyHours = bundle.venue.weeklyHours as WeeklyHours | null;
+    const platformSetting = await this.prisma.platformSetting.findUnique({
+      where: { id: 1 },
+    });
+    const feePct =
+      bundle.venue.country.serviceFeePct ?? platformSetting?.serviceFeePct ?? 5;
+
+    const lines = bundle.items.map((item) => {
+      const hhmm = dto.startTimes?.[item.courtId];
+      if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) {
+        throw new BadRequestException(
+          `Missing start time for court ${item.courtId}`,
+        );
+      }
+      const slotStart = zonedWallTimeToUtc(dto.date, hhmm, timeZone);
+      if (slotStart < new Date())
+        throw new BadRequestException('Cannot book a past slot');
+      if (weeklyHours) {
+        const day = zonedWeekday(slotStart, timeZone);
+        const dayHours =
+          weeklyHours[String(day)] ??
+          weeklyHours[day as unknown as string];
+        if (!isTimeWithinDayHours(hhmm, dayHours)) {
+          throw new BadRequestException('SLOT_OUTSIDE_HOURS');
+        }
+      }
+      const units = this.unitsFor(dto, item.courtId, item.durationUnits);
+      const slotEnd = new Date(
+        slotStart.getTime() + item.court.slotDurationMins * units * 60_000,
+      );
+      const rule = matchPricingRule(
+        item.court.pricingRules,
+        zonedWeekday(slotStart, timeZone),
+        slotStart,
+        timeZone,
+      );
+      if (!rule)
+        throw new BadRequestException(
+          'One of the bundle courts has no pricing configured',
+        );
+      const baseAmount = rule.priceAmount * units;
+      return { item, slotStart, slotEnd, baseAmount, currency: rule.currency };
+    });
+
+    const combinedBase = lines.reduce((sum, p) => sum + p.baseAmount, 0);
+    const discountAmount = Math.round(
+      (combinedBase * bundle.discountPercent) / 100,
+    );
+    const feeAmount = Math.round(combinedBase * (feePct / 100));
+    const totalAmount = Math.max(0, combinedBase + feeAmount - discountAmount);
+    return {
+      bundle,
+      lines,
+      combinedBase,
+      discountAmount,
+      feeAmount,
+      totalAmount,
+      currency: lines[0]?.currency ?? bundle.venue.country.currency,
+    };
   }
 }

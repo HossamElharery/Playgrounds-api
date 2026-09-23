@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -207,9 +208,18 @@ export class ContentController {
 
   // ---- Support / contact ----
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('support')
-  createSupportInquiry(@Body() dto: CreateSupportInquiryDto) {
-    return this.content.createSupportInquiry(dto);
+  @ApiOperation({
+    summary: 'Submit a contact-form message',
+    description:
+      'Stores the inquiry in the admin support inbox and emails support@matchena.com. Phone is optional. If a valid access token is present, the message is linked to that account. Do not send userId.',
+  })
+  createSupportInquiry(
+    @Body() dto: CreateSupportInquiryDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.content.createSupportInquiry(dto, user?.id);
   }
 
   @ApiBearerAuth()

@@ -275,6 +275,22 @@ export class RealtimeGateway
     });
   }
 
+  @SubscribeMessage('voice.micStatus')
+  async voiceMicStatus(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { squadId: string; blocked: boolean },
+  ) {
+    const userId = this.authedUserId(client);
+    if (!userId || !data?.squadId) return;
+    if (!(await this.assertSquadMember(userId, data.squadId))) return;
+    this.emitToRoom(`squad:${data.squadId}`, {
+      type: 'voice.micStatus',
+      squadId: data.squadId,
+      userId,
+      blocked: !!data.blocked,
+    });
+  }
+
   @SubscribeMessage('voice.hangup')
   async voiceHangup(
     @ConnectedSocket() client: Socket,

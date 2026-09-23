@@ -68,6 +68,8 @@ const ONLINE_ONLY_METHODS = new Set([
 export interface SlotCell {
   start: string;
   end: string;
+  /** Venue-local HH:mm. Bundle checkout sends this back as the start time. */
+  hhmm: string;
   priceAmount: number;
   currency: string;
   state: 'available' | 'booked' | 'held' | 'past' | 'blocked';
@@ -161,6 +163,7 @@ export class BookingsService {
       cells.push({
         start: start.toISOString(),
         end: end.toISOString(),
+        hhmm: zonedHhmm(start, timeZone),
         priceAmount: rule?.priceAmount ?? 0,
         currency: rule?.currency ?? court.venue.country.currency,
         state,

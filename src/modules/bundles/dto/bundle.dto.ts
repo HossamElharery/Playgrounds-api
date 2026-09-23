@@ -87,10 +87,24 @@ export class PurchaseBundleDto {
   @IsString()
   date!: string;
 
-  /** Wall-clock start time (HH:mm) per courtId — every bundle item needs one. */
+  /** Wall-clock start time (HH:mm) per courtId. Each room can start at its own time. */
   @ApiProperty({ example: { 'court-1': '18:00', 'court-2': '19:00' } })
   @IsObject()
   startTimes!: Record<string, string>;
+
+  /** Slot blocks per courtId. Each room keeps its own duration. */
+  @ApiPropertyOptional({ example: { 'court-1': 1, 'court-2': 2 } })
+  @IsOptional()
+  @IsObject()
+  unitsByCourt?: Record<string, number>;
+
+  /** Shared duration when unitsByCourt is omitted. */
+  @ApiPropertyOptional({ minimum: 1, maximum: 4, default: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  units?: number;
 
   @ApiPropertyOptional({ example: 'wallet', enum: PAYMENT_METHODS })
   @IsOptional()

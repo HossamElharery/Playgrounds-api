@@ -46,6 +46,12 @@ export class LlmsService {
     return `${this.siteUrl}/${lang}${path}`;
   }
 
+  private faqLink(lang: 'en' | 'ar', path: string, label: string): string {
+    if (/^(https?:|mailto:|tel:)/i.test(path)) return `- [${label}](${path})`;
+    const clean = path.startsWith('/') ? path : `/${path}`;
+    return `- [${label}](${this.url(lang, clean)})`;
+  }
+
   private async build(full: boolean): Promise<string> {
     const [sports, venues, posts, faqs, venueCount] = await Promise.all([
       this.prisma.sportCategory.findMany({ select: { slug: true, nameEn: true, nameAr: true }, orderBy: { slug: 'asc' } }),
@@ -73,7 +79,7 @@ export class LlmsService {
     const out: string[] = [];
     out.push('# Matchena (ماتشنا)', '');
     out.push(
-      `> Matchena is a sports and gaming venue booking platform in Egypt. Players check open slots and clear prices, confirm a booking before they leave the house, and fill short-handed matches with other players. ${venueCount} active venues across football, padel, tennis, squash, PlayStation lounges, billiards, table tennis and more. Available in Arabic (${this.url('ar')}) and English (${this.url('en')}).`,
+      `> Matchena is a court booking and venue-management platform in Egypt. Players check open slots and clear prices, confirm a booking before they leave the house, and fill short-handed matches with other players. Venue owners run the same courts from a dashboard: calendar, prices, walk-ins, staff and earnings. ${venueCount} active venues across football, padel, tennis, squash, PlayStation lounges, billiards, table tennis and more. Available in Arabic (${this.url('ar')}) and English (${this.url('en')}).`,
       '',
     );
     out.push(
@@ -89,9 +95,9 @@ export class LlmsService {
       ['/leaderboards', 'Leaderboards', 'Top players and teams.'],
       ['/blog', 'Blog', 'Guides and news about playing and booking in Egypt.'],
       ['/how-it-works', 'How it works', 'How booking, payment and confirmation work.'],
-      ['/partners', 'For venue owners', 'List a venue and take bookings.'],
+      ['/partners', 'For venue owners', 'Run the calendar, prices, staff and earnings, then take bookings.'],
       ['/about', 'About', 'Who we are and what Matchena does.'],
-      ['/help', 'Help center', 'Answers to common questions.'],
+      ['/help', 'Help center', 'Answers for players booking a court and owners running one.'],
       ['/contact', 'Contact', 'Reach the Matchena team.'],
     ];
     for (const [path, name, desc] of main) out.push(`- [${name}](${this.url('en', path)}): ${desc}`);
@@ -133,7 +139,14 @@ export class LlmsService {
       if (faqs.length) {
         out.push('## Frequently asked questions', '');
         for (const f of faqs) {
-          out.push(`### ${f.questionEn}`, f.answerEn.trim(), '', `### ${f.questionAr}`, f.answerAr.trim(), '');
+          out.push(`### ${f.questionEn}`, f.answerEn.trim(), '');
+          if (f.ctaPath && f.ctaLabelEn) {
+            out.push(this.faqLink('en', f.ctaPath, f.ctaLabelEn), '');
+          }
+          out.push(`### ${f.questionAr}`, f.answerAr.trim(), '');
+          if (f.ctaPath && f.ctaLabelAr) {
+            out.push(this.faqLink('ar', f.ctaPath, f.ctaLabelAr), '');
+          }
         }
       }
       if (posts.length) {

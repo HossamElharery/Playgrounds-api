@@ -210,7 +210,7 @@ Full request/response DTOs are in Swagger (`/api/docs`) and `src/modules/<name>/
 `GET geo/countries` · `GET geo/countries/:code` · `GET geo/governorates?country=EG` · `GET geo/districts?gov=cairo` (or `governorateId=`) — districts include a GeoJSON `polygon`.
 
 ### content (`/blog`, `/banners`, `/faq`, `/support`, `/admin/*`)
-- Public: `GET sports` · `GET amenities` · `GET blog?page=&perPage=` (**published only — do not send `status`**) · `GET blog/:slugOrId` (bilingual `titleEn`/`titleAr` + `contentEn`/`contentAr`) · `GET banners?placement=` · `GET faq` · `POST support { fullName, email, phone, message }`
+- Public: `GET sports` · `GET amenities` · `GET blog?page=&perPage=` (**published only — do not send `status`**) · `GET blog/:slugOrId` (bilingual `titleEn`/`titleAr` + `contentEn`/`contentAr`) · `GET banners?placement=` · `GET faq` · `POST support { fullName, email, phone?, message }` (public contact form; optional phone; throttled; emails `MAIL_REPLY_TO` / `support@matchena.com` and stores a `SupportInquiry`. A valid JWT links `userId`; clients must not send `userId`.)
 - Admin: `GET/POST admin/blog` (`GET` accepts `status=draft|published|archived`) · `PATCH/DELETE admin/blog/:id` · banners/faq CRUD · `GET admin/support?status=new|read` · `PATCH admin/support/:id/read`
 
 ### users extras
@@ -269,7 +269,7 @@ One gateway (`realtime/realtime.gateway.ts`). Handshake: client connects with `a
 
 - `chat.thread.join { threadId }` → joins `thread:<id>` only if the caller is an actual `ChatThreadParticipant`.
 - `squad.lobby.join { squadId }` → joins `squad:<id>` only if the caller is an actual `SquadMember`.
-- Voice (WebRTC mesh, no SFU): `voice.offer` / `voice.answer` / `voice.ice` / `voice.speaking` / `voice.hangup` — relayed only between verified squad members. Clients fetch ICE servers from `GET /squad/ice-servers`.
+- Voice (WebRTC mesh, no SFU): `voice.offer` / `voice.answer` / `voice.ice` / `voice.speaking` / `voice.micStatus` / `voice.hangup` — relayed only between verified squad members. Clients fetch ICE servers from `GET /squad/ice-servers`.
 
 **Events emitted** (client subscribes by `type`):
 
@@ -286,7 +286,7 @@ One gateway (`realtime/realtime.gateway.ts`). Handshake: client connects with `a
 | `squad.invite.created` / `.resolved` | `SquadService` | invite lifecycle |
 | `squad.join_request.created` | `SquadService` | non-leader-initiated invite → leader approval queue |
 | `squad.member.kicked` / `.leader.changed` / `.member.muted` | `SquadService` | roster/moderation actions |
-| `voice.offer` / `voice.answer` / `voice.ice` / `voice.speaking` / `voice.hangup` | gateway | WebRTC signaling |
+| `voice.offer` / `voice.answer` / `voice.ice` / `voice.speaking` / `voice.micStatus` / `voice.hangup` | gateway | WebRTC signaling + mic-blocked presence |
 | `pulse.availability.changed` / `pulse.opportunity.changed` | `PulseService` / `JobsService` | availability set, claim expiry |
 | `notification.created` | `NotificationsService` | any new in-app notification |
 

@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as ngeohash from 'ngeohash';
+import { HELP_FAQS } from './data/help-faqs';
 
 const prisma = new PrismaClient();
 
@@ -822,57 +823,8 @@ async function main() {
     });
   }
 
-  // ---- FAQ ----
-  const faqs = [
-    {
-      id: 'faq-book',
-      position: 0,
-      questionEn: 'How do I book a court?',
-      questionAr: 'إزاي أحجز ملعب؟',
-      answerEn:
-        'Search Explore, open a venue, pick a free slot, then confirm. The hold lasts a few minutes so nobody else takes it while you pay.',
-      answerAr:
-        'ابحث من استكشف، افتح الملعب، اختار ميعاد فاضي، وبعدين أكّد. الحجز بيتقفّل دقايق عشان محدش ياخده وأنت بتدفع.',
-    },
-    {
-      id: 'faq-cancel',
-      position: 1,
-      questionEn: 'How do I cancel a booking?',
-      questionAr: 'إزاي ألغي حجز؟',
-      answerEn:
-        'Open My Bookings and cancel before the venue cutoff. Refund percent depends on how close you are to kickoff.',
-      answerAr:
-        'من حجوزاتي اضغط إلغاء قبل ميعاد الإلغاء بتاع الملعب. نسبة الاسترجاع بتعتمد على قربك من بداية المباراة.',
-    },
-    {
-      id: 'faq-otp',
-      position: 2,
-      questionEn: 'I did not receive the login OTP',
-      questionAr: 'الـ OTP مش واصل',
-      answerEn:
-        'Check the number is in +20 format and wait a minute. If it still does not arrive, try again or sign in with Google, Facebook, or Face ID.',
-      answerAr:
-        'اتأكد إن الرقم بصيغة +20 واستنى دقيقة. لو الكود موصلش، اطلبه تاني أو ادخل بجوجل أو فيسبوك أو Face ID.',
-    },
-    {
-      id: 'faq-split',
-      position: 3,
-      questionEn: 'Can we split the payment?',
-      questionAr: 'ينفع نقسم الدفع؟',
-      answerEn:
-        'Yes. When you confirm, add split shares. The booking stays partial until every share is paid and the amounts add up to the total.',
-      answerAr:
-        'أيوه. وقت التأكيد ضيف حصص التقسيم. الحجز يفضل جزئي لحد ما كل حصة تتدفع والمبالغ تساوي الإجمالي.',
-    },
-    {
-      id: 'faq-promo',
-      position: 4,
-      questionEn: 'Do you have a welcome promo?',
-      questionAr: 'في كود ترحيبي؟',
-      answerEn: 'First booking can use WELCOME25 for 25% off.',
-      answerAr: 'أول حجز ممكن تستخدم WELCOME25 خصم 25٪.',
-    },
-  ];
+  // ---- FAQ (production Help Center copy) ----
+  const faqs = HELP_FAQS;
   for (const faq of faqs) {
     await prisma.faqEntry.upsert({
       where: { id: faq.id },

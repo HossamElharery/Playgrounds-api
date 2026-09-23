@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
@@ -69,14 +69,17 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     this.presence.connection$.subscribe(({ userId, connected }) => {
       if (connected) {
         this.clearDropTimer(userId);
-        void this.broadcastMemberConnection(userId, true).catch(() => undefined);
+        void this.broadcastMemberConnection(userId, true).catch(
+          () => undefined,
+        );
         return;
       }
       if (this.dropTimers.has(userId)) return;
       void this.broadcastMemberConnection(userId, false).catch(() => undefined);
       const timer = setTimeout(() => {
         this.dropTimers.delete(userId);
-        if (this.presence.isReachable(userId, SQUAD_DISCONNECT_GRACE_MS)) return;
+        if (this.presence.isReachable(userId, SQUAD_DISCONNECT_GRACE_MS))
+          return;
         void this.leaveCurrentSquad(userId).catch((err) => {
           this.logger.warn(
             `squad auto-leave failed: ${err instanceof Error ? err.message : err}`,
@@ -115,8 +118,10 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       select: { userId: true, user: { select: { lastSeenAt: true } } },
     });
     for (const member of members) {
-      if (this.presence.isReachable(member.userId, SQUAD_DISCONNECT_GRACE_MS)) continue;
-      if (this.presence.isOnline(member.userId, member.user.lastSeenAt)) continue;
+      if (this.presence.isReachable(member.userId, SQUAD_DISCONNECT_GRACE_MS))
+        continue;
+      if (this.presence.isOnline(member.userId, member.user.lastSeenAt))
+        continue;
       await this.leaveCurrentSquad(member.userId).catch(() => undefined);
     }
   }
@@ -127,7 +132,9 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
    * lobby is reachable without first inviting someone.
    */
   async startLobby(userId: string) {
-    const existing = await this.prisma.squadMember.findFirst({ where: { userId } });
+    const existing = await this.prisma.squadMember.findFirst({
+      where: { userId },
+    });
     if (existing) return { squadId: existing.squadId, created: false };
     const squad = await this.prisma.squad.create({
       data: { members: { create: [{ userId, isLeader: true }] } },
@@ -152,7 +159,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     if (typeof token !== 'string' || token.length > 200) return null;
     const [linkId, sig, extra] = token.split('.');
     if (!linkId || !sig || extra !== undefined) return null;
-    const expected = this.linkTokenFor(linkId).split('.')[1]!;
+    const expected = this.linkTokenFor(linkId).split('.')[1];
     const a = Buffer.from(sig);
     const b = Buffer.from(expected);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
@@ -195,33 +202,53 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       where: { squadId },
     });
     if (existing && existing.expiresAt.getTime() > Date.now()) {
-      return { token: this.linkTokenFor(existing.id), expiresAt: existing.expiresAt };
+      return {
+        token: this.linkTokenFor(existing.id),
+        expiresAt: existing.expiresAt,
+      };
     }
-    // Expired or missing: replace atomically so two tabs racing cannot leave
-    // two live links behind (squadId is unique).
+    // Expired or missing: upsert in one atomic statement. The previous
+    // delete-then-create was two separate round trips — two requests racing
+    // (two tabs, or a retried request) could both pass the "missing" check,
+    // both delete, both create, and leave the *loser's* just-minted token
+    // pointing at a row the *winner's* delete had already removed, breaking
+    // a link within moments of handing it out. Renewing keeps the same id
+    // (and therefore the same shareable URL) — nothing could have used the
+    // link while it sat expired, so there is no reason to also rotate it.
     const expiresAt = new Date(Date.now() + SQUAD_LINK_TTL_MS);
-    await this.prisma.squadInviteLink
-      .deleteMany({ where: { squadId } })
-      .catch(() => undefined);
-    const link = await this.prisma.squadInviteLink
-      .create({ data: { squadId, createdById: userId, expiresAt } })
-      .catch(async () => {
-        // Lost the race to a concurrent create: use the winner.
-        const winner = await this.prisma.squadInviteLink.findUnique({ where: { squadId } });
-        if (!winner) throw new BadRequestException('Could not create the link');
-        return winner;
-      });
+    const link = await this.prisma.squadInviteLink.upsert({
+      where: { squadId },
+      create: { squadId, createdById: userId, expiresAt },
+      update: { expiresAt, createdById: userId },
+    });
     return { token: this.linkTokenFor(link.id), expiresAt: link.expiresAt };
   }
 
   /** Leader-only: kills the current link and returns a brand new one. */
   async rotateInviteLink(userId: string) {
-    const membership = await this.prisma.squadMember.findFirst({ where: { userId } });
+    const membership = await this.prisma.squadMember.findFirst({
+      where: { userId },
+    });
     if (!membership) throw new NotFoundException('Not in a squad');
     if (!membership.isLeader)
       throw new ForbiddenException('Only the squad leader can reset the link');
-    await this.prisma.squadInviteLink.deleteMany({ where: { squadId: membership.squadId } });
-    return this.getOrCreateInviteLink(userId);
+    // Unlike the auto-renew above, this must actually invalidate the old
+    // token, so the id changes — done as one atomic upsert for the same
+    // race-safety reason (a double-tap on "reset" must not strand one tab
+    // with a token the other tab's upsert already replaced).
+    const newId = randomUUID();
+    const expiresAt = new Date(Date.now() + SQUAD_LINK_TTL_MS);
+    const link = await this.prisma.squadInviteLink.upsert({
+      where: { squadId: membership.squadId },
+      create: {
+        id: newId,
+        squadId: membership.squadId,
+        createdById: userId,
+        expiresAt,
+      },
+      update: { id: newId, createdById: userId, expiresAt },
+    });
+    return { token: this.linkTokenFor(link.id), expiresAt: link.expiresAt };
   }
 
   /** Public, minimal: enough for the landing page, nothing sensitive. */
@@ -238,7 +265,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
         'This invite link is no longer valid',
       );
     }
-    const leader = members.find((m) => m.isLeader) ?? members[0]!;
+    const leader = members.find((m) => m.isLeader) ?? members[0];
     return {
       leaderName: leader.user.name,
       memberCount: members.length,
@@ -252,7 +279,9 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     const link = await this.resolveLink(token);
     const squadId = link.squadId;
 
-    const existing = await this.prisma.squadMember.findFirst({ where: { userId } });
+    const existing = await this.prisma.squadMember.findFirst({
+      where: { userId },
+    });
     if (existing?.squadId === squadId) return { squadId, alreadyMember: true };
     if (existing) await this.leave(userId, existing.squadId);
 
@@ -267,7 +296,11 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
         );
       const size = await tx.squadMember.count({ where: { squadId } });
       if (size >= SQUAD_MAX_SIZE)
-        throw new ApiException(HttpStatus.CONFLICT, 'SQUAD_FULL', 'Squad is full');
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'SQUAD_FULL',
+          'Squad is full',
+        );
       await tx.squadMember.create({ data: { squadId, userId } });
     });
     this.presence.setInSquad(userId, true);
@@ -303,7 +336,18 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       take: 200,
     });
     for (const g of stale) {
-      await this.prisma.user.delete({ where: { id: g.id } }).catch(() => undefined);
+      // Friendship has no cascade delete (unlike RefreshToken/Notification):
+      // a stray request that reached a guest before this surface was locked
+      // down would otherwise block user.delete() forever and this sweep
+      // would silently retry the same zombie row every hour.
+      await this.prisma.friendship
+        .deleteMany({
+          where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] },
+        })
+        .catch(() => undefined);
+      await this.prisma.user
+        .delete({ where: { id: g.id } })
+        .catch(() => undefined);
     }
     await this.prisma.squadInviteLink
       .deleteMany({ where: { expiresAt: { lt: cutoff } } })
@@ -315,12 +359,20 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       this.config.get<string>('STUN_URLS') ??
       'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302';
     const servers: { urls: string; username?: string; credential?: string }[] =
-      stun.split(',').map((urls) => urls.trim()).filter(Boolean).map((urls) => ({ urls }));
+      stun
+        .split(',')
+        .map((urls) => urls.trim())
+        .filter(Boolean)
+        .map((urls) => ({ urls }));
     const turn = this.config.get<string>('TURN_URLS');
     if (turn) {
       const username = this.config.get<string>('TURN_USERNAME') ?? undefined;
-      const credential = this.config.get<string>('TURN_CREDENTIAL') ?? undefined;
-      for (const urls of turn.split(',').map((u) => u.trim()).filter(Boolean)) {
+      const credential =
+        this.config.get<string>('TURN_CREDENTIAL') ?? undefined;
+      for (const urls of turn
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)) {
         servers.push({ urls, username, credential });
       }
     }
@@ -352,7 +404,9 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
         createdAt: { gte: this.inviteFreshSince() },
       },
       include: {
-        fromUser: { select: { id: true, name: true, avatarUrl: true, avatarConfig: true } },
+        fromUser: {
+          select: { id: true, name: true, avatarUrl: true, avatarConfig: true },
+        },
         squad: { include: { members: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -685,6 +739,20 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
 
   async makeLeader(leaderId: string, squadId: string, userId: string) {
     await this.requireLeaderOrThrow(squadId, leaderId);
+    // A guest's session can vanish at any moment (no credentials to come
+    // back with) — handing them the leader powers (approve/kick, reset the
+    // invite link) risks stranding the squad the moment they disconnect.
+    const target = await this.prisma.squadMember.findUnique({
+      where: { squadId_userId: { squadId, userId } },
+      include: { user: { select: { isGuest: true } } },
+    });
+    if (!target) throw new NotFoundException('Not a member of this squad');
+    if (target.user.isGuest)
+      throw new ApiException(
+        HttpStatus.FORBIDDEN,
+        'GUEST_CANNOT_LEAD',
+        'Guests cannot be made squad leader',
+      );
     await this.prisma.$transaction([
       this.prisma.squadMember.update({
         where: { squadId_userId: { squadId, userId: leaderId } },
@@ -741,9 +809,16 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     if (!member) throw new NotFoundException('Not a member of this squad');
 
     if (member.isLeader) {
-      const next = await this.prisma.squadMember.findFirst({
-        where: { squadId, userId: { not: userId } },
-      });
+      // Prefer handing leadership to a real account over a guest — a guest's
+      // session can disappear without warning (no credentials to reconnect
+      // with), which would leave the squad leaderless again minutes later.
+      const next =
+        (await this.prisma.squadMember.findFirst({
+          where: { squadId, userId: { not: userId }, user: { isGuest: false } },
+        })) ??
+        (await this.prisma.squadMember.findFirst({
+          where: { squadId, userId: { not: userId } },
+        }));
       if (next) {
         await this.prisma.squadMember.update({
           where: { id: next.id },
@@ -758,7 +833,11 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     // Pending rings that only made sense while this player was in the lobby
     // die with the membership — otherwise they ring on their next visit.
     await this.prisma.squadInvite.updateMany({
-      where: { squadId, OR: [{ fromUserId: userId }, { toUserId: userId }], status: 'pending' },
+      where: {
+        squadId,
+        OR: [{ fromUserId: userId }, { toUserId: userId }],
+        status: 'pending',
+      },
       data: { status: 'expired' },
     });
 
@@ -796,7 +875,10 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
    * back) so the UI can show "reconnecting…" instead of a silent avatar that
    * is really a closed tab.
    */
-  async broadcastMemberConnection(userId: string, connected: boolean): Promise<void> {
+  async broadcastMemberConnection(
+    userId: string,
+    connected: boolean,
+  ): Promise<void> {
     const membership = await this.prisma.squadMember.findFirst({
       where: { userId },
       select: { squadId: true },

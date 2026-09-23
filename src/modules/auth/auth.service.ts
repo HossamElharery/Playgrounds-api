@@ -14,6 +14,7 @@ import { GuestJoinDto } from './dto/guest-join.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
@@ -50,6 +51,13 @@ const OTP_MAX_ATTEMPTS = 5;
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  // Verifies Google id_tokens locally against Google's cached public keys
+  // (refreshed internally by the library) instead of calling the
+  // `tokeninfo` endpoint per login — that endpoint is undocumented/rate
+  // limited and explicitly not recommended by Google for production traffic;
+  // hitting it synchronously on every login was adding a multi-second
+  // round trip (and occasional failures) to Google sign-in.
+  private readonly googleOAuthClient = new OAuth2Client();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -790,34 +798,38 @@ export class AuthService {
       );
     }
 
-    const response = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(dto.idToken)}`,
-    );
-    if (!response.ok) throw new UnauthorizedException('Invalid Google token');
-    const claims = (await response.json()) as {
-      aud: string;
-      email?: string;
-      email_verified?: string | boolean;
-      name?: string;
-      picture?: string;
-      sub: string;
-      nonce?: string;
-    };
-
     const allowed = clientId
       .split(',')
       .map((id) => id.trim())
       .filter(Boolean);
-    if (!allowed.includes(claims.aud)) {
-      throw new UnauthorizedException('Token audience mismatch');
+
+    let claims: {
+      aud?: string;
+      email?: string;
+      email_verified?: boolean;
+      name?: string;
+      picture?: string;
+      sub?: string;
+      nonce?: string;
+    };
+    try {
+      const ticket = await this.googleOAuthClient.verifyIdToken({
+        idToken: dto.idToken,
+        audience: allowed,
+      });
+      claims = ticket.getPayload() ?? {};
+    } catch {
+      throw new UnauthorizedException('Invalid Google token');
     }
+
     if (dto.nonce && claims.nonce && dto.nonce !== claims.nonce) {
       throw new UnauthorizedException('Token nonce mismatch');
     }
-    const verified =
-      claims.email_verified === true || claims.email_verified === 'true';
-    if (!claims.email || !verified) {
+    if (!claims.email || !claims.email_verified) {
       throw new BadRequestException('Google account has no verified email');
+    }
+    if (!claims.sub) {
+      throw new UnauthorizedException('Invalid Google token');
     }
 
     const user = await this.findOrCreateOAuthUser({

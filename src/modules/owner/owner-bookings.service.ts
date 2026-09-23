@@ -939,6 +939,7 @@ export class OwnerBookingsService {
     notes: string | null;
     checkedInAt: Date | null;
     currency: string;
+    bundleId?: string | null;
     payments?: { amount: number }[];
   }) {
     const durationMinutes = Math.round((b.slotEnd.getTime() - b.slotStart.getTime()) / 60_000);
@@ -985,6 +986,7 @@ export class OwnerBookingsService {
       paymentMethod: b.paymentMethod,
       notes: b.notes,
       checkedInAt: b.checkedInAt?.toISOString() ?? null,
+      bundleId: b.bundleId ?? null,
       isLocked,
       canEdit: !isLocked && !tooOld && b.status !== 'cancelled',
       needsAttention,

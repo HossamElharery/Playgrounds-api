@@ -57,6 +57,12 @@ export class BundlesController {
     return this.bundles.update(id, user, dto);
   }
 
+  @Public()
+  @Post('bookings/bundles/quote')
+  quote(@Body() dto: PurchaseBundleDto) {
+    return this.bundles.quote(dto);
+  }
+
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('player', 'owner', 'admin')

@@ -10,7 +10,11 @@ describe('UsersService.updateProfile', () => {
 
   beforeEach(() => {
     prisma = { user: { update: jest.fn() } };
-    service = new UsersService(prisma as never, { emitToUser: jest.fn() } as never, {} as never);
+    service = new UsersService(
+      prisma as never,
+      { emitToUser: jest.fn() } as never,
+      {} as never,
+    );
   });
 
   it('saves an optional E.164 phone without OTP', async () => {
@@ -49,5 +53,52 @@ describe('UsersService.updateProfile', () => {
     await expect(
       service.updateProfile('u1', { phone: '+201001112223' }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('UsersService guest exclusion', () => {
+  const baseUser = {
+    id: 'u1',
+    name: 'Hala',
+    avatarUrl: null,
+    avatarConfig: null,
+    bioAr: null,
+    bioEn: null,
+    reputation: 0,
+    reliabilityPct: 100,
+    matchesPlayed: 0,
+    mvps: 0,
+    streakCount: 0,
+    isGuest: true,
+    sportSkills: [],
+    badges: [],
+    teamMemberships: [],
+  };
+
+  it('never includes guests in the public players directory query', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new UsersService(
+      { user: { findMany } } as never,
+      {} as never,
+      {} as never,
+    );
+    await service.listPlayers({} as never);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ isGuest: false }),
+      }),
+    );
+  });
+
+  it('treats a guest profile as not found', async () => {
+    const findUnique = jest.fn().mockResolvedValue(baseUser);
+    const service = new UsersService(
+      { user: { findUnique } } as never,
+      {} as never,
+      {} as never,
+    );
+    await expect(service.publicProfile('u1')).rejects.toThrow(
+      'Player not found',
+    );
   });
 });
