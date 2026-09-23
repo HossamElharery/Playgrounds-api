@@ -91,7 +91,20 @@ export class RewardsService {
     const lastCheckIn = user.streakUpdatedAt;
     const isSameDay =
       lastCheckIn && lastCheckIn.toDateString() === now.toDateString();
-    if (isSameDay) throw new BadRequestException('Already checked in today');
+    // The player app calls this on every dashboard load to claim the daily
+    // streak — a second call the same calendar day is an expected no-op,
+    // not a client error. Throwing here used to surface a 400 in production
+    // on every same-day revisit; the frontend already expects this exact
+    // shape with `alreadyCheckedIn: true` (see RewardsApi.dailyCheckIn).
+    if (isSameDay) {
+      return {
+        coins: 0,
+        streak: user.streakCount,
+        streakFreezes: user.streakFreezes,
+        usedFreeze: false,
+        alreadyCheckedIn: true,
+      };
+    }
 
     const isConsecutiveDay =
       lastCheckIn && now.getTime() - lastCheckIn.getTime() < 48 * 3_600_000;
@@ -135,6 +148,7 @@ export class RewardsService {
       streak: newStreak,
       streakFreezes,
       usedFreeze: canUseFreeze,
+      alreadyCheckedIn: false,
     };
   }
 
