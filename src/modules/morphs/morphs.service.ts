@@ -82,10 +82,9 @@ export class MorphsService {
 
   async me(userId: string) {
     if (!lobbyMorphsEnabled(this.config)) return { enabled: false };
-    const profile = await this.prisma.userMorphProfile.upsert({
+    await this.ensureProfile(this.prisma, userId);
+    const profile = await this.prisma.userMorphProfile.findUniqueOrThrow({
       where: { userId },
-      create: { userId },
-      update: {},
       include: { user: { select: { createdAt: true } } },
     });
     const rows = await this.prisma.userMorph.findMany({
@@ -141,11 +140,7 @@ export class MorphsService {
 
     const outcome = await this.prisma.$transaction(
       async (tx): Promise<RollOutcome> => {
-        await tx.userMorphProfile.upsert({
-          where: { userId },
-          create: { userId },
-          update: {},
-        });
+        await this.ensureProfile(tx, userId);
         // Serializes double taps and multiple tabs of one user (same idea as the squad seat lock).
         await tx.$executeRaw`SELECT 1 FROM "UserMorphProfile" WHERE "userId" = ${userId} FOR UPDATE`;
         // A concurrent retry with the same key may have committed while we waited on the lock.
@@ -293,10 +288,9 @@ export class MorphsService {
           'You do not own this morph',
         );
     }
-    const profile = await this.prisma.userMorphProfile.upsert({
+    await this.ensureProfile(this.prisma, userId);
+    const profile = await this.prisma.userMorphProfile.findUniqueOrThrow({
       where: { userId },
-      create: { userId },
-      update: {},
     });
     if (profile.equippedMorphId === morphId)
       return { equippedMorphId: morphId, changed: false };
@@ -346,24 +340,22 @@ export class MorphsService {
         'User not found',
       );
     const granted = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.userMorph.findUnique({
-        where: { userId_morphId: { userId, morphId } },
-        select: { id: true },
+      // skipDuplicates (ON CONFLICT DO NOTHING) stays safe against a roll
+      // granting the same morph at the same moment.
+      const { count } = await tx.userMorph.createMany({
+        data: [{ userId, morphId, source: 'GRANT' }],
+        skipDuplicates: true,
       });
-      if (!existing)
-        await tx.userMorph.create({
-          data: { userId, morphId, source: 'GRANT' },
-        });
       await tx.auditLogEntry.create({
         data: {
           actorUserId: adminId,
           action: 'admin.morph.grant',
           targetType: 'user',
           targetId: userId,
-          metadata: { morphId, alreadyOwned: Boolean(existing) },
+          metadata: { morphId, alreadyOwned: count === 0 },
         },
       });
-      return !existing;
+      return count === 1;
     });
     if (granted) {
       const profile = await this.prisma.userMorphProfile.findUnique({
@@ -411,6 +403,16 @@ export class MorphsService {
       uniqueRollers: Number(rollers[0]?.count ?? 0),
       miskPulls: perTier.MISK,
     };
+  }
+
+  /**
+   * Creates the profile lazily. A Prisma upsert races on the very first
+   * double tap (both inserts collide → 409); ON CONFLICT DO NOTHING waits for
+   * the winner instead, so the loser reaches the row lock and gets a clean
+   * MORPH_COOLDOWN.
+   */
+  private async ensureProfile(db: Tx, userId: string): Promise<void> {
+    await db.$executeRaw`INSERT INTO "UserMorphProfile" ("userId", "updatedAt") VALUES (${userId}, now()) ON CONFLICT ("userId") DO NOTHING`;
   }
 
   private async quotaFor(

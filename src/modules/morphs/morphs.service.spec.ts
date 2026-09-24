@@ -45,7 +45,15 @@ function fakePrisma() {
     rolls,
     squadMembers,
     audits,
-    $executeRaw: jest.fn(async () => 1),
+    $executeRaw: jest.fn(
+      async (sql: TemplateStringsArray, ...values: any[]) => {
+        if (sql.join('?').includes('INSERT INTO "UserMorphProfile"')) {
+          const userId = values[0];
+          if (!profiles.has(userId)) profiles.set(userId, newProfile(userId));
+        }
+        return 1;
+      },
+    ),
     $queryRaw: jest.fn(async () => [
       { count: BigInt(new Set(rolls.map((r) => r.userId)).size) },
     ]),
@@ -58,22 +66,17 @@ function fakePrisma() {
       ),
     },
     userMorphProfile: {
-      upsert: jest.fn(async ({ where, include }: any) => {
-        if (!profiles.has(where.userId))
-          profiles.set(where.userId, newProfile(where.userId));
-        const p = { ...profiles.get(where.userId) };
+      findUnique: jest.fn(async ({ where }: any) =>
+        profiles.has(where.userId) ? { ...profiles.get(where.userId) } : null,
+      ),
+      findUniqueOrThrow: jest.fn(async ({ where, include }: any) => {
+        const p: any = { ...profiles.get(where.userId) };
         if (include?.user)
           p.user = {
             createdAt: users.get(where.userId)?.createdAt ?? new Date(),
           };
         return p;
       }),
-      findUnique: jest.fn(async ({ where }: any) =>
-        profiles.has(where.userId) ? { ...profiles.get(where.userId) } : null,
-      ),
-      findUniqueOrThrow: jest.fn(async ({ where }: any) => ({
-        ...profiles.get(where.userId),
-      })),
       update: jest.fn(async ({ where, data }: any) => {
         const p = profiles.get(where.userId);
         for (const [k, v] of Object.entries(data)) {
@@ -106,6 +109,18 @@ function fakePrisma() {
         };
         morphs.push(row);
         return row;
+      }),
+      createMany: jest.fn(async ({ data }: any) => {
+        let count = 0;
+        for (const row of data) {
+          const dup = morphs.some(
+            (m) => m.userId === row.userId && m.morphId === row.morphId,
+          );
+          if (dup) continue;
+          await prisma.userMorph.create({ data: row });
+          count++;
+        }
+        return { count };
       }),
       upsert: jest.fn(async ({ where, create, update }: any) => {
         const k = where.userId_morphId;
@@ -400,7 +415,8 @@ describe('MorphsService', () => {
     it('returns { enabled: false } and touches nothing while the flag is off', async () => {
       const { service, prisma } = setup({ LOBBY_MORPHS_ENABLED: undefined });
       await expect(service.me('u1')).resolves.toEqual({ enabled: false });
-      expect(prisma.userMorphProfile.upsert).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+      expect(prisma.profiles.size).toBe(0);
     });
 
     it('includes classic as owned but not in progress, and hides unknown ids', async () => {
