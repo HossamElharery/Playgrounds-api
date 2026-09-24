@@ -7,6 +7,7 @@ import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto'
 import { UpdateNotificationPrefsDto } from './dto/device-token.dto';
 import { sanitizeNotificationCtaUrl } from './cta-url';
 import { WebPushService } from './web-push.service';
+import { FcmService } from './fcm.service';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -43,6 +44,7 @@ export class NotificationsService {
     private readonly emitter: RealtimeGatewayEmitter,
     private readonly config: ConfigService,
     private readonly webPush: WebPushService,
+    private readonly fcm: FcmService,
   ) {}
 
   categoryEnabled(
@@ -77,12 +79,13 @@ export class NotificationsService {
       type: 'notification.created',
       notification,
     });
-    void this.dispatchPush(
-      input.userId,
-      notification.titleEn,
-      notification.bodyEn,
-    );
     const ar = user?.preferredLang !== 'en';
+    void this.fcm.sendToUser(input.userId, {
+      title: ar ? input.titleAr : input.titleEn,
+      body: ar ? input.bodyAr : input.bodyEn,
+      deepLink: input.deepLink,
+      ctaUrl: typeof input.payload?.['ctaUrl'] === 'string' ? (input.payload['ctaUrl'] as string) : undefined,
+    });
     void this.webPush.send(
       input.userId,
       ar ? input.titleAr : input.titleEn,
@@ -151,6 +154,9 @@ export class NotificationsService {
   }
 
   async registerDevice(userId: string, token: string, platform = 'web') {
+    // One phone, one owner: a token registered by another account on this
+    // device must stop receiving that account's notifications.
+    await this.prisma.deviceToken.deleteMany({ where: { token, userId: { not: userId } } });
     return this.prisma.deviceToken.upsert({
       where: { userId_token: { userId, token } },
       update: { platform, updatedAt: new Date() },
@@ -241,35 +247,5 @@ export class NotificationsService {
       if (created) recipientIds.push(userId);
     }
     return { sent: recipientIds.length, recipientIds };
-  }
-
-  private async dispatchPush(
-    userId: string,
-    title: string,
-    body?: string | null,
-  ) {
-    const serverKey = this.config.get<string>('FCM_SERVER_KEY');
-    if (!serverKey) return;
-    const tokens = await this.prisma.deviceToken.findMany({
-      where: { userId },
-      select: { token: true },
-    });
-    if (!tokens.length) return;
-    try {
-      await fetch('https://fcm.googleapis.com/fcm/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `key=${serverKey}`,
-        },
-        body: JSON.stringify({
-          registration_ids: tokens.map((t) => t.token),
-          notification: { title, body: body ?? title },
-          content_available: true,
-        }),
-      });
-    } catch (err) {
-      this.logger.warn(`FCM dispatch failed: ${err}`);
-    }
   }
 }

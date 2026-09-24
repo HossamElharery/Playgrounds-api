@@ -17,6 +17,7 @@ describe('Notification delivery', () => {
       {} as RealtimeGatewayEmitter,
       {} as ConfigService,
       { send: jest.fn() } as never,
+      { sendToUser: jest.fn() } as never,
     );
   });
   it('counts created notifications and uses the system category for admin messages', async () => {
