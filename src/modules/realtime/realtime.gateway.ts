@@ -182,24 +182,50 @@ export class RealtimeGateway
   }
 
   @SubscribeMessage('squad.lobby.join')
-  async joinSquad(
+  joinSquad(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId) return;
-    const member = await this.prisma.squadMember.findUnique({
-      where: { squadId_userId: { squadId: data.squadId, userId } },
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId) return;
+      const member = await this.prisma.squadMember.findUnique({
+        where: { squadId_userId: { squadId: data.squadId, userId } },
+      });
+      if (member) await client.join(`squad:${data.squadId}`);
     });
-    if (member) await client.join(`squad:${data.squadId}`);
   }
 
   @SubscribeMessage('squad.lobby.leave')
-  async leaveSquadRoom(
+  leaveSquadRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string },
   ) {
-    await client.leave(`squad:${data.squadId}`);
+    return this.inOrder(client, async () => {
+      if (!data?.squadId) return;
+      await client.leave(`squad:${data.squadId}`);
+    });
+  }
+
+  /**
+   * Relays one socket's squad/voice messages strictly in the order they were
+   * sent. Handlers are async (membership lookups), and socket.io runs them
+   * concurrently — an ICE candidate (one lookup) used to overtake the offer
+   * it belongs to (two lookups) and reach the peer before that peer had a
+   * connection to add it to, so it was dropped. Losing the first candidates
+   * is how a fresh lobby sometimes connected with no audio at all.
+   */
+  private inOrder(client: Socket, task: () => Promise<void>): Promise<void> {
+    const data = client.data as { signalChain?: Promise<void> };
+    const next = (data.signalChain ?? Promise.resolve())
+      .then(task)
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `squad signal relay failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    data.signalChain = next;
+    return next;
   }
 
   private async assertSquadMember(userId: string, squadId: string) {
@@ -210,52 +236,58 @@ export class RealtimeGateway
 
   /** WebRTC mesh signaling — offer/answer/ICE between two squad members. */
   @SubscribeMessage('voice.offer')
-  async voiceOffer(
+  voiceOffer(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId: string; sdp: unknown },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId || !data.toUserId) return;
-    if (!(await this.assertSquadMember(userId, data.squadId))) return;
-    if (!(await this.assertSquadMember(data.toUserId, data.squadId))) return;
-    this.emitToUser(data.toUserId, {
-      type: 'voice.offer',
-      squadId: data.squadId,
-      fromUserId: userId,
-      sdp: data.sdp,
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId || !data.toUserId) return;
+      if (!(await this.assertSquadMember(userId, data.squadId))) return;
+      if (!(await this.assertSquadMember(data.toUserId, data.squadId))) return;
+      this.emitToUser(data.toUserId, {
+        type: 'voice.offer',
+        squadId: data.squadId,
+        fromUserId: userId,
+        sdp: data.sdp,
+      });
     });
   }
 
   @SubscribeMessage('voice.answer')
-  async voiceAnswer(
+  voiceAnswer(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId: string; sdp: unknown },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId || !data.toUserId) return;
-    if (!(await this.assertSquadMember(userId, data.squadId))) return;
-    this.emitToUser(data.toUserId, {
-      type: 'voice.answer',
-      squadId: data.squadId,
-      fromUserId: userId,
-      sdp: data.sdp,
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId || !data.toUserId) return;
+      if (!(await this.assertSquadMember(userId, data.squadId))) return;
+      this.emitToUser(data.toUserId, {
+        type: 'voice.answer',
+        squadId: data.squadId,
+        fromUserId: userId,
+        sdp: data.sdp,
+      });
     });
   }
 
   @SubscribeMessage('voice.ice')
-  async voiceIce(
+  voiceIce(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: { squadId: string; toUserId: string; candidate: unknown },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId) return;
-    if (!(await this.assertSquadMember(userId, data.squadId))) return;
-    this.emitToUser(data.toUserId, {
-      type: 'voice.ice',
-      squadId: data.squadId,
-      fromUserId: userId,
-      candidate: data.candidate,
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId || !data.toUserId) return;
+      if (!(await this.assertSquadMember(userId, data.squadId))) return;
+      this.emitToUser(data.toUserId, {
+        type: 'voice.ice',
+        squadId: data.squadId,
+        fromUserId: userId,
+        candidate: data.candidate,
+      });
     });
   }
 
@@ -276,36 +308,40 @@ export class RealtimeGateway
   }
 
   @SubscribeMessage('voice.micStatus')
-  async voiceMicStatus(
+  voiceMicStatus(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; blocked: boolean },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId) return;
-    if (!(await this.assertSquadMember(userId, data.squadId))) return;
-    this.emitToRoom(`squad:${data.squadId}`, {
-      type: 'voice.micStatus',
-      squadId: data.squadId,
-      userId,
-      blocked: !!data.blocked,
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId) return;
+      if (!(await this.assertSquadMember(userId, data.squadId))) return;
+      this.emitToRoom(`squad:${data.squadId}`, {
+        type: 'voice.micStatus',
+        squadId: data.squadId,
+        userId,
+        blocked: !!data.blocked,
+      });
     });
   }
 
   @SubscribeMessage('voice.hangup')
-  async voiceHangup(
+  voiceHangup(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; toUserId?: string },
   ) {
-    const userId = this.authedUserId(client);
-    if (!userId || !data?.squadId) return;
-    if (!(await this.assertSquadMember(userId, data.squadId))) return;
-    const event = {
-      type: 'voice.hangup',
-      squadId: data.squadId,
-      fromUserId: userId,
-    };
-    if (data.toUserId) this.emitToUser(data.toUserId, event);
-    else this.emitToRoom(`squad:${data.squadId}`, event);
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId) return;
+      if (!(await this.assertSquadMember(userId, data.squadId))) return;
+      const event = {
+        type: 'voice.hangup',
+        squadId: data.squadId,
+        fromUserId: userId,
+      };
+      if (data.toUserId) this.emitToUser(data.toUserId, event);
+      else this.emitToRoom(`squad:${data.squadId}`, event);
+    });
   }
 
   private authedUserId(client: Socket): string | null {

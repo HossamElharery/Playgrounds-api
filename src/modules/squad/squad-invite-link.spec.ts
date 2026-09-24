@@ -4,7 +4,8 @@ describe('SquadService invite links', () => {
   const linkRow = { id: 'link-1', squadId: 'sq-1', expiresAt: new Date(Date.now() + 60_000) };
   const prisma: any = {
     squadInviteLink: { findUnique: jest.fn() },
-    squadMember: { findMany: jest.fn() },
+    squadMember: { findMany: jest.fn(), findFirst: jest.fn() },
+    squad: { create: jest.fn() },
   };
   const config: any = { get: (k: string) => (k === 'JWT_ACCESS_SECRET' ? 'test-secret' : undefined) };
   const service = new SquadService(prisma, {} as any, {} as any, {} as any, config);
@@ -13,6 +14,16 @@ describe('SquadService invite links', () => {
   beforeEach(() => {
     prisma.squadInviteLink.findUnique.mockReset();
     prisma.squadMember.findMany.mockReset();
+    prisma.squadMember.findFirst.mockReset();
+    prisma.squad.create.mockReset();
+  });
+
+  it('never opens a new lobby for a caller who is no longer in one', async () => {
+    // The link request can land just after the player pressed "leave" —
+    // creating a squad here put them straight back into a lobby.
+    prisma.squadMember.findFirst.mockResolvedValue(null);
+    await expect(service.getOrCreateInviteLink('u-1')).rejects.toMatchObject({ status: 404 });
+    expect(prisma.squad.create).not.toHaveBeenCalled();
   });
 
   it('rejects malformed and forged tokens without touching the database', async () => {

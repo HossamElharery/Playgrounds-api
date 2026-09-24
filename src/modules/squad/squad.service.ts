@@ -184,19 +184,20 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     return link;
   }
 
-  /** Any member can share the lobby; the link is created on first request. */
+  /**
+   * Any member can share the lobby; the link is created on first request.
+   *
+   * Deliberately does NOT open a lobby for a caller who has none. The link is
+   * only ever requested from inside an open lobby, so "no membership" means
+   * the player just left (or was dropped) while this request was in flight —
+   * silently creating a fresh squad here is what put a player straight back
+   * into a lobby seconds after they pressed "leave".
+   */
   async getOrCreateInviteLink(userId: string) {
-    let membership = await this.prisma.squadMember.findFirst({
+    const membership = await this.prisma.squadMember.findFirst({
       where: { userId },
     });
-    if (!membership) {
-      const squad = await this.prisma.squad.create({
-        data: { members: { create: [{ userId, isLeader: true }] } },
-        include: { members: true },
-      });
-      this.presence.setInSquad(userId, true);
-      membership = squad.members[0]!;
-    }
+    if (!membership) throw new NotFoundException('Not in a squad');
     const squadId = membership.squadId;
     const existing = await this.prisma.squadInviteLink.findUnique({
       where: { squadId },
