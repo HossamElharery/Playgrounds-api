@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -14,6 +14,11 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
+import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
+
+/** Per-user gap between two lobby emotes (signature moves). */
+export const SQUAD_EMOTE_COOLDOWN_MS = 3000;
+const EMOTE_PRUNE_EVERY_MS = 60_000;
 
 /**
  * Single Socket.IO gateway. JWT handshake; each socket joins `user:<id>`
@@ -29,9 +34,12 @@ import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
 })
 export class RealtimeGateway
   extends RealtimeGatewayEmitter
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
 {
   private readonly logger = new Logger(RealtimeGateway.name);
+  /** userId -> time of the last relayed emote (Lobby Morphs signature move). */
+  private readonly lastEmoteAt = new Map<string, number>();
+  private emotePruneTimer: NodeJS.Timeout | null = null;
 
   @WebSocketServer()
   server!: Server;
@@ -205,6 +213,58 @@ export class RealtimeGateway
       if (!data?.squadId) return;
       await client.leave(`squad:${data.squadId}`);
     });
+  }
+
+  /**
+   * Lobby Morphs signature move, relayed to the squad. Rate limited per user
+   * (all tabs share the budget) and silently ignored while the feature is off.
+   */
+  @SubscribeMessage('squad.member.emote')
+  memberEmote(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { squadId: string },
+  ) {
+    return this.inOrder(client, async () => {
+      if (!lobbyMorphsEnabled(this.config)) return;
+      const userId = this.authedUserId(client);
+      if (!userId || !data?.squadId) return;
+      const now = Date.now();
+      const last = this.lastEmoteAt.get(userId);
+      if (last !== undefined && now - last < SQUAD_EMOTE_COOLDOWN_MS) return;
+      // Reserve the slot before the lookup so two tabs cannot both pass.
+      this.lastEmoteAt.set(userId, now);
+      if (!(await this.assertSquadMember(userId, data.squadId))) {
+        if (this.lastEmoteAt.get(userId) === now) {
+          if (last === undefined) this.lastEmoteAt.delete(userId);
+          else this.lastEmoteAt.set(userId, last);
+        }
+        return;
+      }
+      this.scheduleEmotePrune();
+      this.emitToRoom(`squad:${data.squadId}`, {
+        type: 'squad.member.emote',
+        squadId: data.squadId,
+        userId,
+        at: new Date(now).toISOString(),
+      });
+    });
+  }
+
+  onModuleDestroy(): void {
+    if (this.emotePruneTimer) clearInterval(this.emotePruneTimer);
+    this.emotePruneTimer = null;
+  }
+
+  private scheduleEmotePrune(): void {
+    if (this.emotePruneTimer) return;
+    this.emotePruneTimer = setInterval(() => {
+      const cutoff = Date.now() - SQUAD_EMOTE_COOLDOWN_MS;
+      for (const [userId, at] of this.lastEmoteAt) {
+        if (at < cutoff) this.lastEmoteAt.delete(userId);
+      }
+      if (!this.lastEmoteAt.size) this.onModuleDestroy();
+    }, EMOTE_PRUNE_EVERY_MS);
+    this.emotePruneTimer.unref?.();
   }
 
   /**
