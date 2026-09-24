@@ -187,6 +187,9 @@ model User {
   /// Fake accounts created for a demo venue.
   isDemo                    Boolean                   @default(false)
   pushSubscriptions         PushSubscription[]
+  morphs                    UserMorph[]
+  morphProfile              UserMorphProfile?
+  morphRolls                MorphRoll[]
 
   @@index([isGuest, createdAt])
   @@index([status])
@@ -2538,4 +2541,77 @@ model PricingDiscount {
 
   @@index([venueId, status])
   @@index([courtId, weekday])
+}
+
+// ============================================================
+// LOBBY MORPHS
+// ============================================================
+
+enum MorphTier {
+  COMMON
+  EPIC
+  MISK
+}
+
+enum MorphSource {
+  DEFAULT
+  ROLL
+  GRANT
+  PURCHASE
+  SUBSCRIPTION
+  EVENT
+}
+
+/// One row per (user, morph) the user has ever obtained. Never deleted
+/// (ownership is permanent — owner decision D2). `classic` is implicit and
+/// never stored.
+model UserMorph {
+  id              String      @id @default(uuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  morphId         String
+  source          MorphSource
+  timesObtained   Int         @default(1)
+  firstObtainedAt DateTime    @default(now())
+  lastObtainedAt  DateTime    @default(now())
+  seenAt          DateTime?
+
+  @@unique([userId, morphId])
+  @@index([userId, firstObtainedAt])
+}
+
+/// Per-user morph state. Created lazily on first read/roll.
+model UserMorphProfile {
+  userId                 String    @id
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  equippedMorphId        String    @default("classic")
+  totalRolls             Int       @default(0)
+  rollsSinceEpicOrBetter Int       @default(0)
+  rollsSinceMisk         Int       @default(0)
+  lastRollAt             DateTime?
+  /// Future: extra rolls bought with coins / granted by subscription.
+  bonusRolls             Int       @default(0)
+  updatedAt              DateTime  @updatedAt
+}
+
+/// Append-only roll log: quota windows, analytics, idempotency.
+model MorphRoll {
+  id             String     @id @default(uuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  morphId        String
+  tier           MorphTier
+  wasNew         Boolean
+  pityApplied    MorphTier?
+  /// 'FREE' now; 'BONUS' / 'COINS' / 'SUBSCRIPTION' later. Plain string on purpose.
+  quotaKind      String     @default("FREE")
+  clientRollId   String?
+  /// No FK: squads are deleted when emptied.
+  squadId        String?
+  catalogVersion Int
+  createdAt      DateTime   @default(now())
+
+  @@unique([userId, clientRollId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }
