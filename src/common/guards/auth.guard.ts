@@ -19,7 +19,7 @@ import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
 /** API paths a guest identity may call (after the global prefix). */
-const GUEST_ALLOWED = /^\/api\/v1\/(squad|auth|users\/me|realtime|presence)(\/|\?|$)/;
+const GUEST_ALLOWED = /^\/api\/v1\/(squad|auth|users\/me|realtime|presence|morphs)(\/|\?|$)/;
 /** Read-only extras the player shell polls on boot; empty for a fresh guest. */
 const GUEST_READ_ONLY = /^\/api\/v1\/(friends|friend-requests|notifications)(\/|\?|$)/;
 

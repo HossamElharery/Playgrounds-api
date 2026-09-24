@@ -78,6 +78,10 @@ export const envValidationSchema = Joi.object({
   FIREBASE_SERVICE_ACCOUNT: Joi.string().allow('').optional(),
   /** Sign in with Apple audiences, comma separated (default com.matchena.app). */
   APPLE_CLIENT_IDS: Joi.string().allow('').optional(),
+  /** Lobby Morphs feature flag: exactly `true` enables it; anything else keeps it off. */
+  LOBBY_MORPHS_ENABLED: Joi.string().allow('').optional(),
+  /** Free morph rolls per Cairo day. Unset/empty = unlimited (current production behavior). */
+  MORPH_DAILY_FREE_ROLLS: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
