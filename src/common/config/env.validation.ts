@@ -72,7 +72,12 @@ export const envValidationSchema = Joi.object({
     .uri()
     .default('https://api.indexnow.org/indexnow'),
 
+  /** Legacy, unused: Google shut the server-key FCM API down in 2024. */
   FCM_SERVER_KEY: Joi.string().allow('').optional(),
+  /** Firebase service-account JSON (raw or base64) for native push over FCM HTTP v1. */
+  FIREBASE_SERVICE_ACCOUNT: Joi.string().allow('').optional(),
+  /** Sign in with Apple audiences, comma separated (default com.matchena.app). */
+  APPLE_CLIENT_IDS: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
