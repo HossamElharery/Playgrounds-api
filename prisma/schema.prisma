@@ -54,6 +54,10 @@ model User {
   avatarConfig      Json?
   roles             UserRole[]    @default([player])
   status            UserStatus    @default(active)
+  /// Set when the player deleted their own account (App Store / Play policy).
+  /// The row is anonymised and suspended; it stays only so bookings, payments
+  /// and audit history keep their foreign keys.
+  deletedAt         DateTime?
   preferredLang     String        @default("ar")
   countryCode       String        @default("EG")
   country           CountryConfig @relation(fields: [countryCode], references: [code])

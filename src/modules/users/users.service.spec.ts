@@ -102,3 +102,62 @@ describe('UsersService guest exclusion', () => {
     );
   });
 });
+
+describe('UsersService.deleteOwnAccount', () => {
+  function setup(user: Record<string, unknown> | null, upcoming = 0) {
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
+      booking: { count: jest.fn().mockResolvedValue(upcoming) },
+      refreshToken: { updateMany: jest.fn() },
+      oAuthIdentity: { deleteMany: jest.fn() },
+      webAuthnCredential: { deleteMany: jest.fn() },
+      deviceToken: { deleteMany: jest.fn() },
+      follow: { deleteMany: jest.fn() },
+      friendship: { deleteMany: jest.fn() },
+      post: { updateMany: jest.fn() },
+      auditLogEntry: { create: jest.fn() },
+    };
+    const prisma = { $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) };
+    const service = new UsersService(prisma as never, { emitToUser: jest.fn() } as never, {} as never);
+    return { tx, service };
+  }
+  const player = { roles: ['player'], walletBalance: 0, deletedAt: null };
+
+  it('anonymises and suspends the player and revokes every credential', async () => {
+    const { tx, service } = setup(player);
+    await expect(service.deleteOwnAccount('u1')).resolves.toEqual({ deleted: true });
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: expect.objectContaining({
+        name: 'Deleted user',
+        email: null,
+        phone: null,
+        username: null,
+        passwordHash: null,
+        status: 'suspended',
+        deletedAt: expect.any(Date),
+      }),
+    });
+    expect(tx.refreshToken.updateMany).toHaveBeenCalled();
+    expect(tx.oAuthIdentity.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(tx.webAuthnCredential.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(tx.post.updateMany).toHaveBeenCalledWith({
+      where: { authorId: 'u1', status: 'active' },
+      data: { status: 'removed' },
+    });
+  });
+
+  it('sends venue / staff accounts to support', async () => {
+    const { tx, service } = setup({ ...player, roles: ['player', 'owner'] });
+    await expect(service.deleteOwnAccount('u1')).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses while the wallet holds money or bookings are upcoming', async () => {
+    const wallet = setup({ ...player, walletBalance: 500 });
+    await expect(wallet.service.deleteOwnAccount('u1')).rejects.toBeInstanceOf(ConflictException);
+    const booked = setup(player, 1);
+    await expect(booked.service.deleteOwnAccount('u1')).rejects.toBeInstanceOf(ConflictException);
+    expect(booked.tx.user.update).not.toHaveBeenCalled();
+  });
+});

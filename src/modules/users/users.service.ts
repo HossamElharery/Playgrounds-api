@@ -401,6 +401,102 @@ export class UsersService {
     };
   }
 
+  /**
+   * Self-service account deletion. The User row is kept (bookings, payments and
+   * audit history reference it) but every piece of personal data is wiped,
+   * the account is suspended so it can never sign in again, and all sessions,
+   * social logins, passkeys and push tokens are removed.
+   */
+  async deleteOwnAccount(userId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { roles: true, walletBalance: true, deletedAt: true },
+      });
+      if (!user || user.deletedAt) throw new NotFoundException('User not found');
+      if (user.roles.some((role) => role !== 'player')) {
+        throw new ConflictException({
+          code: 'ACCOUNT_DELETE_NEEDS_SUPPORT',
+          message:
+            'Venue and staff accounts are closed by Matchena support so venues, payouts and staff access are handed over safely.',
+        });
+      }
+      if (user.walletBalance > 0) {
+        throw new ConflictException({
+          code: 'ACCOUNT_DELETE_WALLET_BALANCE',
+          message: 'Your wallet still has a balance. Contact support to refund it before deleting your account.',
+        });
+      }
+      const upcoming = await tx.booking.count({
+        where: {
+          userId,
+          status: { in: ['held', 'confirmed'] },
+          slotEnd: { gt: new Date() },
+        },
+      });
+      if (upcoming > 0) {
+        throw new ConflictException({
+          code: 'ACCOUNT_DELETE_UPCOMING_BOOKINGS',
+          message: 'Cancel your upcoming bookings before deleting your account.',
+        });
+      }
+
+      const now = new Date();
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          name: 'Deleted user',
+          email: null,
+          emailVerifiedAt: null,
+          phone: null,
+          username: null,
+          passwordHash: null,
+          avatarUrl: null,
+          avatarConfig: Prisma.DbNull,
+          bioEn: null,
+          bioAr: null,
+          governorateId: null,
+          districtId: null,
+          locationLat: null,
+          locationLng: null,
+          locationUpdatedAt: null,
+          notificationPrefs: Prisma.DbNull,
+          messagePolicy: 'nobody',
+          lastSeenVisible: false,
+          status: 'suspended',
+          deletedAt: now,
+        },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await tx.oAuthIdentity.deleteMany({ where: { userId } });
+      await tx.webAuthnCredential.deleteMany({ where: { userId } });
+      await tx.deviceToken.deleteMany({ where: { userId } });
+      await tx.follow.deleteMany({
+        where: { OR: [{ followerId: userId }, { followingId: userId }] },
+      });
+      await tx.friendship.deleteMany({
+        where: { OR: [{ requesterId: userId }, { addresseeId: userId }] },
+      });
+      await tx.post.updateMany({
+        where: { authorId: userId, status: 'active' },
+        data: { status: 'removed' },
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId: userId,
+          action: 'user.account.deleted',
+          targetType: 'user',
+          targetId: userId,
+          metadata: {},
+        },
+      });
+      return { deleted: true };
+    });
+  }
+
   async updateStatus(userId: string, status: UserStatus, actorUserId: string) {
     return this.prisma.$transaction(
       async (tx) => {

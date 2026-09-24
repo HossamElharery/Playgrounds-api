@@ -64,7 +64,12 @@ describe('SubscriptionsService', () => {
   it('the owner view shows the struck-through list price and never the agreed one', async () => {
     const { svc, prisma } = build([sub()]);
     prisma.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'owner-1' });
-    const view = await svc.forOwner({ id: 'owner-1', phone: '', name: 'O', roles: ['owner'] } as never, 'v1');
+    // forOwner reads the real clock; pin it to the fixture's `now` so the
+    // 3-days-left subscription stays "expiring" whatever day the suite runs.
+    jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    const view = await svc
+      .forOwner({ id: 'owner-1', phone: '', name: 'O', roles: ['owner'] } as never, 'v1')
+      .finally(() => jest.useRealTimers());
     expect(view).toMatchObject({ listPriceAmount: 300000, isFree: true, state: 'expiring' });
     expect(JSON.stringify(view)).not.toContain('agreedPrice');
     expect(JSON.stringify(view)).not.toContain('200000');
