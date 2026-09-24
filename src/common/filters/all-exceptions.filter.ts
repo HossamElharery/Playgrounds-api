@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { ApiException } from '../errors/api-exception';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -19,7 +20,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      if (status === HttpStatus.TOO_MANY_REQUESTS) {
+      // A 429 thrown deliberately as ApiException carries a domain code and
+      // retry data (e.g. MORPH_COOLDOWN.retryAfterMs) the client needs; only
+      // the throttler's generic 429 is normalised to RATE_LIMITED.
+      if (
+        status === HttpStatus.TOO_MANY_REQUESTS &&
+        !(exception instanceof ApiException)
+      ) {
         response.status(status).json({
           statusCode: status,
           message: 'Too many requests. Please wait a moment and try again.',
