@@ -21,6 +21,7 @@ import { RegisterEmailDto } from './dto/register-email.dto';
 import { RequestEmailRegistrationOtpDto } from './dto/request-email-registration-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
+import { OAuthAppleDto } from './dto/oauth-apple.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -121,6 +122,14 @@ export class AuthController {
   @Post('oauth/google')
   async oauthGoogle(@Body() dto: OAuthGoogleDto) {
     const result = await this.authService.oauthGoogle(dto);
+    return { message: 'authenticated', result };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('oauth/apple')
+  async oauthApple(@Body() dto: OAuthAppleDto) {
+    const result = await this.authService.oauthApple(dto);
     return { message: 'authenticated', result };
   }
 

@@ -36,6 +36,8 @@ import {
 import { ApiException } from '../../common/errors/api-exception';
 import { OAuthGoogleDto } from './dto/oauth-google.dto';
 import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
+import { OAuthAppleDto } from './dto/oauth-apple.dto';
+import { verifyAppleIdentityToken, type AppleIdentityClaims } from './apple-identity';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { SquadService } from '../squad/squad.service';
 import { EmailService } from '../email/email.service';
@@ -838,6 +840,39 @@ export class AuthService {
       email: claims.email,
       name: claims.name ?? 'Player',
       avatarUrl: claims.picture,
+    });
+    const tokens = await this.issueTokenPair(user);
+    return { ...tokens, user: this.sanitize(user) };
+  }
+
+  /**
+   * Sign in with Apple (required by App Store guideline 4.8 next to Google /
+   * Facebook). Audiences: `APPLE_CLIENT_IDS` (comma separated), defaulting to
+   * the iOS bundle ID.
+   */
+  async oauthApple(
+    dto: OAuthAppleDto,
+  ): Promise<TokenPair & { user: Partial<User> }> {
+    const audiences = (this.config.get<string>('APPLE_CLIENT_IDS') || 'com.matchena.app')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    let claims: AppleIdentityClaims;
+    try {
+      claims = await verifyAppleIdentityToken(dto.identityToken, audiences);
+    } catch {
+      throw new UnauthorizedException('Invalid Apple token');
+    }
+    if (dto.nonce && claims.nonce && dto.nonce !== claims.nonce) {
+      throw new UnauthorizedException('Token nonce mismatch');
+    }
+    const verified = claims.email_verified === true || claims.email_verified === 'true';
+    const user = await this.findOrCreateOAuthUser({
+      provider: 'apple',
+      providerUserId: claims.sub,
+      // Only a verified address may link to an existing account.
+      email: verified ? claims.email : undefined,
+      name: dto.name?.trim() || 'Player',
     });
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: this.sanitize(user) };
