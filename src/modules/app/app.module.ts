@@ -43,6 +43,7 @@ import { SearchModule } from '../search/search.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 import { PostsModule } from '../posts/posts.module';
 import { FinanceModule } from '../finance/finance.module';
+import { MorphsModule } from '../morphs/morphs.module';
 
 @Module({
   imports: [
@@ -94,6 +95,7 @@ import { FinanceModule } from '../finance/finance.module';
     SeoDiscoveryModule,
     PostsModule,
     FinanceModule,
+    MorphsModule,
   ],
   controllers: [AppController],
   providers: [
