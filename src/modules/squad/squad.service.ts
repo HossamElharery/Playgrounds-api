@@ -16,6 +16,8 @@ import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApiException } from '../../common/errors/api-exception';
+import { CLASSIC_MORPH_ID } from '../morphs/morph-catalog';
+import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
 import {
   SQUAD_INVITE_PAUSED_CODE,
   squadInviteHoldUntil,
@@ -439,18 +441,26 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
         .update({ where: { id: userId }, data: { lastSeenAt: new Date() } })
         .catch(() => undefined);
     }
-    const squad = await this.loadSquad(userId);
+    const morphs = lobbyMorphsEnabled(this.config);
+    const squad = await this.loadSquad(userId, morphs);
     if (!squad) return null;
     return {
       ...squad,
       members: squad.members.map((m) => ({
         ...m,
         connected: this.presence.isSquadConnected(m.userId),
+        // Lobby Morphs: older clients ignore the extra field.
+        ...(morphs
+          ? {
+              morphId: m.user.morphProfile?.equippedMorphId ?? CLASSIC_MORPH_ID,
+            }
+          : {}),
       })),
     };
   }
 
-  private async loadSquad(userId: string) {
+  /** With morphs off the query is exactly what it was before the feature. */
+  private async loadSquad(userId: string, withMorphs = false) {
     const membership = await this.prisma.squadMember.findFirst({
       where: { userId },
       include: {
@@ -465,6 +475,9 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
                     avatarUrl: true,
                     avatarConfig: true,
                     isGuest: true,
+                    ...(withMorphs
+                      ? { morphProfile: { select: { equippedMorphId: true } } }
+                      : {}),
                   },
                 },
               },
