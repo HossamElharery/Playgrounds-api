@@ -90,6 +90,12 @@ export const envValidationSchema = Joi.object({
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
   TURN_CREDENTIAL: Joi.string().allow('').optional(),
+  /** Shared secret with coturn (`static-auth-secret`): short-lived TURN credentials per user. */
+  TURN_SECRET: Joi.string().allow('').optional(),
+  /** Lifetime of a TURN credential in seconds (default 12 h). */
+  TURN_TTL_SECONDS: Joi.string().allow('').optional(),
+  /** Diagnostics: exactly `true` forces every client through TURN (relay-only). Leave unset normally. */
+  TURN_FORCE_RELAY: Joi.string().allow('').optional(),
 
   GEMINI_API_KEY: Joi.string().allow('').optional(),
   GEMINI_MODEL: Joi.string().default('gemini-3.6-flash'),

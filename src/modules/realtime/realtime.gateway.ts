@@ -69,10 +69,22 @@ export class RealtimeGateway
     super();
   }
 
-  async handleConnection(client: Socket): Promise<void> {
+  /**
+   * Socket.IO starts delivering a socket's messages before this resolves, so
+   * the pending auth is kept on the socket and every handler waits for it.
+   * A `squad.lobby.join` sent right after connecting used to be dropped here
+   * (no userId yet): the client never entered `squad:<id>` and missed voice
+   * and lobby events for the whole session.
+   */
+  handleConnection(client: Socket): Promise<void> {
+    const ready = this.authenticate(client);
+    (client.data as { authReady?: Promise<void> }).authReady = ready;
+    return ready;
+  }
+
+  private async authenticate(client: Socket): Promise<void> {
     try {
-      const raw =
-        client.handshake.auth?.token ?? client.handshake.query?.token;
+      const raw = client.handshake.auth?.token ?? client.handshake.query?.token;
       const token = Array.isArray(raw) ? raw[0] : raw;
       if (!token || typeof token !== 'string') {
         client.disconnect(true);
@@ -142,7 +154,8 @@ export class RealtimeGateway
       presence: this.presence.stateFor(userId, user?.lastSeenAt),
       lastSeenAt: new Date().toISOString(),
     };
-    if (!user?.lastSeenVisible) delete (event as { lastSeenAt?: string }).lastSeenAt;
+    if (!user?.lastSeenVisible)
+      delete (event as { lastSeenAt?: string }).lastSeenAt;
     const friends = await this.prisma.friendship.findMany({
       where: {
         status: 'accepted',
@@ -157,6 +170,7 @@ export class RealtimeGateway
 
   @SubscribeMessage('presence.heartbeat')
   async heartbeat(@ConnectedSocket() client: Socket) {
+    await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId) return;
     await this.prisma.user.update({
@@ -170,6 +184,7 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { threadId: string },
   ) {
+    await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId || !data?.threadId) return;
     const participant = await this.prisma.chatThreadParticipant.findUnique({
@@ -191,6 +206,7 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { threadId: string; typing: boolean },
   ) {
+    await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId || !data?.threadId) return;
     const participant = await this.prisma.chatThreadParticipant.findUnique({
@@ -333,7 +349,7 @@ export class RealtimeGateway
    */
   private inOrder(client: Socket, task: () => Promise<void>): Promise<void> {
     const data = client.data as { signalChain?: Promise<void> };
-    const next = (data.signalChain ?? Promise.resolve())
+    const next = (data.signalChain ?? this.authReady(client))
       .then(task)
       .catch((err: unknown) => {
         this.logger.warn(
@@ -412,6 +428,7 @@ export class RealtimeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { squadId: string; speaking: boolean },
   ) {
+    await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId || !data?.squadId) return;
     if (!(await this.assertSquadMember(userId, data.squadId))) return;
@@ -458,6 +475,13 @@ export class RealtimeGateway
       if (data.toUserId) this.emitToUser(data.toUserId, event);
       else this.emitToRoom(`squad:${data.squadId}`, event);
     });
+  }
+
+  /** Resolves once the socket's handshake auth has finished (either way). */
+  private authReady(client: Socket): Promise<void> {
+    const ready = (client.data as { authReady?: Promise<void> } | undefined)
+      ?.authReady;
+    return ready ? ready.catch(() => undefined) : Promise.resolve();
   }
 
   private authedUserId(client: Socket): string | null {

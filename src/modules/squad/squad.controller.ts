@@ -32,8 +32,8 @@ export class SquadController {
   }
 
   @Get('ice-servers')
-  iceServers() {
-    return this.squad.iceServers();
+  iceServers(@CurrentUser() user: AuthenticatedUser) {
+    return this.squad.iceServers(user.id);
   }
 
   @Post('start')
@@ -66,7 +66,10 @@ export class SquadController {
   @Post('join-link/:token/join')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  joinLink(@CurrentUser() user: AuthenticatedUser, @Param('token') token: string) {
+  joinLink(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('token') token: string,
+  ) {
     return this.squad.joinViaInviteLink(user.id, token);
   }
 

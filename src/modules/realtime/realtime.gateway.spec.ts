@@ -13,7 +13,12 @@ describe('RealtimeGateway voice relay ordering', () => {
         }),
       },
     };
-    const gateway = new RealtimeGateway({} as any, {} as any, prisma, {} as any);
+    const gateway = new RealtimeGateway(
+      {} as any,
+      {} as any,
+      prisma,
+      {} as any,
+    );
     const sent: string[] = [];
     gateway.server = {
       to: () => ({ emit: (type: string) => sent.push(type) }),
@@ -26,8 +31,16 @@ describe('RealtimeGateway voice relay ordering', () => {
     // The offer does two slow membership lookups, the candidate one fast one.
     // Unordered, the candidate reached the peer first and was dropped.
     const { gateway, client, sent } = setup((n) => (n < 2 ? 30 : 0));
-    const offer = gateway.voiceOffer(client, { squadId: 's', toUserId: 'b', sdp: {} });
-    const ice = gateway.voiceIce(client, { squadId: 's', toUserId: 'b', candidate: {} });
+    const offer = gateway.voiceOffer(client, {
+      squadId: 's',
+      toUserId: 'b',
+      sdp: {},
+    });
+    const ice = gateway.voiceIce(client, {
+      squadId: 's',
+      toUserId: 'b',
+      candidate: {},
+    });
     await Promise.all([offer, ice]);
     expect(sent).toEqual(['voice.offer', 'voice.ice']);
   });
@@ -36,14 +49,26 @@ describe('RealtimeGateway voice relay ordering', () => {
     const { gateway, client, sent } = setup(() => 0);
     const prisma = (gateway as any).prisma;
     prisma.squadMember.findUnique.mockRejectedValueOnce(new Error('db down'));
-    await gateway.voiceIce(client, { squadId: 's', toUserId: 'b', candidate: {} });
-    await gateway.voiceIce(client, { squadId: 's', toUserId: 'b', candidate: {} });
+    await gateway.voiceIce(client, {
+      squadId: 's',
+      toUserId: 'b',
+      candidate: {},
+    });
+    await gateway.voiceIce(client, {
+      squadId: 's',
+      toUserId: 'b',
+      candidate: {},
+    });
     expect(sent).toEqual(['voice.ice']);
   });
 
   it('ignores a candidate with no recipient', async () => {
     const { gateway, client, sent } = setup(() => 0);
-    await gateway.voiceIce(client, { squadId: 's', toUserId: '', candidate: {} });
+    await gateway.voiceIce(client, {
+      squadId: 's',
+      toUserId: '',
+      candidate: {},
+    });
     expect(sent).toEqual([]);
   });
 });
@@ -52,18 +77,23 @@ describe('RealtimeGateway lobby morph emote', () => {
   function setup(opts: { member?: boolean; enabled?: boolean } = {}) {
     const prisma: any = {
       squadMember: {
-        findUnique: jest.fn(async () => (opts.member === false ? null : { id: 'm' })),
+        findUnique: jest.fn(async () =>
+          opts.member === false ? null : { id: 'm' },
+        ),
       },
     };
     const config: any = {
       get: (k: string) =>
-        k === 'LOBBY_MORPHS_ENABLED' && opts.enabled !== false ? 'true' : undefined,
+        k === 'LOBBY_MORPHS_ENABLED' && opts.enabled !== false
+          ? 'true'
+          : undefined,
     };
     const gateway = new RealtimeGateway({} as any, config, prisma, {} as any);
     const sent: { room: string; type: string; payload: any }[] = [];
     gateway.server = {
       to: (room: string) => ({
-        emit: (type: string, payload: any) => sent.push({ room, type, payload }),
+        emit: (type: string, payload: any) =>
+          sent.push({ room, type, payload }),
       }),
     } as any;
     const client: any = { data: { userId: 'a' } };
@@ -79,7 +109,12 @@ describe('RealtimeGateway lobby morph emote', () => {
       {
         room: 'squad:s1',
         type: 'squad.member.emote',
-        payload: { type: 'squad.member.emote', squadId: 's1', userId: 'a', at: expect.any(String) },
+        payload: {
+          type: 'squad.member.emote',
+          squadId: 's1',
+          userId: 'a',
+          at: expect.any(String),
+        },
       },
     ]);
     gateway.onModuleDestroy();
@@ -126,5 +161,87 @@ describe('RealtimeGateway lobby morph emote', () => {
     jest.advanceTimersByTime(60_000);
     expect(map.size).toBe(0);
     expect((gateway as any).emotePruneTimer).toBeNull();
+  });
+});
+
+describe('RealtimeGateway messages sent before the handshake auth finishes', () => {
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  function setup() {
+    const jwt: any = {
+      verifyAsync: jest.fn(async () => {
+        await delay(40);
+        return { sub: 'u1' };
+      }),
+    };
+    const config: any = { get: () => 'secret' };
+    const prisma: any = {
+      user: {
+        findUnique: jest.fn(async () => ({
+          status: 'active',
+          lastSeenVisible: false,
+        })),
+        update: jest.fn(async () => ({})),
+      },
+      friendship: { findMany: jest.fn(async () => []) },
+      squadMember: { findUnique: jest.fn(async () => ({ id: 'm' })) },
+    };
+    const presence: any = {
+      markConnected: jest.fn(),
+      stateFor: () => 'online',
+    };
+    const gateway = new RealtimeGateway(jwt, config, prisma, presence);
+    const sent: { room: string; type: string }[] = [];
+    gateway.server = {
+      to: (room: string) => ({
+        emit: (type: string) => sent.push({ room, type }),
+      }),
+    } as any;
+    const rooms = new Set<string>();
+    const client: any = {
+      data: {},
+      handshake: { auth: { token: 't' } },
+      join: jest.fn(async (r: string) => void rooms.add(r)),
+      disconnect: jest.fn(),
+    };
+    return { gateway, client, rooms, sent, jwt };
+  }
+
+  it('joins the squad room when squad.lobby.join arrives during auth', async () => {
+    const { gateway, client, rooms } = setup();
+    const conn = gateway.handleConnection(client);
+    // Arrives immediately, while the JWT is still being verified.
+    const join = gateway.joinSquad(client, { squadId: 's1' });
+    await Promise.all([conn, join]);
+    expect(rooms.has('squad:s1')).toBe(true);
+  });
+
+  it('relays voice signaling sent during auth, in order', async () => {
+    const { gateway, client, sent } = setup();
+    const conn = gateway.handleConnection(client);
+    const offer = gateway.voiceOffer(client, {
+      squadId: 's1',
+      toUserId: 'u2',
+      sdp: {},
+    });
+    const ice = gateway.voiceIce(client, {
+      squadId: 's1',
+      toUserId: 'u2',
+      candidate: {},
+    });
+    await Promise.all([conn, offer, ice]);
+    expect(sent.filter((e) => e.room === 'user:u2').map((e) => e.type)).toEqual(
+      ['voice.offer', 'voice.ice'],
+    );
+  });
+
+  it('still ignores the messages of a socket whose auth fails', async () => {
+    const { gateway, client, rooms, jwt } = setup();
+    jwt.verifyAsync.mockRejectedValueOnce(new Error('bad token'));
+    const conn = gateway.handleConnection(client);
+    const join = gateway.joinSquad(client, { squadId: 's1' });
+    await Promise.all([conn, join]);
+    expect(client.disconnect).toHaveBeenCalledWith(true);
+    expect(rooms.has('squad:s1')).toBe(false);
   });
 });

@@ -56,6 +56,9 @@ export const SQUAD_INVITE_TTL_MS = 3 * 60 * 1000;
  */
 export const SQUAD_DISCONNECT_GRACE_MS = 45 * 1000;
 
+/** Lifetime of a TURN credential; a lobby fetches fresh ones on (re)join. */
+const TURN_DEFAULT_TTL_S = 12 * 60 * 60;
+
 @Injectable()
 export class SquadService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SquadService.name);
@@ -369,7 +372,21 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       .catch(() => undefined);
   }
 
-  iceServers() {
+  /**
+   * ICE servers for the voice mesh. STUN alone cannot connect two phones
+   * behind carrier-grade / symmetric NAT (common on Egyptian mobile data), so
+   * production needs a TURN relay:
+   *  - `TURN_SECRET` (preferred): short-lived credentials in the TURN REST
+   *    style that coturn's `use-auth-secret` checks — username
+   *    `<expiry>:<userId>`, password base64(HMAC-SHA1(secret, username)).
+   *  - `TURN_USERNAME` / `TURN_CREDENTIAL`: static fallback.
+   * Nothing is added while `TURN_URLS` is empty. `TURN_FORCE_RELAY=true`
+   * (diagnostics only) makes every client send audio through TURN.
+   */
+  iceServers(userId?: string): {
+    iceServers: { urls: string; username?: string; credential?: string }[];
+    iceTransportPolicy?: 'relay';
+  } {
     const stun =
       this.config.get<string>('STUN_URLS') ??
       'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302';
@@ -381,17 +398,40 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
         .map((urls) => ({ urls }));
     const turn = this.config.get<string>('TURN_URLS');
     if (turn) {
-      const username = this.config.get<string>('TURN_USERNAME') ?? undefined;
-      const credential =
-        this.config.get<string>('TURN_CREDENTIAL') ?? undefined;
+      const { username, credential } = this.turnCredentials(userId);
       for (const urls of turn
         .split(',')
         .map((u) => u.trim())
         .filter(Boolean)) {
         servers.push({ urls, username, credential });
       }
+      if (this.config.get<string>('TURN_FORCE_RELAY') === 'true') {
+        return { iceServers: servers, iceTransportPolicy: 'relay' };
+      }
     }
     return { iceServers: servers };
+  }
+
+  private turnCredentials(userId?: string): {
+    username?: string;
+    credential?: string;
+  } {
+    const secret = this.config.get<string>('TURN_SECRET');
+    if (secret) {
+      const ttl = Number(this.config.get<string>('TURN_TTL_SECONDS'));
+      const ttlSeconds =
+        Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : TURN_DEFAULT_TTL_S;
+      const expiry = Math.floor(Date.now() / 1000) + ttlSeconds;
+      const username = `${expiry}:${userId ?? 'guest'}`;
+      const credential = createHmac('sha1', secret)
+        .update(username)
+        .digest('base64');
+      return { username, credential };
+    }
+    return {
+      username: this.config.get<string>('TURN_USERNAME') || undefined,
+      credential: this.config.get<string>('TURN_CREDENTIAL') || undefined,
+    };
   }
 
   private inviteFreshSince(): Date {
