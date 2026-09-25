@@ -201,3 +201,35 @@ describe('AuthGuard admin edit mode', () => {
     }
   });
 });
+
+describe('AuthGuard guest confinement', () => {
+  const guestRequest = (url: string, method = 'GET') => {
+    const prisma: any = {
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'g1', status: 'active', roles: ['player'], isGuest: true }),
+      },
+      staffMember: { findUnique: jest.fn() },
+    };
+    const request: any = { user: { id: 'g1', roles: ['player'] }, headers: {}, originalUrl: url, method };
+    const ctx = {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+    return { guard: new AuthGuard(new Reflector(), prisma), ctx };
+  };
+
+  it('lets a guest in a lobby read the Lobby World feature flags', async () => {
+    const { guard, ctx } = guestRequest('/api/v1/lobby/features');
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('still keeps guests out of everything else (e.g. bookings, lobbyist look-alikes)', async () => {
+    for (const url of ['/api/v1/bookings/mine', '/api/v1/lobbyist', '/api/v1/lobbyfeatures']) {
+      const { guard, ctx } = guestRequest(url);
+      await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+});

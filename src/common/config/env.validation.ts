@@ -82,6 +82,10 @@ export const envValidationSchema = Joi.object({
   LOBBY_MORPHS_ENABLED: Joi.string().allow('').optional(),
   /** Free morph rolls per Cairo day. Unset/empty = unlimited (current production behavior). */
   MORPH_DAILY_FREE_ROLLS: Joi.string().allow('').optional(),
+  /** Lobby World movement (Stage 1): exactly `true` enables it; anything else keeps the lobby as before. */
+  LOBBY_MOVEMENT_ENABLED: Joi.string().allow('').optional(),
+  /** Lobby World ball (Stage 2): exactly `true` enables it, and only while movement is on too. */
+  LOBBY_BALL_ENABLED: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
