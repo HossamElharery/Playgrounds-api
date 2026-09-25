@@ -31,6 +31,7 @@ type Scenario = {
   kick: { dirX: number; dirZ: number; power: number } | null;
   players: BallPlayer[];
   movePlayers: boolean;
+  jump?: { step: number; dx: number; dz: number } | null;
   steps: number;
   frames: Array<{ step: number; events: number; toucher: number; state: Vec }>;
   summary: { events: number; goalStep: number; resting: boolean; final: Vec };
@@ -70,6 +71,9 @@ describe('ball-sim', () => {
         'wide of the post',
         'over the bar',
         'dribble',
+        'keeper',
+        'pushed over the line',
+        'side net',
       ])
         expect(names).toContain(needle);
     });
@@ -87,6 +91,11 @@ describe('ball-sim', () => {
         let events = 0;
         let goalStep = -1;
         for (const f of s.frames) {
+          if (s.jump && f.step === s.jump.step)
+            for (const p of players) {
+              p.x += s.jump.dx;
+              p.z += s.jump.dz;
+            }
           const e = stepBall(b, players, players.length, dt, info);
           if (s.movePlayers)
             for (const p of players) {
@@ -172,6 +181,58 @@ describe('ball-sim', () => {
         b.z < GOAL_LINE_Z - BALL_RADIUS &&
         b.y < GOAL_HEIGHT;
       if (inGoal) bad.push(`run ${run}: stuck inside the goal`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('bodies walking through the goal mouth never leave the ball stuck inside (seeded fuzz, 1500 runs)', () => {
+    const rand = rng(0xb0a1);
+    const dt = 1 / 30;
+    const bad: string[] = [];
+    for (let run = 0; run < 1500; run++) {
+      const b = createBall();
+      b.x = (rand() * 2 - 1) * 2;
+      b.z = GOAL_LINE_Z + rand() * 2;
+      const players: BallPlayer[] = [];
+      const targets: Array<[number, number]> = [];
+      for (let i = 0, n = 1 + Math.floor(rand() * 3); i < n; i++) {
+        players.push({
+          x: (rand() * 2 - 1) * 3,
+          z: GOAL_LINE_Z + 1 + rand() * 3,
+          vx: 0,
+          vz: 0,
+          r: rand() < 0.3 ? 0.38 * 1.6 : 0.38,
+        });
+        // Anywhere across the mouth, often into the goal itself.
+        targets.push([(rand() * 2 - 1) * 1.6, GOAL_LINE_Z - rand() * 0.7]);
+      }
+      let scored = false;
+      for (let i = 0; i < 30 * 20 && !scored; i++) {
+        const walking = i < 90;
+        players.forEach((p, k) => {
+          const [tx, tz] = targets[k];
+          const d = Math.hypot(tx - p.x, tz - p.z);
+          const speed = walking && d > 0.05 ? 2.2 + rand() * 1.8 : 0;
+          p.vx = d > 0 ? ((tx - p.x) / d) * speed : 0;
+          p.vz = d > 0 ? ((tz - p.z) / d) * speed : 0;
+          // Server positions move in 10 Hz samples: every third step the body jumps 0.1 s on.
+          if (walking && i % 3 === 0) {
+            p.x += p.vx * 0.1;
+            p.z += p.vz * 0.1;
+          }
+        });
+        scored = (stepBall(b, players, players.length, dt) & 1) !== 0;
+        if (Math.hypot(b.x, b.z) > BALL_WALL_RADIUS - BALL_RADIUS + 1e-6)
+          bad.push(`run ${run}: outside the wall`);
+        if (b.y < BALL_RADIUS - 1e-9) bad.push(`run ${run}: under the floor`);
+        if (!walking && ballResting(b)) break;
+      }
+      if (scored) continue;
+      const inGoal =
+        Math.abs(b.x) < GOAL_HALF_WIDTH &&
+        b.z < GOAL_LINE_Z - BALL_RADIUS &&
+        b.y < GOAL_HEIGHT;
+      if (inGoal) bad.push(`run ${run}: inside the goal without a goal`);
     }
     expect(bad).toEqual([]);
   });

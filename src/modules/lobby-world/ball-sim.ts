@@ -135,8 +135,8 @@ export function kickBall(
  * Advance the ball by `dt` seconds against the floor, the wall, the goal
  * (posts and crossbar bounce, the net absorbs) and `count` players (circles:
  * walking into the ball pushes it — that is dribbling). Returns the event bits;
- * BALL_EVENT_GOAL fires on the substep the ball fully crosses the goal line
- * between the posts and under the bar.
+ * BALL_EVENT_GOAL fires on the substep the ball gets fully across the goal
+ * line between the posts and under the bar, however it got there.
  */
 export function stepBall(
   b: BallState,
@@ -203,8 +203,6 @@ function substep(
     }
   }
 
-  events |= goal(b, px, py, pz, h);
-
   // Players (low balls only): push out and bounce off their motion.
   if (b.y < 1.2) {
     for (let i = 0; i < count; i++) {
@@ -237,6 +235,9 @@ function substep(
     }
   }
 
+  // Posts and net see the whole move, player pushes included.
+  events |= goal(b, px, py, pz, h);
+
   // The wall of the walkable disc (the ball's surface stays inside it).
   const lim = BALL_WALL_RADIUS - R;
   const r = Math.hypot(b.x, b.z);
@@ -251,6 +252,24 @@ function substep(
       b.vz -= (1 + BALL_WALL_RESTITUTION) * vn * nz;
     }
     events |= BALL_EVENT_WALL;
+    // Behind the goal line the gap between a side net's outside and the wall
+    // is narrower than the ball: the net wins and the ball slides forward along
+    // it (inside the wall), instead of being squeezed through into the goal.
+    const hw = GOAL_HALF_WIDTH;
+    const ax = Math.abs(b.x);
+    if (
+      ax > hw &&
+      ax < hw + R &&
+      b.z < GOAL_LINE_Z &&
+      b.z > GOAL_BACK_Z - R &&
+      b.y < GOAL_HEIGHT + R
+    ) {
+      const sx = b.x < 0 ? -1 : 1;
+      b.x = sx * (hw + R);
+      b.z = Math.max(b.z, -Math.sqrt(Math.max(0, lim * lim - b.x * b.x)));
+      if (sx * b.vx < 0) b.vx = 0;
+      if (b.vz < 0) b.vz = 0;
+    }
   }
 
   // Settle: a slow rolling ball stops dead (no endless creep).
@@ -262,6 +281,12 @@ function substep(
     b.vx = 0;
     b.vz = 0;
   }
+
+  // Goal: the ball got fully into the goal this substep — judged after every
+  // push and bounce, so however it went in (a shot, a body walking it over the
+  // line) it scores, and it can never sit in the goal unscored.
+  if (!inGoalMouth(px, py, pz) && inGoalMouth(b.x, b.y, b.z))
+    events |= BALL_EVENT_GOAL;
   return events;
 }
 
@@ -279,10 +304,6 @@ function goal(
   const line = GOAL_LINE_Z;
   const back = GOAL_BACK_Z;
   let events = 0;
-
-  // Goal: fully across the line, between the posts, under the bar.
-  if (pz > line - R && b.z <= line - R && Math.abs(b.x) < hw && b.y < top)
-    events |= BALL_EVENT_GOAL;
 
   // Posts: vertical cylinders at the front corners.
   if (b.y - R < top) {
@@ -329,13 +350,19 @@ function goal(
     }
   }
 
-  // Net: sides, back and roof absorb (from inside and from outside).
+  // Net: sides, back and roof absorb (from inside and from outside). Which
+  // side of a side net the ball came from is where it crossed the goal line
+  // (a ball from in front, pushed past the post line, meets the net outside).
   const inDepth = b.z < line && b.z > back - R;
   const inHeight = b.y < top + R;
+  const fromX =
+    pz >= line && b.z < line
+      ? px + ((b.x - px) * (pz - line)) / (pz - b.z)
+      : px;
   for (let s = -1; s <= 1; s += 2) {
     const wall = s * hw;
     if (!inDepth || !inHeight) continue;
-    const wasInside = s * px < hw;
+    const wasInside = s * fromX < hw;
     if (wasInside && s * (b.x + s * R) > hw) {
       b.x = wall - s * R;
       if (s * b.vx > 0) b.vx = 0;
@@ -378,4 +405,13 @@ function goal(
     }
   }
   return events;
+}
+
+/** Fully across the goal line, between the posts, under the bar. */
+function inGoalMouth(x: number, y: number, z: number): boolean {
+  return (
+    Math.abs(x) < GOAL_HALF_WIDTH &&
+    z <= GOAL_LINE_Z - BALL_RADIUS &&
+    y < GOAL_HEIGHT
+  );
 }

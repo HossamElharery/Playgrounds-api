@@ -21,6 +21,7 @@
    },
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 150,
    "frames": [
     {
@@ -2006,6 +2007,7 @@
    },
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 60,
    "frames": [
     {
@@ -2821,6 +2823,7 @@
    },
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 45,
    "frames": [
     {
@@ -3437,6 +3440,7 @@
    "kick": null,
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 40,
    "frames": [
     {
@@ -3992,6 +3996,7 @@
    },
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 60,
    "frames": [
     {
@@ -4803,6 +4808,7 @@
    "kick": null,
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 30,
    "frames": [
     {
@@ -5224,6 +5230,7 @@
    "kick": null,
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 45,
    "frames": [
     {
@@ -5840,6 +5847,7 @@
    "kick": null,
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 150,
    "frames": [
     {
@@ -7829,6 +7837,7 @@
     }
    ],
    "movePlayers": true,
+   "jump": null,
    "steps": 45,
    "frames": [
     {
@@ -8453,6 +8462,7 @@
     }
    ],
    "movePlayers": false,
+   "jump": null,
    "steps": 30,
    "frames": [
     {
@@ -8874,6 +8884,7 @@
    "kick": null,
    "players": [],
    "movePlayers": false,
+   "jump": null,
    "steps": 60,
    "frames": [
     {
@@ -9665,6 +9676,1040 @@
      "x": 0,
      "y": 0.22,
      "z": 0,
+     "vx": 0,
+     "vy": 0,
+     "vz": 0
+    }
+   }
+  },
+  {
+   "name": "walked over the line: a player pushes a ball on the line into the goal (goal)",
+   "start": {
+    "x": 0,
+    "y": 0.22,
+    "z": -7.2,
+    "vx": 0,
+    "vy": 0,
+    "vz": 0
+   },
+   "reset": false,
+   "kick": null,
+   "players": [
+    {
+     "x": 0,
+     "z": -6.62,
+     "vx": 0,
+     "vz": -2.2,
+     "r": 0.38
+    }
+   ],
+   "movePlayers": true,
+   "jump": null,
+   "steps": 20,
+   "frames": [
+    {
+     "step": 1,
+     "events": 32,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.22,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.97
+     }
+    },
+    {
+     "step": 2,
+     "events": 33,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.34233333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.91
+     }
+    },
+    {
+     "step": 3,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.43883333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.85
+     }
+    },
+    {
+     "step": 4,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.53333333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.79
+     }
+    },
+    {
+     "step": 5,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.62583333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.73
+     }
+    },
+    {
+     "step": 6,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.71633333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.67
+     }
+    },
+    {
+     "step": 7,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.80483333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -2.61
+     }
+    },
+    {
+     "step": 8,
+     "events": 16,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 9,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 10,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 11,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 12,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 13,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 14,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 15,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 16,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 17,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 18,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 19,
+     "events": 32,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.34,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 20,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.34,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    }
+   ],
+   "summary": {
+    "events": 49,
+    "goalStep": 2,
+    "resting": true,
+    "final": {
+     "x": 0,
+     "y": 0.22,
+     "z": -7.34,
+     "vx": 0,
+     "vy": 0,
+     "vz": 0
+    }
+   }
+  },
+  {
+   "name": "pushed over the line in one step (a 10 Hz sample jumps the body onto the ball): goal, not stuck inside",
+   "start": {
+    "x": 0,
+    "y": 0.22,
+    "z": -7.2,
+    "vx": 0,
+    "vy": 0,
+    "vz": 0
+   },
+   "reset": false,
+   "kick": null,
+   "players": [
+    {
+     "x": 0,
+     "z": -6.4,
+     "vx": 0,
+     "vz": -4,
+     "r": 0.38
+    }
+   ],
+   "movePlayers": false,
+   "jump": {
+    "step": 2,
+    "dx": 0,
+    "dz": -0.45
+   },
+   "steps": 30,
+   "frames": [
+    {
+     "step": 1,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.2,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 2,
+     "events": 33,
+     "toucher": 0,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.45,
+      "vx": 0,
+      "vy": 0,
+      "vz": -5.4
+     }
+    },
+    {
+     "step": 3,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.62933333333,
+      "vx": 0,
+      "vy": 0,
+      "vz": -5.34
+     }
+    },
+    {
+     "step": 4,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.80666666667,
+      "vx": 0,
+      "vy": 0,
+      "vz": -5.28
+     }
+    },
+    {
+     "step": 5,
+     "events": 16,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 6,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 7,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 8,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 9,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 10,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 11,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 12,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 13,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 14,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 15,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 16,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 17,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 18,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 19,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 20,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 21,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 22,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 23,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 24,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 25,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 26,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 27,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 28,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 29,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 30,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 0,
+      "y": 0.22,
+      "z": -7.88,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    }
+   ],
+   "summary": {
+    "events": 49,
+    "goalStep": 2,
+    "resting": true,
+    "final": {
+     "x": 0,
+     "y": 0.22,
+     "z": -7.88,
+     "vx": 0,
+     "vy": 0,
+     "vz": 0
+    }
+   }
+  },
+  {
+   "name": "pushed against the side net from outside: the ball stays out",
+   "start": {
+    "x": 1.62,
+    "y": 0.22,
+    "z": -7.6,
+    "vx": 0,
+    "vy": 0,
+    "vz": 0
+   },
+   "reset": false,
+   "kick": null,
+   "players": [
+    {
+     "x": 2.25,
+     "z": -7.6,
+     "vx": -2.2,
+     "vz": 0,
+     "r": 0.38
+    }
+   ],
+   "movePlayers": true,
+   "jump": null,
+   "steps": 20,
+   "frames": [
+    {
+     "step": 1,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.62,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 2,
+     "events": 32,
+     "toucher": 0,
+     "state": {
+      "x": 1.57666666667,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": -2.97,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 3,
+     "events": 32,
+     "toucher": 0,
+     "state": {
+      "x": 1.45433333333,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": -2.91,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 4,
+     "events": 16,
+     "toucher": -1,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 5,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 6,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 7,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 8,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 9,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 10,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 11,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 12,
+     "events": 48,
+     "toucher": 0,
+     "state": {
+      "x": 1.42,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 13,
+     "events": 32,
+     "toucher": 0,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 14,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 15,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 16,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 17,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 18,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 19,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    },
+    {
+     "step": 20,
+     "events": 0,
+     "toucher": -1,
+     "state": {
+      "x": 1.97,
+      "y": 0.22,
+      "z": -7.6,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0
+     }
+    }
+   ],
+   "summary": {
+    "events": 48,
+    "goalStep": -1,
+    "resting": true,
+    "final": {
+     "x": 1.97,
+     "y": 0.22,
+     "z": -7.6,
      "vx": 0,
      "vy": 0,
      "vz": 0
