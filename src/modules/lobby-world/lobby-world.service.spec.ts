@@ -273,6 +273,6 @@ describe('LobbyWorldService', () => {
 });
 
 /** Partial object match that reads like the payload. */
-function jasmineLike<T extends object>(o: T) {
-  return expect.objectContaining(o);
+function jasmineLike<T extends object>(o: T): T {
+  return expect.objectContaining(o) as T;
 }

@@ -97,6 +97,42 @@ export function parseLobbyMove(data: unknown): LobbyMove | null {
   return move;
 }
 
+/** A kick direction shorter than this carries no direction: dropped. */
+const MIN_KICK_DIR = 0.01;
+
+/**
+ * Shape check for a client `lobby.ball.kick` ({ squadId, seq, dirX, dirZ,
+ * power, px, pz }): a finite direction (normalized here), power clamped to
+ * [0, 1]. Null for anything malformed. The client's px/pz are not trusted:
+ * reach, cooldown and the goal freeze are checked by LobbyWorldService
+ * against its own last accepted position.
+ */
+export function parseLobbyKick(data: unknown): {
+  squadId: string;
+  seq: number;
+  dirX: number;
+  dirZ: number;
+  power: number;
+} | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  const squadId = d['squadId'];
+  if (typeof squadId !== 'string' || !squadId || squadId.length > MAX_ID)
+    return null;
+  const { seq, dirX, dirZ, power } = d;
+  if (!finite(seq) || !finite(dirX) || !finite(dirZ) || !finite(power))
+    return null;
+  const len = Math.hypot(dirX, dirZ);
+  if (!(len >= MIN_KICK_DIR)) return null;
+  return {
+    squadId,
+    seq: Math.trunc(seq) >>> 0,
+    dirX: dirX / len,
+    dirZ: dirZ / len,
+    power: Math.min(1, Math.max(0, power)),
+  };
+}
+
 /** uint32 serial-number order: true when `a` comes after `b` (wraparound safe). */
 export function seqAfter(a: number, b: number): boolean {
   const diff = (a - b) >>> 0;

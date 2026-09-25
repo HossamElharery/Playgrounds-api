@@ -1,17 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma/prisma.service';
-import { lobbyMovementEnabled } from './lobby-world-flags';
-import { parseLobbyMove } from './lobby-move.util';
-import { LobbyWorldService } from './lobby-world.service';
+import { CLASSIC_MORPH_ID } from '../morphs/morph-catalog';
+import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
+import { lobbyBallEnabled, lobbyMovementEnabled } from './lobby-world-flags';
+import { parseLobbyKick, parseLobbyMove } from './lobby-move.util';
+import { LobbyWorldService, type BallSink } from './lobby-world.service';
 
 /** A socket that is not in the squad room may ask for a snapshot through the DB at most this often. */
 export const SNAPSHOT_DB_CHECK_MS = 1000;
@@ -33,7 +36,9 @@ const MAX_ID = 64;
  */
 @Injectable()
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
-export class LobbyWorldGateway {
+export class LobbyWorldGateway
+  implements OnGatewayInit, OnModuleDestroy, BallSink
+{
   @WebSocketServer()
   server!: Server;
 
@@ -42,6 +47,27 @@ export class LobbyWorldGateway {
     private readonly prisma: PrismaService,
     private readonly world: LobbyWorldService,
   ) {}
+
+  /** Ball ticks broadcast through this gateway (the service owns no socket). */
+  afterInit(): void {
+    this.world.attachBallSink(this);
+  }
+
+  onModuleDestroy(): void {
+    this.world.attachBallSink(null);
+  }
+
+  toRoom(
+    squadId: string,
+    event: string,
+    payload: object,
+    volatile: boolean,
+  ): void {
+    const room = this.server?.to(`squad:${squadId}`);
+    if (!room) return;
+    if (volatile) room.volatile.emit(event, payload);
+    else room.emit(event, payload);
+  }
 
   @SubscribeMessage('lobby.move')
   move(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
@@ -100,7 +126,45 @@ export class LobbyWorldGateway {
         .catch(() => null);
       if (!member) return;
     }
-    client.emit('lobby.snapshot', this.world.snapshot(squadId, Date.now()));
+    const withBall = lobbyBallEnabled(this.config);
+    if (withBall) await this.loadMorph(userId);
+    client.emit(
+      'lobby.snapshot',
+      this.world.snapshot(squadId, Date.now(), withBall),
+    );
+  }
+
+  /**
+   * `lobby.ball.kick` { squadId, seq, dirX, dirZ, power, px, pz }. Membership is the room;
+   * reach, cooldown and the goal freeze are checked by the service against
+   * its own positions. A refused kick is dropped silently: the kicker's
+   * prediction is corrected by the next authoritative ball state.
+   */
+  @SubscribeMessage('lobby.ball.kick')
+  kick(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    if (!lobbyBallEnabled(this.config)) return;
+    const userId = authedUserId(client);
+    if (!userId) return;
+    const kick = parseLobbyKick(data);
+    if (!kick || !client.rooms.has(`squad:${kick.squadId}`)) return;
+    this.world.kick(kick, userId, Date.now());
+  }
+
+  /**
+   * The keeper's bigger save radius needs the member's equipped morph: read
+   * once per user (then kept current by MorphsService.equipped$). Only with
+   * Lobby Morphs on — with morphs off everybody is the classic avatar.
+   */
+  private async loadMorph(userId: string): Promise<void> {
+    if (!lobbyMorphsEnabled(this.config) || this.world.hasMorph(userId)) return;
+    const profile = await this.prisma.userMorphProfile
+      .findUnique({ where: { userId }, select: { equippedMorphId: true } })
+      .catch(() => null);
+    this.world.setMorph(
+      userId,
+      profile?.equippedMorphId ?? CLASSIC_MORPH_ID,
+      true,
+    );
   }
 }
 

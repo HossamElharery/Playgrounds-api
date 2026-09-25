@@ -1,3 +1,5 @@
+import { Subject } from 'rxjs';
+import type { MorphsService } from '../morphs/morphs.service';
 import { SquadService, type SquadMembershipEnded } from './squad.service';
 import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
 import { LobbyWorldService } from '../lobby-world/lobby-world.service';
@@ -81,7 +83,8 @@ describe('SquadService membershipEnded$', () => {
     const world = new LobbyWorldService();
     const left = jest.spyOn(world, 'memberLeft');
     const emptied = jest.spyOn(world, 'squadEmptied');
-    new LobbyWorldModule(service, world).onModuleInit();
+    const morphs = { equipped$: new Subject() } as unknown as MorphsService;
+    new LobbyWorldModule(service, morphs, world).onModuleInit();
     service.membershipEnded$.next({
       squadId: 's1',
       userId: 'u2',
