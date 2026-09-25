@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { Subject } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
@@ -25,6 +26,14 @@ import {
 } from './squad-invite-hold';
 
 const SQUAD_MAX_SIZE = 7;
+
+/** A member is out of a squad (left, kicked, or dropped past the grace period). */
+export interface SquadMembershipEnded {
+  squadId: string;
+  userId: string;
+  /** The squad row was deleted because nobody is left. */
+  squadEmptied: boolean;
+}
 
 /** A shared link stays valid this long; a fresh one is minted on demand after. */
 export const SQUAD_LINK_TTL_MS = 24 * 60 * 60 * 1000;
@@ -52,6 +61,8 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SquadService.name);
   /** userId -> pending "drop them from the lobby" timer. */
   private readonly dropTimers = new Map<string, NodeJS.Timeout>();
+  /** Ephemeral per-member state elsewhere (lobby positions) listens here instead of duplicating leave logic. */
+  readonly membershipEnded$ = new Subject<SquadMembershipEnded>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -96,6 +107,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     for (const timer of this.dropTimers.values()) clearTimeout(timer);
     this.dropTimers.clear();
+    this.membershipEnded$.complete();
   }
 
   private clearDropTimer(userId: string): void {
@@ -749,6 +761,10 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       squadId,
       userId,
     });
+    // Like leave(): the kicked member's sockets stop receiving the room (and
+    // stop passing the room-membership check for lobby messages).
+    this.emitter.revokeRoomAccess(userId, `squad:${squadId}`);
+    this.membershipEnded$.next({ squadId, userId, squadEmptied: false });
   }
 
   async makeLeader(leaderId: string, squadId: string, userId: string) {
@@ -860,6 +876,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     });
     if (remaining === 0) {
       await this.prisma.squad.delete({ where: { id: squadId } });
+      this.membershipEnded$.next({ squadId, userId, squadEmptied: true });
       return;
     }
     this.emitter.emitToRoom(`squad:${squadId}`, {
@@ -868,6 +885,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       userId,
     });
     this.emitter.revokeRoomAccess(userId, `squad:${squadId}`);
+    this.membershipEnded$.next({ squadId, userId, squadEmptied: false });
   }
 
   /**

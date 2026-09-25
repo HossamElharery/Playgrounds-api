@@ -2,6 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import type { MorphSource, MorphTier, Prisma } from '@prisma/client';
+import { Subject } from 'rxjs';
 import { ApiException } from '../../common/errors/api-exception';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
@@ -55,6 +56,9 @@ const MARK_SEEN_MAX = 50;
 
 @Injectable()
 export class MorphsService {
+  /** Every change of a user's equipped morph (Lobby World reads it for the keeper's save radius). */
+  readonly equipped$ = new Subject<{ userId: string; morphId: string }>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly emitter: RealtimeGatewayEmitter,
@@ -503,6 +507,7 @@ export class MorphsService {
     },
   ): void {
     const at = new Date().toISOString();
+    this.equipped$.next({ userId, morphId: change.morphId });
     if (squadId) {
       this.emitter.emitToRoom(`squad:${squadId}`, {
         type: 'squad.member.morph',
