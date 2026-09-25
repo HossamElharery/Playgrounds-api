@@ -98,7 +98,7 @@ export function ballOnGround(b: BallState): boolean {
 }
 
 export function ballResting(b: BallState): boolean {
-  return ballOnGround(b) && Math.hypot(b.vx, b.vz) < BALL_REST_SPEED;
+  return ballOnGround(b) && hypot2(b.vx, b.vz) < BALL_REST_SPEED;
 }
 
 /** Is (x, z) inside the keeper's box? */
@@ -120,7 +120,7 @@ export function kickBall(
   dirZ: number,
   power: number,
 ): boolean {
-  const len = Math.hypot(dirX, dirZ);
+  const len = hypot2(dirX, dirZ);
   if (!(len > 1e-6) || !Number.isFinite(len)) return false;
   const p = Math.min(1, Math.max(0, Number.isFinite(power) ? power : 0));
   const speed = KICK_BASE_SPEED + KICK_POWER_SPEED * p;
@@ -147,24 +147,31 @@ export function stepBall(
 ): number {
   if (info) info.toucher = -1;
   if (!(dt > 0)) return 0;
-  const speed = Math.hypot(b.vx, b.vy, b.vz);
+  const speed = hypot3(b.vx, b.vy, b.vz);
   const n = Math.min(
     MAX_SUBSTEPS,
     Math.max(1, Math.ceil((speed * dt) / MAX_STEP_TRAVEL)),
   );
-  const h = dt / n;
+  STEP.h = dt / n;
   let events = 0;
-  for (let i = 0; i < n; i++) events |= substep(b, players, count, h, info);
+  for (let i = 0; i < n; i++) events |= substep(b, players, count, info);
   return events;
 }
+
+/**
+ * Per-substep numbers for substep() and goal(). They are too big to inline,
+ * and doubles passed as arguments to a call that is not inlined are boxed (a
+ * heap allocation each): fields of one reused object are not.
+ */
+const STEP = { h: 0, px: 0.5, py: 0.5, pz: 0.5 };
 
 function substep(
   b: BallState,
   players: readonly BallPlayer[],
   count: number,
-  h: number,
   info: BallStepInfo | undefined,
 ): number {
+  const h = STEP.h;
   const R = BALL_RADIUS;
   let events = 0;
   const airborne = b.y > R + 1e-6 || b.vy > 0;
@@ -178,6 +185,9 @@ function substep(
   const px = b.x;
   const py = b.y;
   const pz = b.z;
+  STEP.px = px;
+  STEP.py = py;
+  STEP.pz = pz;
   b.x += b.vx * h;
   b.y += b.vy * h;
   b.z += b.vz * h;
@@ -191,7 +201,7 @@ function substep(
     }
   }
   if (b.y <= R + 1e-6 && b.vy === 0) {
-    const hs = Math.hypot(b.vx, b.vz);
+    const hs = hypot2(b.vx, b.vz);
     const dec = BALL_ROLL_DECEL * h;
     if (hs <= dec) {
       b.vx = 0;
@@ -219,7 +229,7 @@ function substep(
         nx = dx / d;
         nz = dz / d;
       } else {
-        const v = Math.hypot(p.vx, p.vz);
+        const v = hypot2(p.vx, p.vz);
         nx = v > 1e-6 ? p.vx / v : 0;
         nz = v > 1e-6 ? p.vz / v : 1;
       }
@@ -236,11 +246,11 @@ function substep(
   }
 
   // Posts and net see the whole move, player pushes included.
-  events |= goal(b, px, py, pz, h);
+  events |= goal(b);
 
   // The wall of the walkable disc (the ball's surface stays inside it).
   const lim = BALL_WALL_RADIUS - R;
-  const r = Math.hypot(b.x, b.z);
+  const r = hypot2(b.x, b.z);
   if (r > lim) {
     const nx = b.x / r;
     const nz = b.z / r;
@@ -273,11 +283,7 @@ function substep(
   }
 
   // Settle: a slow rolling ball stops dead (no endless creep).
-  if (
-    b.y <= R + 1e-6 &&
-    b.vy === 0 &&
-    Math.hypot(b.vx, b.vz) < BALL_REST_SPEED
-  ) {
+  if (b.y <= R + 1e-6 && b.vy === 0 && hypot2(b.vx, b.vz) < BALL_REST_SPEED) {
     b.vx = 0;
     b.vz = 0;
   }
@@ -291,13 +297,8 @@ function substep(
 }
 
 /** Posts, crossbar and net against the ball; also detects the goal-line crossing. */
-function goal(
-  b: BallState,
-  px: number,
-  py: number,
-  pz: number,
-  h: number,
-): number {
+function goal(b: BallState): number {
+  const { h, px, py, pz } = STEP;
   const R = BALL_RADIUS;
   const hw = GOAL_HALF_WIDTH;
   const top = GOAL_HEIGHT;
@@ -414,4 +415,13 @@ function inGoalMouth(x: number, y: number, z: number): boolean {
     z <= GOAL_LINE_Z - BALL_RADIUS &&
     y < GOAL_HEIGHT
   );
+}
+
+/** `Math.hypot` is not inlined by the JIT and allocates per call: the sim runs every frame (and every server tick). */
+function hypot2(x: number, z: number): number {
+  return Math.sqrt(x * x + z * z);
+}
+
+function hypot3(x: number, y: number, z: number): number {
+  return Math.sqrt(x * x + y * y + z * z);
 }
