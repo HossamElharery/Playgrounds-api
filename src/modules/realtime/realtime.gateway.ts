@@ -15,9 +15,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
 import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
+import { lobbyMovementEnabled } from '../lobby-world/lobby-world-flags';
 
 /** Per-user gap between two lobby emotes (signature moves). */
 export const SQUAD_EMOTE_COOLDOWN_MS = 3000;
+/** Per-user gap between two Lobby World emote-wheel emotes (a separate budget). */
+export const SQUAD_WHEEL_EMOTE_COOLDOWN_MS = 1200;
+/** The Lobby World emote wheel (v1). */
+export const LOBBY_EMOTE_IDS = [
+  'wave',
+  'clap',
+  'dance',
+  'laugh',
+  'goal',
+  'slide',
+  'wait',
+  'thumbs',
+] as const;
+export type LobbyEmoteId = (typeof LOBBY_EMOTE_IDS)[number];
+const EMOTE_IDS: ReadonlySet<string> = new Set(LOBBY_EMOTE_IDS);
 const EMOTE_PRUNE_EVERY_MS = 60_000;
 
 /**
@@ -218,12 +234,21 @@ export class RealtimeGateway
   /**
    * Lobby Morphs signature move, relayed to the squad. Rate limited per user
    * (all tabs share the budget) and silently ignored while the feature is off.
+   *
+   * With an `emoteId` it is a Lobby World emote-wheel emote instead: only the
+   * whitelisted ids, only while lobby movement is on, with its own 1.2 s
+   * budget. Without one it is exactly the signature move above, so older
+   * clients keep working.
    */
   @SubscribeMessage('squad.member.emote')
   memberEmote(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { squadId: string },
+    @MessageBody() data: { squadId: string; emoteId?: unknown },
   ) {
+    if (data?.emoteId !== undefined) {
+      this.wheelEmote(client, data);
+      return Promise.resolve();
+    }
     return this.inOrder(client, async () => {
       if (!lobbyMorphsEnabled(this.config)) return;
       const userId = this.authedUserId(client);
@@ -247,6 +272,37 @@ export class RealtimeGateway
         userId,
         at: new Date(now).toISOString(),
       });
+    });
+  }
+
+  /**
+   * Room membership (checked in memory, see LobbyWorldGateway) instead of a
+   * database lookup, so wheel emotes never queue behind voice signaling in
+   * the `inOrder` chain.
+   */
+  private wheelEmote(
+    client: Socket,
+    data: { squadId: string; emoteId?: unknown },
+  ): void {
+    if (!lobbyMovementEnabled(this.config)) return;
+    const userId = this.authedUserId(client);
+    const emoteId = data.emoteId;
+    if (!userId || typeof data.squadId !== 'string' || !data.squadId) return;
+    if (typeof emoteId !== 'string' || !EMOTE_IDS.has(emoteId)) return;
+    if (!client.rooms?.has(`squad:${data.squadId}`)) return;
+    const key = `${userId}:wheel`;
+    const now = Date.now();
+    const last = this.lastEmoteAt.get(key);
+    if (last !== undefined && now - last < SQUAD_WHEEL_EMOTE_COOLDOWN_MS)
+      return;
+    this.lastEmoteAt.set(key, now);
+    this.scheduleEmotePrune();
+    this.emitToRoom(`squad:${data.squadId}`, {
+      type: 'squad.member.emote',
+      squadId: data.squadId,
+      userId,
+      emoteId,
+      at: new Date(now).toISOString(),
     });
   }
 
