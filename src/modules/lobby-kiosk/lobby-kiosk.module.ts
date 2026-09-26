@@ -5,7 +5,7 @@ import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
 import { LobbyWorldService } from '../lobby-world/lobby-world.service';
 import { SquadModule } from '../squad/squad.module';
 import { SquadService } from '../squad/squad.service';
-import { KIOSK_BALL_BOX } from './kiosk-layout';
+import { KIOSK_SOLIDS } from './kiosk-layout';
 import { lobbyKioskEnabled } from './lobby-kiosk-flags';
 import { LobbyKioskGateway } from './lobby-kiosk.gateway';
 import { LobbyKioskService } from './lobby-kiosk.service';
@@ -28,7 +28,7 @@ export class LobbyKioskModule implements OnModuleInit, OnModuleDestroy {
   /**
    * Squads already announce leave / empty on `membershipEnded$` (the same path
    * Lobby World uses). The kiosk drops its memory there instead of a second leave hook.
-   * While the flag is on, the ball treats the booth as a solid.
+   * The banner hangs in the air, so the ball is not given a solid.
    */
   onModuleInit(): void {
     this.subs.add(
@@ -37,7 +37,7 @@ export class LobbyKioskModule implements OnModuleInit, OnModuleDestroy {
         else this.kiosk.memberLeft(squadId, userId);
       }),
     );
-    if (lobbyKioskEnabled(this.config)) this.world.setBallBoxes([KIOSK_BALL_BOX]);
+    if (lobbyKioskEnabled(this.config)) this.world.setBallBoxes([...KIOSK_SOLIDS]);
   }
 
   onModuleDestroy(): void {
