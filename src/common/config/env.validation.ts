@@ -86,6 +86,8 @@ export const envValidationSchema = Joi.object({
   LOBBY_MOVEMENT_ENABLED: Joi.string().allow('').optional(),
   /** Lobby World ball (Stage 2): exactly `true` enables it, and only while movement is on too. */
   LOBBY_BALL_ENABLED: Joi.string().allow('').optional(),
+  /** Booking kiosk in the lobby: exactly `true` enables it. Independent of movement. */
+  LOBBY_KIOSK_ENABLED: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),

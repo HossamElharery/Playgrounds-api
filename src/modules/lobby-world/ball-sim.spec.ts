@@ -1,6 +1,7 @@
 import {
   BALL_EVENT_BAR,
   BALL_EVENT_GOAL,
+  BALL_EVENT_WALL,
   BALL_RADIUS,
   BALL_WALL_RADIUS,
   GOAL_HALF_WIDTH,
@@ -267,5 +268,18 @@ describe('chip kick (decision B: a full-power chip can reach the crossbar)', () 
     };
     expect(shot(-2) & BALL_EVENT_BAR).toBeTruthy();
     expect(shot(2) & BALL_EVENT_GOAL).toBeTruthy();
+  });
+});
+
+describe('optional solids', () => {
+  it('bounces off a box and leaves the fixture path unchanged when none are passed', () => {
+    const box = { minX: 1, maxX: 2, minZ: -0.5, maxZ: 0.5, maxY: 1.1 };
+    const b = createBall();
+    b.x = 0.5;
+    kickBall(b, 1, 0, 0.4);
+    let ev = 0;
+    for (let i = 0; i < 90; i++) ev |= stepBall(b, [], 0, 1 / 60, undefined, [box]);
+    expect(ev & BALL_EVENT_WALL).toBeTruthy();
+    expect(b.x).toBeLessThan(box.minX);
   });
 });

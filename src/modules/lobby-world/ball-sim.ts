@@ -82,6 +82,18 @@ export interface BallStepInfo {
   toucher: number;
 }
 
+/**
+ * Axis-aligned solid the ball bounces off (the booking kiosk). Omitted — the
+ * default — the step is identical to the shared fixture.
+ */
+export interface BallAabb {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  maxY: number;
+}
+
 export function createBall(): BallState {
   return { x: 0, y: BALL_RADIUS, z: 0, vx: 0, vy: 0, vz: 0 };
 }
@@ -145,6 +157,7 @@ export function stepBall(
   count: number,
   dt: number,
   info?: BallStepInfo,
+  boxes?: readonly BallAabb[],
 ): number {
   if (info) info.toucher = -1;
   if (!(dt > 0)) return 0;
@@ -154,8 +167,10 @@ export function stepBall(
     Math.max(1, Math.ceil((speed * dt) / MAX_STEP_TRAVEL)),
   );
   STEP.h = dt / n;
+  STEP.boxes = boxes && boxes.length ? boxes : null;
   let events = 0;
   for (let i = 0; i < n; i++) events |= substep(b, players, count, info);
+  STEP.boxes = null;
   return events;
 }
 
@@ -164,7 +179,13 @@ export function stepBall(
  * and doubles passed as arguments to a call that is not inlined are boxed (a
  * heap allocation each): fields of one reused object are not.
  */
-const STEP = { h: 0, px: 0.5, py: 0.5, pz: 0.5 };
+const STEP: {
+  h: number;
+  px: number;
+  py: number;
+  pz: number;
+  boxes: readonly BallAabb[] | null;
+} = { h: 0, px: 0.5, py: 0.5, pz: 0.5, boxes: null };
 
 function substep(
   b: BallState,
@@ -246,6 +267,10 @@ function substep(
     }
   }
 
+  // Optional solids (the kiosk). Skipped entirely when none were passed in,
+  // so the shared fixture path does not move.
+  if (STEP.boxes) events |= collideBoxes(b);
+
   // Posts and net see the whole move, player pushes included.
   events |= goal(b);
 
@@ -298,6 +323,40 @@ function substep(
 }
 
 /** Posts, crossbar and net against the ball; also detects the goal-line crossing. */
+/** Push the ball out of the shallowest side of each solid and bounce. */
+function collideBoxes(b: BallState): number {
+  const boxes = STEP.boxes;
+  if (!boxes) return 0;
+  const R = BALL_RADIUS;
+  let events = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    if (b.y > box.maxY + R) continue;
+    if (b.x < box.minX - R || b.x > box.maxX + R) continue;
+    if (b.z < box.minZ - R || b.z > box.maxZ + R) continue;
+    const left = b.x - (box.minX - R);
+    const right = box.maxX + R - b.x;
+    const front = b.z - (box.minZ - R);
+    const back = box.maxZ + R - b.z;
+    const min = Math.min(left, right, front, back);
+    if (min === left) {
+      b.x = box.minX - R;
+      if (b.vx > 0) b.vx = -b.vx * BALL_WALL_RESTITUTION;
+    } else if (min === right) {
+      b.x = box.maxX + R;
+      if (b.vx < 0) b.vx = -b.vx * BALL_WALL_RESTITUTION;
+    } else if (min === front) {
+      b.z = box.minZ - R;
+      if (b.vz > 0) b.vz = -b.vz * BALL_WALL_RESTITUTION;
+    } else {
+      b.z = box.maxZ + R;
+      if (b.vz < 0) b.vz = -b.vz * BALL_WALL_RESTITUTION;
+    }
+    events |= BALL_EVENT_WALL;
+  }
+  return events;
+}
+
 function goal(b: BallState): number {
   const { h, px, py, pz } = STEP;
   const R = BALL_RADIUS;
