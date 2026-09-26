@@ -3,6 +3,7 @@ import { extname } from 'path';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { createPostThumbnail } from './post-thumbnail';
 import { RequestUploadDto } from './dto/request-upload.dto';
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
@@ -62,6 +63,14 @@ export class MediaUploadService {
       type: asset.type,
       durationSeconds: asset.durationSeconds ?? undefined,
     });
+    let thumbnail: Buffer | undefined;
+    if (asset.type === 'image') {
+      try {
+        thumbnail = await createPostThumbnail(file.buffer);
+      } catch {
+        throw new BadRequestException('Invalid image or image dimensions are too large');
+      }
+    }
     const uploaded = await this.storage.uploadBuffer(
       file.buffer,
       file.originalname,
@@ -71,7 +80,7 @@ export class MediaUploadService {
     const thumbnailUrl =
       asset.type === 'video'
         ? await this.maybeThumbnail(uploaded.key, file.buffer)
-        : uploaded.url;
+        : (await this.storage.uploadBuffer(thumbnail!, 'preview.webp', 'image/webp', 'posts/thumbnails')).url;
     return this.prisma.mediaAsset.update({
       where: { id: assetId },
       data: {
