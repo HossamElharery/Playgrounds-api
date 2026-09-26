@@ -1,4 +1,5 @@
 import {
+  BALL_EVENT_BAR,
   BALL_EVENT_GOAL,
   BALL_RADIUS,
   BALL_WALL_RADIUS,
@@ -235,5 +236,36 @@ describe('ball-sim', () => {
       if (inGoal) bad.push(`run ${run}: inside the goal without a goal`);
     }
     expect(bad).toEqual([]);
+  });
+});
+
+describe('chip kick (decision B: a full-power chip can reach the crossbar)', () => {
+  function peakRise(): number {
+    const b = createBall();
+    kickBall(b, 1, 0, 1);
+    let top = 0;
+    for (let i = 0; i < 60; i++) {
+      stepBall(b, [], 0, 1 / 60);
+      top = Math.max(top, b.y);
+    }
+    return top - BALL_RADIUS;
+  }
+
+  it('peaks about 0.88 m above rest at full power', () => {
+    expect(peakRise()).toBeGreaterThan(0.86);
+    expect(peakRise()).toBeLessThan(0.9);
+  });
+
+  it('hits the crossbar from mid range and still scores from long range', () => {
+    const shot = (z0: number) => {
+      const b = createBall();
+      b.z = z0;
+      kickBall(b, 0, -1, 1);
+      let ev = 0;
+      for (let i = 0; i < 120; i++) ev |= stepBall(b, [], 0, 1 / 60);
+      return ev;
+    };
+    expect(shot(-2) & BALL_EVENT_BAR).toBeTruthy();
+    expect(shot(2) & BALL_EVENT_GOAL).toBeTruthy();
   });
 });

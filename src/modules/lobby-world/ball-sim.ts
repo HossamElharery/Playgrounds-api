@@ -46,7 +46,8 @@ export const GOAL_AREA_FRONT_Z = GOAL_LINE_Z + 1.8;
 export const KICK_BASE_SPEED = 3;
 export const KICK_POWER_SPEED = 9;
 export const KICK_CHIP_POWER = 0.85;
-export const KICK_CHIP_LIFT = 3;
+/** Full-power chip peaks ≈ 0.88 m above the floor rest height: it can reach the 1.1 m crossbar. */
+export const KICK_CHIP_LIFT = 4.23;
 /** Save radius multiplier for the keeper morph inside the goal area (easter egg). */
 export const KEEPER_SAVE_SCALE = 1.6;
 
@@ -112,7 +113,7 @@ export function inGoalArea(x: number, z: number): boolean {
 
 /**
  * A kick along (dirX, dirZ) with power 0..1: speed = 3 + 9 × power; above 0.85
- * it is a chip (+3 u/s up). Returns false for a zero direction (no kick).
+ * it is a chip (+4.23 u/s up). Returns false for a zero direction (no kick).
  */
 export function kickBall(
   b: BallState,

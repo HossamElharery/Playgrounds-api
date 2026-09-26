@@ -1,5 +1,10 @@
 import { writeFileSync } from 'node:fs';
-import { BALL_RADIUS, GOAL_LINE_Z, ballResting } from './ball-sim';
+import {
+  BALL_RADIUS,
+  GOAL_LINE_Z,
+  KICK_CHIP_LIFT,
+  ballResting,
+} from './ball-sim';
 import { parseLobbyKick, parseLobbyMove } from './lobby-move.util';
 import {
   BALL_TICK_HZ,
@@ -164,7 +169,7 @@ describe('LobbyWorldService — ball (Stage 2)', () => {
       b.z = 0.5;
       b.y = BALL_RADIUS;
       expect(kick('a', { dirX: 0, dirZ: -1, power: 1 })).toBe(true);
-      expect(b.vy).toBe(3);
+      expect(b.vy).toBe(KICK_CHIP_LIFT);
       world.onModuleDestroy();
     });
 
