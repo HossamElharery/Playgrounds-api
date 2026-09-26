@@ -6,25 +6,31 @@ describe('GET /lobby/features', () => {
     new LobbyWorldController({ get: (k: string) => env[k] } as any);
 
   it.each([
-    [{}, { movement: false, ball: false }],
-    [{ LOBBY_MOVEMENT_ENABLED: 'true' }, { movement: true, ball: false }],
-    [{ LOBBY_BALL_ENABLED: 'true' }, { movement: false, ball: false }],
+    [{}, { movement: false, ball: false, kiosk: false }],
+    [{ LOBBY_MOVEMENT_ENABLED: 'true' }, { movement: true, ball: false, kiosk: false }],
+    [{ LOBBY_BALL_ENABLED: 'true' }, { movement: false, ball: false, kiosk: false }],
     [
       { LOBBY_MOVEMENT_ENABLED: 'true', LOBBY_BALL_ENABLED: 'true' },
-      { movement: true, ball: true },
+      { movement: true, ball: true, kiosk: false },
     ],
     [
       { LOBBY_MOVEMENT_ENABLED: ' true ', LOBBY_BALL_ENABLED: 'true' },
-      { movement: true, ball: true },
+      { movement: true, ball: true, kiosk: false },
     ],
     [
       { LOBBY_MOVEMENT_ENABLED: 'TRUE', LOBBY_BALL_ENABLED: '1' },
-      { movement: false, ball: false },
+      { movement: false, ball: false, kiosk: false },
     ],
     [
       { LOBBY_MOVEMENT_ENABLED: '', LOBBY_BALL_ENABLED: '' },
-      { movement: false, ball: false },
+      { movement: false, ball: false, kiosk: false },
     ],
+    [{ LOBBY_KIOSK_ENABLED: 'true' }, { movement: false, ball: false, kiosk: true }],
+    [
+      { LOBBY_KIOSK_ENABLED: ' true ' },
+      { movement: false, ball: false, kiosk: true },
+    ],
+    [{ LOBBY_KIOSK_ENABLED: 'TRUE' }, { movement: false, ball: false, kiosk: false }],
   ])('%j → %j', (env, expected) => {
     expect(controller(env).features()).toEqual(expected);
   });

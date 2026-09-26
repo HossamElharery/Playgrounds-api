@@ -8,6 +8,7 @@ import {
   kickBall,
   resetBall,
   stepBall,
+  type BallAabb,
   type BallPlayer,
   type BallState,
   type BallStepInfo,
@@ -176,6 +177,8 @@ export class LobbyWorldService implements OnModuleDestroy {
   private sink: BallSink | null = null;
   /** Reused every tick (no allocation per step for the players list). */
   private readonly players: BallPlayer[] = [];
+  /** Extra solids (the kiosk) while that flag is on. Empty keeps the sim unchanged. */
+  private ballBoxes: readonly BallAabb[] = [];
   private readonly playerIds: string[] = [];
   private readonly stepInfo: BallStepInfo = { toucher: -1 };
 
@@ -304,6 +307,11 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.sink = sink;
   }
 
+  /** Solids the ball bounces off. Empty (the default) leaves the sim unchanged. */
+  setBallBoxes(boxes: readonly BallAabb[]): void {
+    this.ballBoxes = boxes;
+  }
+
   /**
    * Keeper easter egg: the member's equipped morph. `force` is the gateway's
    * first read for a lobby member; MorphsService.equipped$ only updates users
@@ -380,7 +388,14 @@ export class LobbyWorldService implements OnModuleDestroy {
     for (const ball of this.balls.values()) {
       if (!ball.moving || now < ball.frozenUntil || ball.resetTimer) continue;
       const n = this.collectPlayers(ball.squadId, now);
-      const events = stepBall(ball.state, this.players, n, dt, this.stepInfo);
+      const events = stepBall(
+        ball.state,
+        this.players,
+        n,
+        dt,
+        this.stepInfo,
+        this.ballBoxes,
+      );
       if (this.stepInfo.toucher >= 0)
         ball.lastTouchBy = this.playerIds[this.stepInfo.toucher];
       if (events & BALL_EVENT_GOAL) {

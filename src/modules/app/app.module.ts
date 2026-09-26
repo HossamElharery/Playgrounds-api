@@ -44,6 +44,7 @@ import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 import { PostsModule } from '../posts/posts.module';
 import { FinanceModule } from '../finance/finance.module';
 import { MorphsModule } from '../morphs/morphs.module';
+import { LobbyKioskModule } from '../lobby-kiosk/lobby-kiosk.module';
 import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
 
 @Module({
@@ -98,6 +99,7 @@ import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
     FinanceModule,
     MorphsModule,
     LobbyWorldModule,
+    LobbyKioskModule,
   ],
   controllers: [AppController],
   providers: [
