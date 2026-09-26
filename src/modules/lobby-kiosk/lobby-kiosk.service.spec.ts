@@ -159,7 +159,7 @@ describe('LobbyKioskService', () => {
     expect(service.state('s1', NOW).busy).toEqual([]);
     service.setBusy('s1', 'a', true);
     service.squadEmptied('s1');
-    expect(service.state('s1', NOW)).toEqual({ proposal: null, busy: [], nextMatch: null });
+    expect(service.state('s1', NOW)).toEqual({ proposal: null, busy: [], nextMatch: null, shortlist: [], presence: [] });
   });
 
   it('sets nextMatch only for the booker on the proposal venue, in the future', async () => {
@@ -208,5 +208,35 @@ describe('LobbyKioskService', () => {
     for (let i = 0; i < 5; i++) expect(service.allow('a', NOW)).toBe(true);
     expect(service.allow('a', NOW)).toBe(false);
     expect(service.allow('a', NOW + 1001)).toBe(true);
+  });
+
+  it('shares map presence without GPS, rate-limits it, and drops it when the member leaves', () => {
+    const { service, events } = harness();
+    expect(service.setPresence('s1', 'a', { venueId: 'v1', center: { lat: 30, lng: 31, zoom: 13 } }, NOW)).toBe(true);
+    const sent = events.at(-1);
+    expect(sent?.event).toBe('lobby.kiosk.presence');
+    expect(sent?.payload).toEqual({ userId: 'a', venueId: 'v1', center: { lat: 30, lng: 31, zoom: 13 } });
+    expect(JSON.stringify(sent?.payload)).not.toMatch(/gps|accuracy/i);
+    expect(service.setPresence('s1', 'a', { venueId: 'v1' }, NOW + 1)).toBe(true);
+    expect(service.setPresence('s1', 'a', { venueId: 'v1' }, NOW + 2)).toBe(true);
+    expect(service.setPresence('s1', 'a', { venueId: 'v1' }, NOW + 3)).toBe(true);
+    expect(service.setPresence('s1', 'a', { venueId: 'v1' }, NOW + 4)).toBe(false);
+    service.memberLeft('s1', 'a');
+    expect(service.state('s1', NOW).presence).toEqual([]);
+  });
+
+  it('caps the shortlist at 5 and lets only the pinner or the leader remove one', async () => {
+    const { service, prisma } = harness();
+    for (let i = 1; i <= 5; i++) {
+      prisma.venue.findUnique.mockResolvedValueOnce({ id: `v${i}`, status: 'active' });
+      expect(await service.addShortlist('s1', 'a', `v${i}`)).toBe(true);
+    }
+    prisma.venue.findUnique.mockResolvedValueOnce({ id: 'v6', status: 'active' });
+    expect(await service.addShortlist('s1', 'a', 'v6')).toBe(false);
+    expect(service.state('s1', NOW).shortlist).toHaveLength(5);
+    expect(await service.removeShortlist('s1', 'c', 'v1')).toBe(false);
+    expect(await service.removeShortlist('s1', 'b', 'v1')).toBe(true);
+    service.squadEmptied('s1');
+    expect(service.state('s1', NOW).shortlist).toEqual([]);
   });
 });

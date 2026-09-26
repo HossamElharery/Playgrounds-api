@@ -116,6 +116,47 @@ export class LobbyKioskGateway implements OnGatewayInit, OnModuleDestroy {
     await this.kiosk.booked(userId, squadId, data.proposalId, data.bookingId);
   }
 
+  @SubscribeMessage('lobby.kiosk.presence')
+  presence(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { squadId?: unknown; venueId?: unknown; center?: unknown; open?: unknown },
+  ): void {
+    const squadId = this.guard(client, data?.squadId);
+    const userId = authedUserId(client);
+    if (!squadId || !userId) return;
+    if (data?.open === false) {
+      this.kiosk.setPresence(squadId, userId, null);
+      return;
+    }
+    const center = mapCenter(data?.center);
+    this.kiosk.setPresence(squadId, userId, {
+      venueId: typeof data?.venueId === 'string' ? data.venueId : undefined,
+      center,
+    });
+  }
+
+  @SubscribeMessage('lobby.kiosk.shortlist.add')
+  async shortlistAdd(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { squadId?: unknown; venueId?: unknown },
+  ): Promise<void> {
+    const squadId = this.guard(client, data?.squadId);
+    const userId = authedUserId(client);
+    if (!squadId || !userId || !validId(data?.venueId)) return;
+    await this.kiosk.addShortlist(squadId, userId, data.venueId);
+  }
+
+  @SubscribeMessage('lobby.kiosk.shortlist.remove')
+  async shortlistRemove(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { squadId?: unknown; venueId?: unknown },
+  ): Promise<void> {
+    const squadId = this.guard(client, data?.squadId);
+    const userId = authedUserId(client);
+    if (!squadId || !userId || !validId(data?.venueId)) return;
+    await this.kiosk.removeShortlist(squadId, userId, data.venueId);
+  }
+
   /** Flag, auth, room, then the per-user rate limit. Null means "drop it". */
   private guard(client: Socket, squadId: unknown): string | null {
     if (!lobbyKioskEnabled(this.config)) return null;
@@ -138,4 +179,12 @@ function validId(id: unknown): id is string {
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/** Map camera only. A GPS fix is not a field on this payload. */
+function mapCenter(value: unknown): { lat: number; lng: number; zoom: number } | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const c = value as { lat?: unknown; lng?: unknown; zoom?: unknown };
+  if (typeof c.lat !== 'number' || typeof c.lng !== 'number' || typeof c.zoom !== 'number') return undefined;
+  return { lat: c.lat, lng: c.lng, zoom: c.zoom };
 }

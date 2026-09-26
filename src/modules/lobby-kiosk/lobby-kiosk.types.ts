@@ -36,10 +36,24 @@ export interface NextMatch {
   bookerId?: string;
 }
 
+export interface KioskShortlistItem {
+  venueId: string;
+  userId: string;
+}
+
+/** Shared map view. `center` is the map camera while panning, never the device GPS. */
+export interface KioskPresence {
+  userId: string;
+  venueId?: string;
+  center?: { lat: number; lng: number; zoom: number };
+}
+
 export interface KioskSquadState {
   proposal: Proposal | null;
   busy: string[];
   nextMatch: NextMatch | null;
+  shortlist: KioskShortlistItem[];
+  presence: KioskPresence[];
 }
 
 export interface ProposeInput {

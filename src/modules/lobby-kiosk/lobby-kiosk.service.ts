@@ -9,6 +9,8 @@ import {
 } from './lobby-kiosk.clock';
 import {
   judgeProposal,
+  type KioskPresence,
+  type KioskShortlistItem,
   type KioskSquadState,
   type KioskVote,
   type NextMatch,
@@ -23,10 +25,15 @@ export interface KioskBroadcaster {
   emit(squadId: string, event: string, payload: object): void;
 }
 
+/** Presence updates are tighter than the general kiosk budget. */
+export const KIOSK_PRESENCE_RATE = 4;
+
 interface SquadRuntime {
   proposal: Proposal | null;
   busy: Set<string>;
   nextMatch: NextMatch | null;
+  shortlist: KioskShortlistItem[];
+  presence: KioskPresence[];
 }
 
 interface MemberRow {
@@ -46,6 +53,7 @@ export class LobbyKioskService implements OnModuleDestroy {
 
   private readonly squads = new Map<string, SquadRuntime>();
   private readonly hits = new Map<string, number[]>();
+  private readonly presenceHits = new Map<string, number[]>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -76,11 +84,13 @@ export class LobbyKioskService implements OnModuleDestroy {
   state(squadId: string, now = Date.now()): KioskSquadState {
     this.sweepNext(now);
     const s = this.squads.get(squadId);
-    if (!s) return { proposal: null, busy: [], nextMatch: null };
+    if (!s) return { proposal: null, busy: [], nextMatch: null, shortlist: [], presence: [] };
     return {
       proposal: s.proposal,
       busy: [...s.busy],
       nextMatch: s.nextMatch,
+      shortlist: s.shortlist.map((item) => ({ ...item })),
+      presence: s.presence.map((item) => ({ ...item, center: item.center ? { ...item.center } : undefined })),
     };
   }
 
@@ -249,7 +259,79 @@ export class LobbyKioskService implements OnModuleDestroy {
     const s = this.squads.get(squadId);
     if (!s) return;
     if (s.busy.delete(userId)) this.emit(squadId, 'lobby.kiosk.busy', { userId, busy: false });
+    if (s.presence.some((item) => item.userId === userId)) {
+      s.presence = s.presence.filter((item) => item.userId !== userId);
+      this.emit(squadId, 'lobby.kiosk.presence', { userId, closed: true });
+    }
     this.maybeDrop(squadId);
+  }
+
+  /**
+   * Panel presence. `center` is the map camera while the member pans.
+   * The device GPS is never accepted and never broadcast.
+   */
+  setPresence(
+    squadId: string,
+    userId: string,
+    input: { venueId?: string; center?: { lat: number; lng: number; zoom: number } } | null,
+    now = Date.now(),
+  ): boolean {
+    if (!this.allowPresence(userId, now)) return false;
+    const s = this.runtime(squadId);
+    s.presence = s.presence.filter((item) => item.userId !== userId);
+    if (input) {
+      const next: KioskPresence = { userId };
+      if (input.venueId && validId(input.venueId)) next.venueId = input.venueId;
+      const c = input.center;
+      if (c && [c.lat, c.lng, c.zoom].every((n) => typeof n === 'number' && Number.isFinite(n))) {
+        next.center = { lat: c.lat, lng: c.lng, zoom: c.zoom };
+      }
+      s.presence.push(next);
+      this.emit(squadId, 'lobby.kiosk.presence', next);
+    } else {
+      this.emit(squadId, 'lobby.kiosk.presence', { userId, closed: true });
+      this.maybeDrop(squadId);
+    }
+    return true;
+  }
+
+  async addShortlist(squadId: string, userId: string, venueId: string): Promise<boolean> {
+    if (!validId(venueId)) return false;
+    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true, status: true } }).catch(() => null);
+    if (!venue || venue.status !== 'active') return false;
+    const s = this.runtime(squadId);
+    if (s.shortlist.some((item) => item.venueId === venueId)) return true;
+    if (s.shortlist.length >= 5) return false;
+    s.shortlist.push({ venueId, userId });
+    this.emit(squadId, 'lobby.kiosk.shortlist', { shortlist: s.shortlist });
+    return true;
+  }
+
+  async removeShortlist(squadId: string, userId: string, venueId: string): Promise<boolean> {
+    const s = this.squads.get(squadId);
+    if (!s) return false;
+    const item = s.shortlist.find((row) => row.venueId === venueId);
+    if (!item) return false;
+    const members = await this.members(squadId);
+    const leader = members.some((m) => m.userId === userId && m.isLeader);
+    if (item.userId !== userId && !leader) return false;
+    s.shortlist = s.shortlist.filter((row) => row.venueId !== venueId);
+    this.emit(squadId, 'lobby.kiosk.shortlist', { shortlist: s.shortlist });
+    this.maybeDrop(squadId);
+    return true;
+  }
+
+  private allowPresence(userId: string, now: number): boolean {
+    const start = now - 1000;
+    const prev = this.presenceHits.get(userId) ?? [];
+    const kept = prev.filter((t) => t > start);
+    if (kept.length >= KIOSK_PRESENCE_RATE) {
+      this.presenceHits.set(userId, kept);
+      return false;
+    }
+    kept.push(now);
+    this.presenceHits.set(userId, kept);
+    return true;
   }
 
   /** One-second sweep: expire open proposals and stale next-match chips. */
@@ -312,7 +394,7 @@ export class LobbyKioskService implements OnModuleDestroy {
   private runtime(squadId: string): SquadRuntime {
     let s = this.squads.get(squadId);
     if (!s) {
-      s = { proposal: null, busy: new Set(), nextMatch: null };
+      s = { proposal: null, busy: new Set(), nextMatch: null, shortlist: [], presence: [] };
       this.squads.set(squadId, s);
     }
     return s;
@@ -320,7 +402,7 @@ export class LobbyKioskService implements OnModuleDestroy {
 
   private maybeDrop(squadId: string): void {
     const s = this.squads.get(squadId);
-    if (!s || s.proposal || s.busy.size || s.nextMatch) return;
+    if (!s || s.proposal || s.busy.size || s.nextMatch || s.shortlist.length || s.presence.length) return;
     this.squads.delete(squadId);
     this.maybeStopTimer();
   }
