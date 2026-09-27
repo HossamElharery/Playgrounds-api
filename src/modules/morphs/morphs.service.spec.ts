@@ -224,7 +224,7 @@ describe('MorphsService', () => {
       expect(res.isNew).toBe(true);
       expect(res.timesObtained).toBe(1);
       expect(res.equippedMorphId).toBe(res.morphId);
-      expect(res.progress).toEqual({ owned: 1, total: 16 });
+      expect(res.progress).toEqual({ owned: 1, total: 18 });
       expect(res.quota).toEqual({
         remainingFree: null,
         bonusRolls: 0,
@@ -237,7 +237,7 @@ describe('MorphsService', () => {
         morphId: res.morphId,
         wasNew: true,
         quotaKind: 'FREE',
-        catalogVersion: 1,
+        catalogVersion: 3,
       });
       expect(prisma.$executeRaw).toHaveBeenCalled();
     });
@@ -258,7 +258,7 @@ describe('MorphsService', () => {
       const res = await service.roll('u1', ids(2));
       expect(res.isNew).toBe(false);
       expect(res.timesObtained).toBe(3);
-      expect(res.progress).toEqual({ owned: 16, total: 16 });
+      expect(res.progress).toEqual({ owned: 18, total: 18 });
     });
 
     it('is idempotent per clientRollId (same result, no side effects)', async () => {
@@ -457,7 +457,7 @@ describe('MorphsService', () => {
         timesObtained: 2,
         isNew: true,
       });
-      expect(me.progress).toEqual({ owned: 1, total: 16 });
+      expect(me.progress).toEqual({ owned: 1, total: 18 });
       expect(me.odds).toEqual({ COMMON: 7800, EPIC: 1900, MISK: 300 });
       expect(me.pity).toEqual({ epicEvery: 10, miskEvery: 50 });
       expect(me.cooldownMs).toBe(1200);

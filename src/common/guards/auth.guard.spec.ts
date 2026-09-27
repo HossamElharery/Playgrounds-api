@@ -226,10 +226,36 @@ describe('AuthGuard guest confinement', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
+  it.each([
+    ['/api/v1/users/me', 'GET'],
+    ['/api/v1/auth/guest/email/otp', 'POST'],
+    ['/api/v1/auth/guest/complete', 'POST'],
+    ['/api/v1/squad/s1/mic', 'PATCH'],
+    ['/api/v1/squad/s1/leave', 'POST'],
+  ])('allows the guest lifecycle %s %s', async (url, method) => {
+    const { guard, ctx } = guestRequest(url, method);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it.each([
+    ['/api/v1/auth/webauthn/register/options', 'POST'],
+    ['/api/v1/auth/webauthn/register/verify', 'POST'],
+    ['/api/v1/users/me', 'PATCH'],
+    ['/api/v1/users/me/avatar', 'PATCH'],
+    ['/api/v1/squad/start', 'POST'],
+    ['/api/v1/squad/invite-link', 'POST'],
+    ['/api/v1/squad/invites', 'POST'],
+    ['/api/v1/squad/s1/make-leader/u2', 'POST'],
+    ['/api/v1/auth/guest/complete/extra', 'POST'],
+  ])('blocks guest privilege escalation %s %s', async (url, method) => {
+    const { guard, ctx } = guestRequest(url, method);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ status: 403 });
+  });
+
   it('still keeps guests out of everything else (e.g. bookings, lobbyist look-alikes)', async () => {
     for (const url of ['/api/v1/bookings/mine', '/api/v1/lobbyist', '/api/v1/lobbyfeatures']) {
       const { guard, ctx } = guestRequest(url);
-      await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(guard.canActivate(ctx)).rejects.toMatchObject({ status: 403 });
     }
   });
 });

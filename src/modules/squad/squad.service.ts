@@ -339,6 +339,13 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     return { squadId, alreadyMember: false };
   }
 
+  async accountCompleted(userId: string): Promise<void> {
+    const member = await this.prisma.squadMember.findFirst({ where: { userId }, select: { squadId: true } });
+    if (member) this.emitter.emitToRoom(`squad:${member.squadId}`, {
+      type: 'squad.member.updated', squadId: member.squadId, userId,
+    });
+  }
+
   /** Guests are disposable: delete idle ones together with their tokens. */
   @Cron(CronExpression.EVERY_HOUR)
   async sweepGuests(): Promise<void> {
@@ -358,14 +365,18 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       // a stray request that reached a guest before this surface was locked
       // down would otherwise block user.delete() forever and this sweep
       // would silently retry the same zombie row every hour.
-      await this.prisma.friendship
-        .deleteMany({
+      await this.prisma.$transaction(async (tx) => {
+        // Share the promotion lock: a stale sweep candidate may now be a full account.
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${g.id} FOR UPDATE`;
+        const current = await tx.user.findFirst({
+          where: { id: g.id, isGuest: true, createdAt: { lt: cutoff }, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }], squadMemberships: { none: {} } },
+        });
+        if (!current) return;
+        await tx.friendship.deleteMany({
           where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] },
-        })
-        .catch(() => undefined);
-      await this.prisma.user
-        .delete({ where: { id: g.id } })
-        .catch(() => undefined);
+        });
+        await tx.user.delete({ where: { id: g.id, isGuest: true } });
+      }).catch(() => undefined);
     }
     await this.prisma.squadInviteLink
       .deleteMany({ where: { expiresAt: { lt: cutoff } } })

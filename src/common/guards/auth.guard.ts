@@ -5,6 +5,8 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ApiException } from '../errors/api-exception';
+import { HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
@@ -19,7 +21,10 @@ import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
 /** API paths a guest identity may call (after the global prefix). */
-const GUEST_ALLOWED = /^\/api\/v1\/(squad|auth|users\/me|realtime|presence|morphs|lobby)(\/|\?|$)/;
+const GUEST_ALLOWED = /^\/api\/v1\/(squad|realtime|presence|morphs|lobby)(\/|\?|$)/;
+const GUEST_SQUAD_WRITE = /^\/api\/v1\/squad\/(start|invite-link(?:\/reset)?|invites|join-requests\/[^/]+\/(approve|decline)|[^/]+\/(kick|make-leader|mute)\/[^/]+)(\?|$)/;
+const GUEST_AUTH = /^\/api\/v1\/auth\/(guest\/(email\/otp|complete)|logout-all)(\?|$)/;
+const GUEST_SELF = /^\/api\/v1\/users\/me(\?|$)/;
 /** Read-only extras the player shell polls on boot; empty for a fresh guest. */
 const GUEST_READ_ONLY = /^\/api\/v1\/(friends|friend-requests|notifications)(\/|\?|$)/;
 
@@ -67,10 +72,13 @@ export class AuthGuard implements CanActivate {
     const url: string = request.originalUrl ?? request.url ?? '';
     if (
       current.isGuest &&
+      (request.method !== 'GET' && GUEST_SQUAD_WRITE.test(url) ||
       !GUEST_ALLOWED.test(url) &&
-      !(request.method === 'GET' && GUEST_READ_ONLY.test(url))
+      !(request.method === 'POST' && GUEST_AUTH.test(url)) &&
+      !(['GET', 'DELETE'].includes(request.method) && GUEST_SELF.test(url)) &&
+      !(request.method === 'GET' && GUEST_READ_ONLY.test(url)))
     ) {
-      throw new ForbiddenException('Create an account to use this feature');
+      throw new ApiException(HttpStatus.FORBIDDEN, 'GUEST_ACCOUNT_REQUIRED', 'Create an account to use this feature');
     }
     // "Edit as this venue" is an explicit, per-request opt-in the admin UI sends only
     // while its edit mode is switched on; it means nothing for anyone who is not admin.

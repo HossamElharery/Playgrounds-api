@@ -6,7 +6,7 @@ import type { MorphTier } from '@prisma/client';
  * that duplication is the intentional parity check (adding a morph fails
  * both specs until both sides agree).
  */
-export const MORPH_CATALOG_VERSION = 1;
+export const MORPH_CATALOG_VERSION = 3;
 export const CLASSIC_MORPH_ID = 'classic';
 
 export interface MorphDef {
@@ -36,12 +36,12 @@ export const UNOWNED_WEIGHT_BOOST = { owned: 2, unowned: 3 } as const;
 /** Minimum gap between two rolls of one user. */
 export const MORPH_ROLL_COOLDOWN_MS = 1200;
 
-const row = (id: string, tier: MorphTier): MorphDef => ({
+const row = (id: string, tier: MorphTier, sinceVersion = 1): MorphDef => ({
   id,
   tier,
   weight: 10,
   rollable: true,
-  sinceVersion: 1,
+  sinceVersion,
 });
 
 export const MORPH_CATALOG: readonly MorphDef[] = Object.freeze([
@@ -61,6 +61,8 @@ export const MORPH_CATALOG: readonly MorphDef[] = Object.freeze([
   row('robot', 'EPIC'),
   row('golden_pharaoh', 'MISK'),
   row('tuktuk', 'MISK'),
+  row('royal_falcon', 'MISK', 2),
+  row('nile_queen', 'MISK', 3),
 ]);
 
 const BY_ID = new Map(MORPH_CATALOG.map((d) => [d.id, d]));

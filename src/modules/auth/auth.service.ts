@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
+import { CompleteGuestDto } from './dto/complete-guest.dto';
 import { GuestJoinDto } from './dto/guest-join.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -20,7 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
 import { generateOtp } from '../../common/utils/otp.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
-import { OAuthProvider, OtpPurpose, User } from '@prisma/client';
+import { OAuthProvider, OtpPurpose, Prisma, User } from '@prisma/client';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
 import { RegisterOwnerDto } from './dto/register-owner.dto';
@@ -354,6 +355,101 @@ export class AuthService {
     );
   }
 
+  private async requireGuest(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.status !== 'active' || !user.isGuest || user.email || user.passwordHash) {
+      throw new ForbiddenException('This session is not a guest account');
+    }
+  }
+
+  async requestGuestEmailCode(userId: string, rawEmail: string): Promise<void> {
+    const email = rawEmail.trim().toLowerCase();
+    const code = generateOtp();
+    const codeHash = await bcrypt.hash(code, 10);
+    const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS', 300);
+    const otp = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user?.isGuest || user.status !== 'active' || user.email || user.passwordHash) {
+        throw new ForbiddenException('This session is not a guest account');
+      }
+      // Serialize requests for an email even if two guest sessions request it together.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${email}))::text`;
+      if (await tx.user.findUnique({ where: { email } })) throw new ConflictException('Email already in use');
+      const recent = await tx.otpCode.count({
+        where: { purpose: OtpPurpose.register, createdAt: { gt: new Date(Date.now() - 60_000) }, OR: [{ target: email }, { userId }] },
+      });
+      if (recent) throw new BadRequestException('Please wait before requesting another code');
+      await tx.otpCode.updateMany({
+        where: { userId, purpose: OtpPurpose.register, consumedAt: null }, data: { consumedAt: new Date() },
+      });
+      return tx.otpCode.create({ data: { userId, target: email, codeHash, purpose: OtpPurpose.register, expiresAt: new Date(Date.now() + ttlSeconds * 1000) } });
+    });
+    try {
+      await this.email.sendVerificationCode(email, code, Math.ceil(ttlSeconds / 60));
+    } catch (error) {
+      // A failed delivery must not lock the guest out of trying again.
+      await this.prisma.otpCode.deleteMany({ where: { id: otp.id, consumedAt: null } });
+      throw error;
+    }
+  }
+
+  async completeGuest(userId: string, dto: CompleteGuestDto): Promise<TokenPair & { user: Partial<User> }> {
+    await this.requireGuest(userId);
+    const email = dto.email.trim().toLowerCase();
+    const passwordHash = await this.hashPassword(dto.password);
+    let user: User;
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        // Lock the identity so competing submissions cannot promote it twice.
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        const current = await tx.user.findUnique({ where: { id: userId } });
+        if (!current?.isGuest || current.status !== 'active' || current.email || current.passwordHash) {
+          throw new ForbiddenException('This session is not a guest account');
+        }
+        if (await tx.user.findUnique({ where: { email } })) {
+          throw new ConflictException('Email already in use');
+        }
+        const otp = await tx.otpCode.findFirst({
+          where: { userId, target: email, purpose: OtpPurpose.register },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (!otp || otp.consumedAt || otp.expiresAt <= new Date()) {
+          return { error: 'Code expired or not found' } as const;
+        }
+        if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+          return { error: 'Too many attempts, request a new code' } as const;
+        }
+        if (!(await bcrypt.compare(dto.code, otp.codeHash))) {
+          // Commit the failed attempt before returning the error outside the transaction.
+          await tx.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
+          return { error: 'Invalid code' } as const;
+        }
+        const claimed = await tx.otpCode.updateMany({
+          where: { id: otp.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: OTP_MAX_ATTEMPTS } },
+          data: { consumedAt: new Date() },
+        });
+        if (claimed.count !== 1) return { error: 'Code expired or not found' } as const;
+        return tx.user.update({
+          where: { id: userId },
+          data: { email, emailVerifiedAt: new Date(), passwordHash, name: dto.name.trim(), isGuest: false },
+        });
+      }).then((result) => {
+        if ('error' in result) throw new ApiException(HttpStatus.BAD_REQUEST, 'GUEST_CODE_INVALID', result.error);
+        return result;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Email already in use');
+      }
+      throw error;
+    }
+    const tokens = await this.issueTokenPair(user);
+    await this.squad.accountCompleted(user.id).catch(() => this.logger.warn('Account completed; lobby refresh notification failed'));
+    await this.email.sendWelcome(email, user.name).catch(() => this.logger.warn('Guest account completed; welcome email delivery failed'));
+    return { ...tokens, user: this.sanitize(user) };
+  }
+
   async registerPlayerEmail(
     dto: RegisterEmailDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
@@ -368,6 +464,7 @@ export class AuthService {
     const otp = await this.prisma.otpCode.findFirst({
       where: {
         target: email,
+        userId: null,
         purpose: OtpPurpose.register,
         consumedAt: null,
         expiresAt: { gt: new Date() },

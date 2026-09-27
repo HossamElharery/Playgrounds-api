@@ -12,6 +12,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { CompleteGuestDto } from './dto/complete-guest.dto';
 import { GuestJoinDto } from './dto/guest-join.dto';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -53,6 +54,24 @@ export class AuthController {
   async guestJoin(@Body() dto: GuestJoinDto) {
     const result = await this.authService.joinSquadAsGuest(dto);
     return { message: 'authenticated', result };
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post('guest/email/otp')
+  requestGuestEmailCode(@CurrentUser() user: AuthenticatedUser, @Body() dto: RequestEmailRegistrationOtpDto) {
+    return this.authService.requestGuestEmailCode(user.id, dto.email);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('guest/complete')
+  async completeGuest(@CurrentUser() user: AuthenticatedUser, @Body() dto: CompleteGuestDto) {
+    const result = await this.authService.completeGuest(user.id, dto);
+    return { message: 'account completed', result };
   }
 
   @Public()
