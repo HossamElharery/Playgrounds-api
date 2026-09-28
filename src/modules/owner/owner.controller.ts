@@ -18,7 +18,12 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { AdminEditAuditInterceptor } from '../../common/interceptors/admin-edit-audit.interceptor';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { AnyStaff, OwnerOnly, RequireAnyPermission, RequirePermission } from '../../common/decorators/permissions.decorator';
+import {
+  AnyStaff,
+  OwnerOnly,
+  RequireAnyPermission,
+  RequirePermission,
+} from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { OwnerService } from './owner.service';
@@ -49,7 +54,11 @@ import { ExportService } from './exports/export.service';
 import { ExpensesService } from './expenses/expenses.service';
 import { CreateExpenseDto, UpdateExpenseDto } from './expenses/expenses.dto';
 import { InsightsService } from './insights/insights.service';
-import { ApplyDiscountDto, OccupancyQueryDto, WindowDto } from './insights/dto/insights.dto';
+import {
+  ApplyDiscountDto,
+  OccupancyQueryDto,
+  WindowDto,
+} from './insights/dto/insights.dto';
 import {
   AddManualPaymentDto,
   CreateManualBookingDto,
@@ -58,6 +67,12 @@ import {
   UpdateManualBookingDto,
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
+import { OwnerAssistantService } from './assistant/owner-assistant.service';
+import {
+  AssistantAskDto,
+  AssistantExecuteDto,
+} from './assistant/owner-assistant.dto';
+import type { AssistantAction } from './assistant/assistant.types';
 
 @ApiTags('owner')
 @ApiBearerAuth()
@@ -77,6 +92,7 @@ export class OwnerController {
     private readonly exportCentre: ExportService,
     private readonly platformRequests: PlatformRequestsService,
     private readonly quickstart: QuickstartService,
+    private readonly assistant: OwnerAssistantService,
   ) {}
 
   @AnyStaff()
@@ -113,6 +129,12 @@ export class OwnerController {
 
   // Costs a real Gemini call per request — throttled well under the global
   // limit so a runaway client can't burn through the owner's AI budget.
+  // Superseded by `assistant/ask`. Kept for app builds already in the stores,
+  // which still speak this endpoint; new clients must not use it.
+  @ApiOperation({
+    summary: 'Deprecated: use POST /owner/assistant/ask',
+    deprecated: true,
+  })
   @Throttle({ default: { limit: 15, ttl: 60_000 } })
   @RequirePermission('schedule.manage')
   @Post('assistant/interpret')
@@ -123,7 +145,62 @@ export class OwnerController {
     return this.owner.interpretScheduleCommand(user, dto.venueId, dto.text);
   }
 
-  @RequirePermission('schedule.manage')
+  /**
+   * The owner assistant's planning call: one sentence in, a validated plan
+   * out. Read-only — nothing is written until the owner confirms and the
+   * client posts the plan back to `assistant/execute`. Throttled the same way
+   * as `interpret`: every call costs a real model request.
+   */
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
+  @RequirePermission('bookings.view')
+  @Post('assistant/ask')
+  askAssistant(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AssistantAskDto,
+  ) {
+    return this.assistant.ask(user, dto.venueId, dto.text, {
+      history: dto.history,
+      draft: dto.draft,
+    });
+  }
+
+  /** What deserves the owner's attention right now — powers the dashboard's proactive message. */
+  @RequirePermission('bookings.view')
+  @Get('assistant/attention')
+  assistantAttention(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
+    return this.assistant.attentionDigest(user, venueId);
+  }
+
+  /**
+   * Runs a plan the owner confirmed. Each action is re-checked against the
+   * caller's own permissions and then executed through the same services the
+   * dashboard's buttons use.
+   */
+  @RequireAnyPermission(
+    'bookings.create',
+    'payments.record',
+    'bookings.edit',
+    'expenses.manage',
+  )
+  @Post('assistant/execute')
+  executeAssistant(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AssistantExecuteDto,
+  ) {
+    return this.assistant.execute(
+      user,
+      dto.venueId,
+      dto.actions as unknown as AssistantAction[],
+    );
+  }
+
+  // The assistant is no longer schedule-only: its chat log is the record of
+  // everything the owner asked it, so it follows the dashboard's baseline read
+  // permission rather than the closure permission.
+  @RequirePermission('bookings.view')
   @Get('assistant/messages')
   listAssistantMessages(
     @CurrentUser() user: AuthenticatedUser,
@@ -139,7 +216,7 @@ export class OwnerController {
     );
   }
 
-  @RequirePermission('schedule.manage')
+  @RequirePermission('bookings.view')
   @Post('assistant/messages')
   createAssistantMessage(
     @CurrentUser() user: AuthenticatedUser,
@@ -159,11 +236,11 @@ export class OwnerController {
 
   @RequirePermission('bookings.create')
   @Post('calendar/walk-in')
-  @ApiOperation({ summary: 'Deprecated: use POST /owner/bookings/manual', deprecated: true })
-  walkIn(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CreateWalkInDto,
-  ) {
+  @ApiOperation({
+    summary: 'Deprecated: use POST /owner/bookings/manual',
+    deprecated: true,
+  })
+  walkIn(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateWalkInDto) {
     return this.ownerBookings.createWalkInAlias(user, dto);
   }
 
@@ -178,10 +255,7 @@ export class OwnerController {
 
   @RequirePermission('schedule.manage')
   @Delete('calendar/blocks/:id')
-  deleteBlock(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ) {
+  deleteBlock(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.owner.deleteCalendarBlock(user, id);
   }
 
@@ -214,7 +288,9 @@ export class OwnerController {
 
   @RequirePermission('reports.view')
   @Get('exports')
-  @ApiOperation({ summary: 'Export centre: one workbook (xlsx) or zip of CSVs for any period' })
+  @ApiOperation({
+    summary: 'Export centre: one workbook (xlsx) or zip of CSVs for any period',
+  })
   async exportCentreDownload(
     @CurrentUser() user: AuthenticatedUser,
     @Query('venueId') venueId: string,
@@ -223,7 +299,13 @@ export class OwnerController {
     @Query('lang') lang?: string,
     @Query('format') format?: string,
   ) {
-    const out = await this.exportCentre.build(user, { venueId, from, to, lang, format });
+    const out = await this.exportCentre.build(user, {
+      venueId,
+      from,
+      to,
+      lang,
+      format,
+    });
     return new StreamableFile(Buffer.from(out.file), {
       type: out.contentType,
       disposition: `attachment; filename="${out.filename}"`,
@@ -265,56 +347,91 @@ export class OwnerController {
 
   @RequirePermission('bookings.view')
   @Post('fixed-bookings/preview')
-  @ApiOperation({ summary: 'Preview a weekly fixed booking: dates, prices and clashes' })
-  previewFixed(@CurrentUser() user: AuthenticatedUser, @Body() dto: FixedSeriesShapeDto) {
+  @ApiOperation({
+    summary: 'Preview a weekly fixed booking: dates, prices and clashes',
+  })
+  previewFixed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: FixedSeriesShapeDto,
+  ) {
     return this.fixed.preview(user, dto);
   }
 
   @RequirePermission('bookings.create')
   @Post('fixed-bookings')
-  @ApiOperation({ summary: 'Create a weekly fixed booking (books the next 8 weeks)' })
-  createFixed(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateFixedSeriesDto) {
+  @ApiOperation({
+    summary: 'Create a weekly fixed booking (books the next 8 weeks)',
+  })
+  createFixed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateFixedSeriesDto,
+  ) {
     return this.fixed.create(user, dto);
   }
 
   @RequirePermission('bookings.view')
   @Get('fixed-bookings')
   @ApiOperation({ summary: 'Active fixed bookings of a venue' })
-  listFixed(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+  listFixed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
     return this.fixed.list(user, venueId);
   }
 
   @RequirePermission('bookings.edit')
   @Post('fixed-bookings/:id/skip')
   @ApiOperation({ summary: 'Skip one date of a fixed booking' })
-  skipFixed(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string, @Body() dto: SeriesDateDto) {
+  skipFixed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: SeriesDateDto,
+  ) {
     return this.fixed.skipDate(user, id, dto.date);
   }
 
   @RequirePermission('bookings.edit')
   @Post('fixed-bookings/:id/cancel-from')
   @ApiOperation({ summary: 'End a fixed booking from a date onward' })
-  cancelFixedFrom(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string, @Body() dto: SeriesDateDto) {
+  cancelFixedFrom(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: SeriesDateDto,
+  ) {
     return this.fixed.cancelFrom(user, id, dto.date);
   }
 
   @RequirePermission('bookings.edit')
   @Post('fixed-bookings/:id/reschedule')
-  @ApiOperation({ summary: 'Change the hour of a fixed booking from a date onward' })
-  rescheduleFixed(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string, @Body() dto: RescheduleSeriesDto) {
+  @ApiOperation({
+    summary: 'Change the hour of a fixed booking from a date onward',
+  })
+  rescheduleFixed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: RescheduleSeriesDto,
+  ) {
     return this.fixed.reschedule(user, id, dto);
   }
 
   @RequireAnyPermission('reports.view', 'payments.record')
   @Get('cash-today')
-  @ApiOperation({ summary: 'Payments recorded on today\'s bookings by method (read-only drawer check)' })
-  cashToday(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+  @ApiOperation({
+    summary:
+      "Payments recorded on today's bookings by method (read-only drawer check)",
+  })
+  cashToday(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
     return this.summary.cashToday(user, venueId);
   }
 
   @RequirePermission('reports.view')
   @Get('expenses')
-  @ApiOperation({ summary: 'Expenses of a venue (monthly ones are generated on read)' })
+  @ApiOperation({
+    summary: 'Expenses of a venue (monthly ones are generated on read)',
+  })
   listExpenses(
     @CurrentUser() user: AuthenticatedUser,
     @Query('venueId') venueId: string,
@@ -328,27 +445,39 @@ export class OwnerController {
   @RequirePermission('expenses.manage')
   @Post('expenses')
   @ApiOperation({ summary: 'Record an expense' })
-  createExpense(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateExpenseDto) {
+  createExpense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateExpenseDto,
+  ) {
     return this.expenses.create(user, dto);
   }
 
   @RequirePermission('expenses.manage')
   @Patch('expenses/:id')
   @ApiOperation({ summary: 'Edit an expense' })
-  updateExpense(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string, @Body() dto: UpdateExpenseDto) {
+  updateExpense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateExpenseDto,
+  ) {
     return this.expenses.update(user, id, dto);
   }
 
   @RequirePermission('expenses.manage')
   @Delete('expenses/:id')
   @ApiOperation({ summary: 'Delete an expense' })
-  deleteExpense(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+  deleteExpense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
     return this.expenses.remove(user, id);
   }
 
   @RequirePermission('bookings.create')
   @Post('bookings/manual')
-  @ApiOperation({ summary: 'Create a manual (walk-in / phone / WhatsApp) booking' })
+  @ApiOperation({
+    summary: 'Create a manual (walk-in / phone / WhatsApp) booking',
+  })
   createManual(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateManualBookingDto,
@@ -365,7 +494,9 @@ export class OwnerController {
 
   @RequirePermission('bookings.edit')
   @Patch('bookings/:id')
-  @ApiOperation({ summary: 'Update a manual booking (platform bookings are locked)' })
+  @ApiOperation({
+    summary: 'Update a manual booking (platform bookings are locked)',
+  })
   updateManual(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -386,7 +517,9 @@ export class OwnerController {
 
   @RequirePermission('bookings.edit')
   @Post('bookings/:id/restore')
-  @ApiOperation({ summary: 'Restore a cancelled manual booking if the slot is free' })
+  @ApiOperation({
+    summary: 'Restore a cancelled manual booking if the slot is free',
+  })
   restoreManual(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -402,7 +535,12 @@ export class OwnerController {
     @Param('id') id: string,
     @Body() dto: AddManualPaymentDto,
   ) {
-    return this.ownerBookings.addManualPayment(user, id, dto.amount, dto.method);
+    return this.ownerBookings.addManualPayment(
+      user,
+      id,
+      dto.amount,
+      dto.method,
+    );
   }
 
   @RequirePermission('bookings.view')
@@ -440,7 +578,13 @@ export class OwnerController {
         'venueId is required',
       );
     }
-    return this.summary.getSummary(user, query.venueId, query.range ?? 'today', query.from, query.to);
+    return this.summary.getSummary(
+      user,
+      query.venueId,
+      query.range ?? 'today',
+      query.from,
+      query.to,
+    );
   }
 
   @RequirePermission('bookings.view')
@@ -505,7 +649,9 @@ export class OwnerController {
 
   @RequirePermission('bookings.view')
   @Get('attention')
-  @ApiOperation({ summary: 'Bookings needing arrival confirmation or unpaid manuals' })
+  @ApiOperation({
+    summary: 'Bookings needing arrival confirmation or unpaid manuals',
+  })
   attention(
     @CurrentUser() user: AuthenticatedUser,
     @Query('venueId') venueId: string,
@@ -535,19 +681,28 @@ export class OwnerController {
   // ---- Occupancy map, idle windows and time-boxed discounts ----
   @RequirePermission('reports.view')
   @Get('insights/occupancy')
-  occupancy(@CurrentUser() user: AuthenticatedUser, @Query() q: OccupancyQueryDto) {
+  occupancy(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: OccupancyQueryDto,
+  ) {
     return this.insights.occupancy(user, q.venueId, q.weeks);
   }
 
   @RequirePermission('reports.view')
   @Get('insights/discounts')
-  discounts(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+  discounts(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
     return this.insights.listDiscounts(user, venueId);
   }
 
   @RequirePermission('pricing.manage')
   @Post('insights/discounts')
-  applyDiscount(@CurrentUser() user: AuthenticatedUser, @Body() dto: ApplyDiscountDto) {
+  applyDiscount(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ApplyDiscountDto,
+  ) {
     return this.insights.applyDiscount(user, dto);
   }
 
@@ -559,7 +714,10 @@ export class OwnerController {
 
   @RequirePermission('pricing.manage')
   @Post('insights/dismiss')
-  dismissSuggestion(@CurrentUser() user: AuthenticatedUser, @Body() dto: WindowDto) {
+  dismissSuggestion(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: WindowDto,
+  ) {
     return this.insights.dismiss(user, dto);
   }
 
@@ -574,30 +732,38 @@ export class OwnerController {
 
   @RequirePermission('bookings.checkin')
   @Post('bookings/:id/no-show')
-  markNoShow(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ) {
+  markNoShow(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.bookings.markNoShow(user, id);
   }
 
   @RequireAnyPermission('venue.manage', 'team.manage')
   @Get('quickstart')
   @ApiOperation({ summary: 'New-owner checklist, derived from real data' })
-  quickstartSteps(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+  quickstartSteps(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
     return this.quickstart.forVenue(user, venueId);
   }
 
   @RequirePermission('bookings.view')
   @Get('platform-requests')
-  @ApiOperation({ summary: "This venue's requests to Matchena about Matchena bookings, with the answers" })
-  listPlatformRequests(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+  @ApiOperation({
+    summary:
+      "This venue's requests to Matchena about Matchena bookings, with the answers",
+  })
+  listPlatformRequests(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
     return this.platformRequests.listForVenue(user, venueId);
   }
 
   @RequirePermission('bookings.edit')
   @Post('bookings/:id/change-request')
-  @ApiOperation({ summary: 'Ask the admin to cancel or change a Matchena booking' })
+  @ApiOperation({
+    summary: 'Ask the admin to cancel or change a Matchena booking',
+  })
   requestChange(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,

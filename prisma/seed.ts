@@ -747,7 +747,7 @@ async function main() {
 <p>The wallet holds daily streaks and weekly quests — for example, book three times this week. Badges such as Night Owl show on your public profile.</p>
 <p>Apply coins when you confirm the next booking. They come off the total before you pay the rest.</p>`,
       contentAr: `<p>الحجز المؤكد بعد التشيك إن بيزوّد الكوينز. أول جلسة مكتملة ممكن كمان تضيف بونص ترحيب.</p>
-<p>المحفظة فيها الستريك اليومي والمهام الأسبوعية — مثلًا احجز ثلاث مرات في الأسبوع. شارات زي بومة الليل بتظهر على بروفايلك العام.</p>
+<p>المحفظة فيها الستريك اليومي والكويستات الأسبوعية — مثلًا احجز ثلاث مرات في الأسبوع. شارات زي بومة الليل بتظهر على بروفايلك العام.</p>
 <p>صرف الكوينز وأنت بتأكد الحجز الجاي. بتتخصم من الإجمالي قبل ما تدفع الباقي.</p>`,
     },
     {

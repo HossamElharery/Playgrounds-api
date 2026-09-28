@@ -6,7 +6,7 @@ import type { MorphTier } from '@prisma/client';
  * that duplication is the intentional parity check (adding a morph fails
  * both specs until both sides agree).
  */
-export const MORPH_CATALOG_VERSION = 3;
+export const MORPH_CATALOG_VERSION = 5;
 export const CLASSIC_MORPH_ID = 'classic';
 
 export interface MorphDef {
@@ -59,10 +59,15 @@ export const MORPH_CATALOG: readonly MorphDef[] = Object.freeze([
   row('referee', 'EPIC'),
   row('dino', 'EPIC'),
   row('robot', 'EPIC'),
+  row('ultra', 'EPIC', 4),
+  row('gamer', 'EPIC', 4),
   row('golden_pharaoh', 'MISK'),
   row('tuktuk', 'MISK'),
   row('royal_falcon', 'MISK', 2),
   row('nile_queen', 'MISK', 3),
+  row('griff', 'MISK', 5),
+  row('rabid', 'MISK', 5),
+  row('tiny_planet', 'MISK', 5),
 ]);
 
 const BY_ID = new Map(MORPH_CATALOG.map((d) => [d.id, d]));

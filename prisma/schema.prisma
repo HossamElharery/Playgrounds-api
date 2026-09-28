@@ -2249,6 +2249,7 @@ model Post {
   authorId         String
   author           User           @relation("PostAuthor", fields: [authorId], references: [id])
   authorKind       PostAuthorKind @default(user)
+  isAnonymous      Boolean        @default(false)
   text             String         @db.Text
   hashtags         String[]       @default([])
   mentions         String[]       @default([])

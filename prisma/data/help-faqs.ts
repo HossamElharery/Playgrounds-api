@@ -213,7 +213,7 @@ const HELP_FAQ_ROWS: Omit<HelpFaqSeed, 'ctaPath' | 'ctaLabelEn' | 'ctaLabelAr'>[
     answerEn:
       'Pulse surfaces open matches that still need players in your country. Post a match, claim a spot, or invite your squad. Confirm only if you can attend — repeated late cancellations lower your reliability score.',
     answerAr:
-      'Pulse بيظهر الماتشات المفتوحة اللي لسه محتاجة لاعيبة في نفس البلد. انشر ماتش، احجز مكان، أو ابعت دعوة للسكواد. أكّد بس لو هتحضر — الإلغاء المتأخر المتكرر بيقلل درجة الالتزام.',
+      'Pulse بيظهر الماتشات المفتوحة اللي لسه محتاجة لاعيبة في نفس البلد. انشر ماتش، احجز مكان، أو ادعُ سكوادك. أكّد بس لو هتحضر — الإلغاء المتأخر المتكرر بيقلل درجة الالتزام.',
   },
   {
     id: 'faq-squad',
@@ -224,7 +224,7 @@ const HELP_FAQ_ROWS: Omit<HelpFaqSeed, 'ctaPath' | 'ctaLabelEn' | 'ctaLabelAr'>[
     answerEn:
       'Create or join a squad, then invite friends to the lobby before you book. You can split the fee, share a hold link, and keep the group in one thread. If you are not free, decline — you can pause someone’s invites for a few minutes.',
     answerAr:
-      'اعمل سكواد أو انضم لواحد، وبعدين ابعت دعوة لأصحابك للوبي قبل الحجز. تقدروا تقسموا الفاتورة، تشاركوا لينك الحجز، وتفضلوا في محادثة واحدة. لو مش فاضي، ارفض — وينفع توقف دعوات حد لدقايق.',
+      'اعمل سكواد أو انضم لواحد، وبعدين ادعُ أصحابك للوبي قبل الحجز. تقدروا تقسموا الفاتورة، تشاركوا لينك الحجز، وتفضلوا في محادثة واحدة. لو مش فاضي، ارفض — وينفع توقف دعوات حد لدقايق.',
   },
   {
     id: 'faq-reliability',
@@ -244,9 +244,9 @@ const HELP_FAQ_ROWS: Omit<HelpFaqSeed, 'ctaPath' | 'ctaLabelEn' | 'ctaLabelAr'>[
     questionEn: 'How do I join an open match?',
     questionAr: 'إزاي أنضم لماتش مفتوح؟',
     answerEn:
-      'Go to People, open Pulse or the matches tab, and claim a spot on a game that still needs players. Read the time, area, and cost per player before you confirm. Keep chat and payment inside Matchena.',
+      'Go to Community, open Pulse or the matches tab, and claim a spot on a game that still needs players. Read the time, area, and cost per player before you confirm. Keep chat and payment inside Matchena.',
     answerAr:
-      'من اللاعيبة افتح Pulse أو تبويب الماتشات، واحجز مكان في ماتش لسه ناقص لاعيبة. اقرأ الميعاد والمنطقة وتكلفة اللاعب قبل التأكيد. خلّي الشات والدفع جوه ماتشنا.',
+      'من المجتمع افتح Pulse أو تبويب الماتشات، واحجز مكان في ماتش لسه ناقص لاعيبة. اقرأ الميعاد والمنطقة وتكلفة اللاعب قبل التأكيد. خلّي الشات والدفع جوه ماتشنا.',
   },
   {
     id: 'faq-membership',
@@ -334,7 +334,7 @@ const HELP_FAQ_ROWS: Omit<HelpFaqSeed, 'ctaPath' | 'ctaLabelEn' | 'ctaLabelAr'>[
     answerEn:
       'Invite staff by email and give each person only the access they need: view bookings, check players in, manage prices, or read reports. You can suspend or remove access from the Staff screen without sharing your owner login.',
     answerAr:
-      'ابعت دعوة للموظف بالإيميل وادّيله الصلاحية اللي محتاجها بس: يشوف الحجوزات، يعمل تشيك إن، يدير الأسعار، أو يقرأ التقارير. تقدر توقف أو تشيل الصلاحية من شاشة الموظفين من غير ما تشارك دخول المالك.',
+      'ادعُ الموظف بالإيميل وادّيله الصلاحية اللي محتاجها بس: يشوف الحجوزات، يعمل تشيك إن، يدير الأسعار، أو يقرأ التقارير. تقدر توقف أو تشيل الصلاحية من شاشة الموظفين من غير ما تشارك دخول المالك.',
   },
   {
     id: 'faq-owner-scan',

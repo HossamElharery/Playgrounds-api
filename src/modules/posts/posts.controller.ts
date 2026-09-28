@@ -158,7 +158,8 @@ export class PostsController {
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  @Delete('comments/:id')
+  // Match-post comments already own DELETE /comments/:id.
+  @Delete('post-comments/:id')
   deleteComment(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.posts.deleteComment(user.id, id);
   }

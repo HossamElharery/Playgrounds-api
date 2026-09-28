@@ -29,6 +29,8 @@ const MAX_POST_TEXT = 2200;
 const POSTS_PER_HOUR = 10;
 const LIKES_PER_MINUTE = 40;
 const REPORTS_PER_DAY = 20;
+const ANONYMOUS_AUTHOR = { id: null, name: 'Anonymous member', username: null, avatarUrl: null } as const;
+
 const AUTHOR_SELECT = {
   id: true,
   name: true,
@@ -72,23 +74,27 @@ export class PostsService {
     const restriction = await this.prisma.userPostingRestriction.findUnique({
       where: { userId },
     });
-    if (!restriction) return { restricted: false };
+    if (!restriction) return { restricted: false, supportsAnonymous: true };
     if (restriction.permanent) {
-      return { restricted: true, permanent: true, reason: restriction.reason };
+      return { supportsAnonymous: true, restricted: true, permanent: true, reason: restriction.reason };
     }
     if (restriction.suspendedUntil && restriction.suspendedUntil > new Date()) {
       return {
+        supportsAnonymous: true,
         restricted: true,
         permanent: false,
         reason: restriction.reason,
         until: restriction.suspendedUntil.toISOString(),
       };
     }
-    return { restricted: false };
+    return { restricted: false, supportsAnonymous: true };
   }
 
   async create(userId: string, dto: CreatePostDto, isAdmin: boolean) {
     await this.assertCanPost(userId);
+    if (dto.isAnonymous && (dto.linkedMatchId || (dto.authorKind && dto.authorKind !== 'user'))) {
+      throw new BadRequestException('Anonymous posts cannot link a match or represent an official account');
+    }
     const recent = await this.prisma.post.count({
       where: { authorId: userId, createdAt: { gte: new Date(Date.now() - 60 * 60_000) } },
     });
@@ -185,6 +191,7 @@ export class PostsService {
           slug,
           authorId: userId,
           authorKind,
+          isAnonymous: dto.isAnonymous ?? false,
           text,
           hashtags,
           mentions,
@@ -225,7 +232,7 @@ export class PostsService {
     }
 
     this.analytics.emit('post_created', userId, { postId: post.id, media: assets.length });
-    return this.toDto(post);
+    return this.toDto(post, userId);
   }
 
   async getByParam(param: string, viewer?: PostViewer) {
@@ -270,6 +277,8 @@ export class PostsService {
         select: { followingId: true },
       });
       where.authorId = { in: follows.map((f) => f.followingId) };
+      // A feed restricted to known authors would reveal anonymous ownership.
+      where.isAnonymous = false;
     }
 
     const rows = await this.prisma.post.findMany({
@@ -294,7 +303,7 @@ export class PostsService {
     const scored = rows
       .map((row) => ({
         row,
-        score: this.score(row, followed.has(row.authorId)),
+        score: this.score(row, !row.isAnonymous && followed.has(row.authorId)),
       }))
       .sort((a, b) => b.score - a.score || b.row.createdAt.getTime() - a.row.createdAt.getTime());
 
@@ -307,7 +316,18 @@ export class PostsService {
   }
 
   async listByAuthor(authorId: string, cursor: string | undefined, limit: number, viewer?: PostViewer) {
-    return this.listWhere({ authorId, status: 'active', autoHidden: false }, cursor, limit, viewer);
+    return this.listWhere(
+      {
+        authorId,
+        status: 'active',
+        autoHidden: false,
+        // Only the owner can associate these posts with their account here.
+        ...(viewer?.id === authorId ? {} : { isAnonymous: false }),
+      },
+      cursor,
+      limit,
+      viewer,
+    );
   }
 
   async listByHashtag(tag: string, cursor: string | undefined, limit: number, viewer?: PostViewer) {
@@ -465,7 +485,7 @@ export class PostsService {
   }
 
   async comments(postId: string, cursor?: string, limit = 30) {
-    await this.requireActive(postId);
+    const post = await this.requireActive(postId);
     const take = Math.min(Math.max(limit, 1), 50);
     const rows = await this.prisma.postComment.findMany({
       where: { postId, status: 'active', parentCommentId: null },
@@ -483,7 +503,7 @@ export class PostsService {
     });
     const page = rows.slice(0, take);
     return {
-      items: page.map((c) => this.commentDto(c)),
+      items: page.map((c) => this.commentDto(c, post.isAnonymous ? post.authorId : undefined)),
       nextCursor: rows.length > take ? page[page.length - 1].id : undefined,
     };
   }
@@ -572,7 +592,7 @@ export class PostsService {
         payload: { postId, commentId: comment.id },
       });
     }
-    return this.commentDto(comment);
+    return this.commentDto(comment, post.isAnonymous ? post.authorId : undefined);
   }
 
   async deleteComment(userId: string, commentId: string) {
@@ -755,6 +775,7 @@ export class PostsService {
       slug: string;
       authorId: string;
       authorKind: PostAuthorKind;
+      isAnonymous?: boolean;
       text: string;
       hashtags: string[];
       mentions: string[];
@@ -799,7 +820,7 @@ export class PostsService {
         this.prisma.postSave.findUnique({
           where: { postId_userId: { postId: post.id, userId: viewerId } },
         }),
-        this.prisma.follow.findUnique({
+        post.isAnonymous ? null : this.prisma.follow.findUnique({
           where: { followerId_followingId: { followerId: viewerId, followingId: post.authorId } },
         }),
       ]);
@@ -811,17 +832,19 @@ export class PostsService {
       id: post.id,
       slug: post.slug,
       permalink: `${post.slug}-${post.id}`,
-      authorId: post.authorId,
-      authorKind: post.authorKind,
-      author: post.author,
+      authorId: post.isAnonymous ? null : post.authorId,
+      authorKind: post.isAnonymous ? 'user' : post.authorKind,
+      isAnonymous: !!post.isAnonymous,
+      isOwn: !!viewerId && viewerId === post.authorId,
+      author: post.isAnonymous ? ANONYMOUS_AUTHOR : post.author,
       text: post.text,
       media: post.media,
       hashtags: post.hashtags,
       mentions: post.mentions,
       taggedVenueId: post.taggedVenueId,
       taggedVenue: post.taggedVenue,
-      linkedMatchId: post.linkedMatchId,
-      linkedMatch: post.linkedMatch
+      linkedMatchId: post.isAnonymous ? null : post.linkedMatchId,
+      linkedMatch: !post.isAnonymous && post.linkedMatch
         ? { ...post.linkedMatch, dateTime: post.linkedMatch.dateTime.toISOString() }
         : null,
       visibility: post.visibility,
@@ -861,18 +884,20 @@ export class PostsService {
       createdAt: Date;
       author: { id: string; name: string; username: string | null; avatarUrl: string | null };
     }>;
-  }) {
+  }, anonymousAuthorId?: string) {
+    const isAnonymous = !!anonymousAuthorId && comment.authorId === anonymousAuthorId;
     return {
       id: comment.id,
       postId: comment.postId,
-      authorId: comment.authorId,
+      authorId: isAnonymous ? null : comment.authorId,
+      isAnonymous,
       parentCommentId: comment.parentCommentId,
       text: comment.text,
       mentions: comment.mentions,
       status: comment.status,
       createdAt: comment.createdAt.toISOString(),
-      author: comment.author,
-      replies: (comment.replies ?? []).map((r) => this.commentDto({ ...r, replies: [] })),
+      author: isAnonymous ? ANONYMOUS_AUTHOR : comment.author,
+      replies: (comment.replies ?? []).map((r) => this.commentDto({ ...r, replies: [] }, anonymousAuthorId)),
     };
   }
 }

@@ -37,7 +37,9 @@ export class JobsService {
 
   @Cron(CronExpression.EVERY_10_SECONDS)
   async expireBookingHolds() {
-    await this.runJob('expireBookingHolds', () => this.releaseExpiredBookingHolds());
+    await this.runJob('expireBookingHolds', () =>
+      this.releaseExpiredBookingHolds(),
+    );
   }
 
   private async releaseExpiredBookingHolds() {
@@ -80,7 +82,9 @@ export class JobsService {
 
   @Cron(CronExpression.EVERY_10_SECONDS)
   async expirePulseClaims() {
-    await this.runJob('expirePulseClaims', () => this.releaseExpiredPulseClaims());
+    await this.runJob('expirePulseClaims', () =>
+      this.releaseExpiredPulseClaims(),
+    );
   }
 
   private async releaseExpiredPulseClaims() {
@@ -226,7 +230,9 @@ export class JobsService {
         slotStart: { gt: now, lte: soon },
       },
       include: {
-        venue: { select: { ownerId: true, country: { select: { timezone: true } } } },
+        venue: {
+          select: { ownerId: true, country: { select: { timezone: true } } },
+        },
         payments: { where: { status: 'paid' }, select: { amount: true } },
       },
       take: 200,
@@ -245,8 +251,14 @@ export class JobsService {
       const outstanding = Math.max(0, b.totalAmount - paid);
       if (outstanding <= 0) continue;
       const tz = b.venue.country?.timezone ?? 'Africa/Cairo';
-      const time = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' }).format(b.slotStart);
-      const major = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(outstanding / 100);
+      const time = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(b.slotStart);
+      const major = new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: 2,
+      }).format(outstanding / 100);
       const who = b.guestName?.trim();
       await this.notifications.create({
         userId: b.venue.ownerId,
@@ -264,9 +276,82 @@ export class JobsService {
     return sent;
   }
 
+  /**
+   * The last chance to collect. The reminder above fires before the customer
+   * arrives; this one fires while they are still on the court — once the game
+   * ends and they walk out, an unpaid balance is a debt, not a collection.
+   * Deduped on its own payload key so a booking can legitimately get both.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async remindBookingsEndingUnpaid() {
+    await this.runJob('remindBookingsEndingUnpaid', async () => {
+      await this.remindBookingsEndingUnpaidNow();
+    });
+  }
+
+  async remindBookingsEndingUnpaidNow(now: Date = new Date()) {
+    const endingBy = new Date(now.getTime() + 20 * 60_000);
+    const rows = await this.prisma.booking.findMany({
+      where: {
+        source: 'manual',
+        status: 'confirmed',
+        paymentStatus: { in: ['pending', 'partial'] },
+        slotStart: { lte: now },
+        slotEnd: { gt: now, lte: endingBy },
+      },
+      include: {
+        court: { select: { name: true } },
+        venue: {
+          select: { ownerId: true, country: { select: { timezone: true } } },
+        },
+        payments: { where: { status: 'paid' }, select: { amount: true } },
+      },
+      take: 200,
+    });
+    let sent = 0;
+    for (const b of rows) {
+      const already = await this.prisma.notification.findFirst({
+        where: {
+          userId: b.venue.ownerId,
+          payload: { path: ['endingUnpaidFor'], equals: b.id },
+        },
+        select: { id: true },
+      });
+      if (already) continue;
+      const paid = b.payments.reduce((sum, p) => sum + p.amount, 0);
+      const outstanding = Math.max(0, b.totalAmount - paid);
+      if (outstanding <= 0) continue;
+      const tz = b.venue.country?.timezone ?? 'Africa/Cairo';
+      const endsAt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(b.slotEnd);
+      const major = new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: 2,
+      }).format(outstanding / 100);
+      const who = b.guestName?.trim();
+      await this.notifications.create({
+        userId: b.venue.ownerId,
+        category: 'system',
+        titleEn: `Collect ${major} ${b.currency} before ${endsAt}`,
+        titleAr: `حصّل ${major} ${b.currency} قبل ${endsAt}`,
+        bodyEn: `${who ?? 'A booking'} on ${b.court.name} finishes at ${endsAt} still owing ${major} ${b.currency}. Take it before they leave.`,
+        bodyAr: `${who ? `${who}` : 'حجز'} على ${b.court.name} بيخلص ${endsAt} ولسه عليه ${major} ${b.currency}. خده قبل ما يمشي.`,
+        deepLink: '/owner/today',
+        payload: { endingUnpaidFor: b.id, venueId: b.venueId },
+      });
+      sent += 1;
+    }
+    if (sent) this.logger.log(`Sent ${sent} ending-unpaid reminder(s)`);
+    return sent;
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async expireInactiveCoins() {
-    await this.runJob('expireInactiveCoins', () => this.expireInactiveCoinsNow());
+    await this.runJob('expireInactiveCoins', () =>
+      this.expireInactiveCoinsNow(),
+    );
   }
 
   private async expireInactiveCoinsNow() {
@@ -344,19 +429,21 @@ export class JobsService {
         where: elapsedLiveMatchWhere(now),
         data: { status: 'expired' },
       });
-      const { count: pulseCount } = await this.prisma.pulseOpportunity.updateMany({
-        where: {
-          matchPostId: { not: null },
-          status: { in: ['open', 'held', 'full'] },
-          OR: [
-            { expiresAt: { lte: now } },
-            { matchPost: { dateTime: { lte: now } } },
-          ],
-        },
-        data: { status: 'expired' },
-      });
+      const { count: pulseCount } =
+        await this.prisma.pulseOpportunity.updateMany({
+          where: {
+            matchPostId: { not: null },
+            status: { in: ['open', 'held', 'full'] },
+            OR: [
+              { expiresAt: { lte: now } },
+              { matchPost: { dateTime: { lte: now } } },
+            ],
+          },
+          data: { status: 'expired' },
+        });
       if (count) this.logger.log(`Expired ${count} elapsed match post(s)`);
-      if (pulseCount) this.logger.log(`Closed ${pulseCount} elapsed Pulse rescue(s)`);
+      if (pulseCount)
+        this.logger.log(`Closed ${pulseCount} elapsed Pulse rescue(s)`);
     });
   }
 
@@ -379,17 +466,30 @@ export class JobsService {
   private async syncPulseRescueOpportunitiesNow() {
     const now = new Date();
     const openPosts = await this.prisma.matchPost.findMany({
-      where: { status: 'open', playersNeeded: { gt: 0 }, dateTime: { gt: now } },
+      where: {
+        status: 'open',
+        playersNeeded: { gt: 0 },
+        dateTime: { gt: now },
+      },
       select: {
-        id: true, authorId: true, sportId: true, districtId: true,
-        dateTime: true, playersNeeded: true, skillTier: true,
-        costPerPlayerAmount: true, currency: true,
+        id: true,
+        authorId: true,
+        sportId: true,
+        districtId: true,
+        dateTime: true,
+        playersNeeded: true,
+        skillTier: true,
+        costPerPlayerAmount: true,
+        currency: true,
       },
     });
     const openPostIds = new Set(openPosts.map((p) => p.id));
 
     const existing = await this.prisma.pulseOpportunity.findMany({
-      where: { matchPostId: { not: null }, status: { in: ['open', 'held', 'full'] } },
+      where: {
+        matchPostId: { not: null },
+        status: { in: ['open', 'held', 'full'] },
+      },
       select: { id: true, matchPostId: true, capacity: true },
     });
     const existingByMatchPostId = new Map(
@@ -436,7 +536,9 @@ export class JobsService {
 
     // The match post filled up, got cancelled, or kicked off — the
     // opportunity representing it is no longer a real rescue.
-    const stale = existing.filter((o) => !openPostIds.has(o.matchPostId as string));
+    const stale = existing.filter(
+      (o) => !openPostIds.has(o.matchPostId as string),
+    );
     if (stale.length) {
       await this.prisma.pulseOpportunity.updateMany({
         where: { id: { in: stale.map((o) => o.id) } },

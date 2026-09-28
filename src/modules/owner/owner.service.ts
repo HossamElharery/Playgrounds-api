@@ -306,6 +306,18 @@ export class OwnerService {
         payments: { where: { status: 'paid' }, select: { amount: true } },
       },
     });
+    // `BookingsService.getSlotGrid` already knows a cell is 'blocked' but only
+    // as a boolean — it feeds the public availability screen too, so it isn't
+    // the place to widen the contract. The owner board is the one screen that
+    // needs to act on a block (reopen it), so it re-fetches the same rows
+    // here and attaches the id the same way it already attaches `bookingId`.
+    const dayBlocks = await this.prisma.calendarBlock.findMany({
+      where: {
+        venueId,
+        startsAt: { lt: dayEnd },
+        endsAt: { gt: dayStart },
+      },
+    });
     const now = new Date();
     const attentionFrom = new Date(now.getTime() - 24 * 3_600_000);
     const rows = await Promise.all(
@@ -346,6 +358,18 @@ export class OwnerService {
             slot.state === 'blocked' ? 'blocked' : slot.state === 'past' ? 'past' : 'free';
           if (booking?.source === 'platform') state = 'booked_platform';
           else if (booking?.source === 'manual') state = 'booked_manual';
+          // A venue-wide block (courtId null) and a per-court block can both
+          // cover the same cell; either is fine to report back — reopening
+          // either one is the same "free this slot up" action to the owner.
+          const block =
+            state === 'blocked'
+              ? dayBlocks.find(
+                  (b) =>
+                    (!b.courtId || b.courtId === court.id) &&
+                    b.startsAt < end &&
+                    b.endsAt > start,
+                )
+              : undefined;
           const needsAttention = !!(
             booking &&
             booking.source === 'platform' &&
@@ -358,6 +382,8 @@ export class OwnerService {
             ...slot,
             state,
             bookingId: booking?.id,
+            blockId: block?.id,
+            blockReason: block?.note,
             customerName:
               booking?.source === 'manual' ? booking.guestName : booking?.user?.name,
             sourceLabel: booking

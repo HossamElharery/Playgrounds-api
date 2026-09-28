@@ -8,7 +8,7 @@ import {
 } from './morph-catalog';
 
 describe('morph catalog', () => {
-  it('matches the literal v3 id list (parity with the frontend registry spec)', () => {
+  it('matches the literal v5 id list (parity with the frontend registry spec)', () => {
     expect(MORPH_CATALOG.map((d) => d.id)).toEqual([
       'potato',
       'banana',
@@ -24,17 +24,22 @@ describe('morph catalog', () => {
       'referee',
       'dino',
       'robot',
+      'ultra',
+      'gamer',
       'golden_pharaoh',
       'tuktuk',
       'royal_falcon',
       'nile_queen',
+      'griff',
+      'rabid',
+      'tiny_planet',
     ]);
   });
 
-  it('has 10 common, 4 epic and 4 misk morphs, all rollable with weight 10', () => {
+  it('has 10 common, 6 epic and 7 misk morphs, all rollable with weight 10', () => {
     const count = (t: string) =>
       MORPH_CATALOG.filter((d) => d.tier === t).length;
-    expect([count('COMMON'), count('EPIC'), count('MISK')]).toEqual([10, 4, 4]);
+    expect([count('COMMON'), count('EPIC'), count('MISK')]).toEqual([10, 6, 7]);
     expect(MORPH_CATALOG.every((d) => d.rollable && d.weight === 10)).toBe(
       true,
     );
@@ -44,13 +49,28 @@ describe('morph catalog', () => {
   });
 
   it('introduces the Royal Falcon in catalog v2 without changing previous entries', () => {
-    expect(MORPH_CATALOG_VERSION).toBe(3);
     expect(morphById('royal_falcon')).toMatchObject({ tier: 'MISK', sinceVersion: 2 });
-    expect(MORPH_CATALOG.filter((d) => !['royal_falcon', 'nile_queen'].includes(d.id)).every((d) => d.sinceVersion === 1)).toBe(true);
+    expect(
+      MORPH_CATALOG.filter(
+        (d) => !['royal_falcon', 'nile_queen', 'ultra', 'gamer', 'griff', 'rabid', 'tiny_planet'].includes(d.id),
+      ).every((d) => d.sinceVersion === 1),
+    ).toBe(true);
   });
 
   it('introduces the Nile Queen as Misk in catalog v3', () => {
     expect(morphById('nile_queen')).toMatchObject({ tier: 'MISK', sinceVersion: 3, rollable: true });
+  });
+
+  it('introduces the Ultra and the Gamer as Epic in catalog v4', () => {
+    expect(morphById('ultra')).toMatchObject({ tier: 'EPIC', sinceVersion: 4, rollable: true });
+    expect(morphById('gamer')).toMatchObject({ tier: 'EPIC', sinceVersion: 4, rollable: true });
+  });
+
+  it('introduces the imported characters as Misk in catalog v5', () => {
+    expect(MORPH_CATALOG_VERSION).toBe(5);
+    for (const id of ['griff', 'rabid', 'tiny_planet']) {
+      expect(morphById(id)).toMatchObject({ tier: 'MISK', sinceVersion: 5, rollable: true });
+    }
   });
 
   it('tier odds sum to 10000 basis points', () => {

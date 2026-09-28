@@ -293,3 +293,76 @@ describe('Unpaid manual booking reminders', () => {
     expect(await service.remindUnpaidManualBookingsNow(now)).toBe(0);
   });
 });
+
+describe('Ending-unpaid reminders', () => {
+  const prisma = {
+    booking: { findMany: jest.fn() },
+    notification: { findFirst: jest.fn() },
+  };
+  const notifications = { create: jest.fn() };
+  let service: JobsService;
+  const now = new Date('2026-09-21T18:50:00.000Z');
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'b9',
+    venueId: 'v1',
+    currency: 'EGP',
+    guestName: 'محمد',
+    totalAmount: 60000,
+    slotStart: new Date('2026-09-21T17:00:00.000Z'),
+    slotEnd: new Date('2026-09-21T19:00:00.000Z'),
+    court: { name: 'ملعب 1' },
+    venue: { ownerId: 'owner-1', country: { timezone: 'Africa/Cairo' } },
+    payments: [{ amount: 20000 }],
+    ...over,
+  });
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    notifications.create.mockResolvedValue(null);
+    prisma.notification.findFirst.mockResolvedValue(null);
+    service = new JobsService(
+      prisma as never,
+      { emitToRoom: jest.fn(), emitToUser: jest.fn() } as never,
+      notifications as never,
+      {} as never,
+    );
+  });
+
+  it('only looks at bookings already running and ending within 20 minutes', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+    await service.remindBookingsEndingUnpaidNow(now);
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.source).toBe('manual');
+    expect(where.paymentStatus).toEqual({ in: ['pending', 'partial'] });
+    expect(where.slotStart.lte).toEqual(now);
+    expect(where.slotEnd.gt).toEqual(now);
+    expect(where.slotEnd.lte).toEqual(new Date('2026-09-21T19:10:00.000Z'));
+  });
+
+  it('names the balance and the court so the owner can collect before they leave', async () => {
+    prisma.booking.findMany.mockResolvedValue([row()]);
+    expect(await service.remindBookingsEndingUnpaidNow(now)).toBe(1);
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'owner-1',
+        titleEn: expect.stringContaining('400 EGP'),
+        bodyAr: expect.stringContaining('ملعب 1'),
+        payload: { endingUnpaidFor: 'b9', venueId: 'v1' },
+      }),
+    );
+  });
+
+  it('is deduped separately from the pre-arrival reminder', async () => {
+    prisma.booking.findMany.mockResolvedValue([row()]);
+    await service.remindBookingsEndingUnpaidNow(now);
+    expect(prisma.notification.findFirst.mock.calls[0][0].where.payload).toEqual({
+      path: ['endingUnpaidFor'],
+      equals: 'b9',
+    });
+  });
+
+  it('stays quiet once the balance is settled', async () => {
+    prisma.booking.findMany.mockResolvedValue([row({ payments: [{ amount: 60000 }] })]);
+    expect(await service.remindBookingsEndingUnpaidNow(now)).toBe(0);
+  });
+});
