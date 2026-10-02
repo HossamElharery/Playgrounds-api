@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
@@ -17,6 +17,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { PageQueryDto } from '../../../common/dto/page-query.dto';
+import { TRANSCRIPT_FLAGS, type TranscriptFlag } from '../transcript/transcript-flags';
 
 const OUTCOMES = ['answered_fact', 'answered_faq', 'venues', 'no_results', 'bookings', 'nav', 'smalltalk', 'unanswered', 'clarify', 'limited', 'unavailable', 'blocked'] as const;
 const STATUSES = ['new', 'reviewed', 'resolved', 'ignored'] as const;
@@ -70,7 +71,7 @@ export class ListOwnerRequestsDto extends PageQueryDto {
   @IsIn(['planned', 'clarify', 'denied', 'unavailable', 'limited', 'error'])
   outcome?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Searches the sentence, the owner’s name and the venue’s name.' })
   @IsOptional()
   @IsString()
   @MaxLength(80)
@@ -81,6 +82,34 @@ export class ListOwnerRequestsDto extends PageQueryDto {
   @IsString()
   @MaxLength(60)
   venueId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  ownerId?: string;
+
+  @ApiPropertyOptional({ enum: TRANSCRIPT_FLAGS })
+  @IsOptional()
+  @IsIn(TRANSCRIPT_FLAGS)
+  flag?: TranscriptFlag;
+
+  /** Only exchanges with something flagged: not understood, numbers refused, noise, repeats… */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  notable?: boolean;
+}
+
+export class OwnerRequestsSummaryDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 90 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  days?: number;
 }
 
 export class SetQuestionStatusDto {

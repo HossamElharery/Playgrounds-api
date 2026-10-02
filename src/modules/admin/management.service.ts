@@ -3,9 +3,11 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
 import {
   AdminReviewDto,
   AdminUserDto,
@@ -46,7 +48,10 @@ const userSelect = {
 } as const;
 @Injectable()
 export class ManagementService {
-  constructor(private readonly db: PrismaService) {}
+  constructor(
+    private readonly db: PrismaService,
+    @Optional() private readonly transcript?: AssistantTranscriptService,
+  ) {}
   private page(q: ManagementQuery) {
     return { skip: (q.page - 1) * q.perPage, take: q.perPage };
   }
@@ -130,22 +135,48 @@ export class ManagementService {
     return user;
   }
   /**
-   * Oversight for the project owner: every "schedule assistant" chat line
-   * across every venue this owner runs, newest first, so admin can spot an
-   * owner confusing the AI or asking it for things the platform can't do.
+   * Oversight for the project owner: everything this owner and the assistant have
+   * said to each other, across every venue they run, newest first. It reads the
+   * permanent transcript the server keeps — not the owner's own chat window — so it
+   * is complete even if the app failed to post a line or the venue was deleted.
    */
-  assistantMessages(ownerId: string, limit = 30, cursor?: string) {
-    return paginateByCursor(
-      (args) =>
-        this.db.assistantMessage.findMany({
-          where: { ownerId },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          include: { venue: { select: { nameAr: true, nameEn: true } } },
-          ...args,
-        }),
-      limit,
-      cursor,
-    );
+  async assistantMessages(ownerId: string, limit = 30, cursor?: string) {
+    if (!this.transcript) return { items: [], nextCursor: null };
+    const page = await this.transcript.forOwner(ownerId, limit, cursor);
+    return {
+      ...page,
+      items: page.items.map((m) => ({
+        ...m,
+        // The shape the user screen has always read.
+        venue: m.venueName ? { nameAr: m.venueName, nameEn: m.venueName } : null,
+      })),
+    };
+  }
+
+  /** What this user asked Captain (players and owners alike) and what it answered, newest first. */
+  async captainQuestions(userId: string, limit = 30, cursor?: string) {
+    const size = Math.min(Math.max(limit, 1), 100);
+    const rows = await this.db.aiQuestionLog.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: size + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    const page = rows.slice(0, size);
+    return {
+      items: page.map((r) => ({
+        id: r.id,
+        createdAt: r.createdAt.toISOString(),
+        text: r.textRedacted,
+        reply: r.replyText,
+        intent: r.intent,
+        outcome: r.outcome,
+        feedback: r.feedback,
+        model: r.model,
+        lang: r.lang,
+      })),
+      nextCursor: rows.length > size ? page[page.length - 1].id : null,
+    };
   }
   async updateUser(actor: string, id: string, dto: AdminUserDto) {
     const { reason, ...data } = dto;

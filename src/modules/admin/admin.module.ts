@@ -11,6 +11,7 @@ import { VenueSeoService } from './venue-seo.service';
 import { AdminFinanceService } from './admin-finance.service';
 import { AdminFinanceController } from './admin-finance.controller';
 import { OwnerModule } from '../owner/owner.module';
+import { AiModule } from '../ai/ai.module';
 import { DemoController } from './demo/demo.controller';
 import { DemoService } from './demo/demo.service';
 import { FinanceModule } from '../finance/finance.module';
@@ -23,6 +24,7 @@ import { IdempotencyInterceptor } from '../../common/interceptors/idempotency.in
     BookingsModule,
     RealtimeModule,
     OwnerModule,
+    AiModule,
     FinanceModule,
     PaymentsModule,
   ],

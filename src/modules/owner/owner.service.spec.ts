@@ -33,4 +33,38 @@ describe('Owner dashboard integrity', () => {
     db.booking.findMany.mockResolvedValue([{currency:'EGP'},{currency:'SAR'}]);
     await expect(service.finance(owner as never,'v1','2026-09-01','2026-09-07')).rejects.toBeInstanceOf(BadRequestException);
   });
+  describe('the admin’s permanent copy of the assistant chat', () => {
+    let transcript: { mirrorClientLine: jest.Mock };
+    beforeEach(() => {
+      db.assistantMessage = {
+        create: jest.fn().mockResolvedValue({ id: 'm1' }),
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+      transcript = { mirrorClientLine: jest.fn().mockResolvedValue(undefined) };
+      service = new OwnerService(db, { getSlotGrid: jest.fn() } as never, { enabled: false } as never, transcript as never);
+    });
+
+    it('mirrors every line the app posts into the transcript, with who and where', async () => {
+      await service.createAssistantMessage(owner as never, { venueId: 'v1', sender: 'owner', text: 'اقفل بلايستيشن 2' } as never);
+      expect(db.assistantMessage.create).toHaveBeenCalled();
+      expect(transcript.mirrorClientLine).toHaveBeenCalledWith({
+        ownerId: 'owner',
+        ownerName: 'Owner',
+        venueId: 'v1',
+        sender: 'owner',
+        text: 'اقفل بلايستيشن 2',
+        scheduleChange: false,
+      });
+    });
+
+    it('marks a line that carried a schedule change', async () => {
+      await service.createAssistantMessage(owner as never, { venueId: 'v1', sender: 'system', text: 'قفل 5-7', inverseChange: { remove: ['b'] } } as never);
+      expect(transcript.mirrorClientLine.mock.calls[0][0]).toMatchObject({ scheduleChange: true });
+    });
+
+    it('does not list the hidden undo-point rows as chat', async () => {
+      await service.listAssistantMessages(owner as never, 'v1');
+      expect(db.assistantMessage.findMany.mock.calls[0][0].where).toEqual({ venueId: 'v1', NOT: { text: 'assistant-undo' } });
+    });
+  });
 });

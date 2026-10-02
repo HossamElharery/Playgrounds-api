@@ -188,6 +188,8 @@ export class CaptainService {
         ms: r?.meta?.ms ?? Date.now() - trace.startedAt,
         costUsd: r?.meta?.costUsd ?? 0,
         askerKey: user?.id ? `user:${user.id}` : dto.deviceId ? `dev:${dto.deviceId}` : `ip:${ip || 'unknown'}`,
+        userId: trace.loggedIn && user?.id ? user.id : undefined,
+        replyText: reply.reply,
       });
     } catch (err) {
       this.logger.warn(`could not log a question: ${err}`);

@@ -7,6 +7,8 @@ import { buildPagination } from '../../../common/dto/page-query.dto';
 import { dayDate, fromMicros, utcDayString, addDays } from '../ai-day';
 import { clusterQuestions } from './question-clusters';
 import { AiAdminKnowledgeService, type PreviewResult } from './ai-admin-knowledge.service';
+import { AssistantTranscriptService } from '../transcript/assistant-transcript.service';
+import type { TranscriptFlag } from '../transcript/transcript-flags';
 
 export interface QuestionFilters {
   outcome?: AiQuestionOutcome;
@@ -35,6 +37,10 @@ function present(r: Row) {
     surface: r.surface,
     userKind: r.userKind,
     text: r.textRedacted,
+    /** What Captain answered, as the player saw it. */
+    reply: r.replyText,
+    /** Set for signed-in players: the admin can open their account. */
+    userId: r.userId,
     lang: r.lang,
     intent: r.intent,
     outcome: r.outcome,
@@ -61,6 +67,7 @@ export class AiAdminQuestionsService {
     private readonly knowledge: AssistantKnowledgeService,
     private readonly nlu: CaptainNluService,
     private readonly tools: AiAdminKnowledgeService,
+    private readonly transcript: AssistantTranscriptService,
   ) {}
 
   async list(f: QuestionFilters) {
@@ -84,7 +91,14 @@ export class AiAdminQuestionsService {
       this.prisma.aiQuestionLog.count({ where }),
       this.prisma.aiQuestionLog.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (f.page - 1) * f.perPage, take: f.perPage }),
     ]);
-    return { items: rows.map(present), pagination: buildPagination(f.page, f.perPage, total) };
+    const askerIds = [...new Set(rows.map((r) => r.userId).filter((id): id is string => !!id))];
+    const askers = askerIds.length
+      ? new Map((await this.prisma.user.findMany({ where: { id: { in: askerIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]))
+      : new Map<string, string>();
+    return {
+      items: rows.map((r) => ({ ...present(r), askerName: r.userId ? (askers.get(r.userId) ?? null) : null })),
+      pagination: buildPagination(f.page, f.perPage, total),
+    };
   }
 
   /** The worklist: questions Captain could not answer or players marked 👎, grouped by similarity, biggest first. */
@@ -213,43 +227,25 @@ export class AiAdminQuestionsService {
     return { today: today_, week: week_ };
   }
 
-  /** What venue owners asked their assistant, as typed, with who and where. */
-  async ownerRequests(f: { outcome?: string; q?: string; venueId?: string; page: number; perPage: number }) {
-    const where: Prisma.AiOwnerEventLogWhereInput = {
-      event: 'ask',
-      ...(f.outcome ? { outcome: f.outcome } : {}),
-      ...(f.venueId ? { venueId: f.venueId } : {}),
-      ...(f.q ? { text: { contains: f.q.slice(0, 80), mode: 'insensitive' as const } } : {}),
-    };
-    const [total, rows] = await Promise.all([
-      this.prisma.aiOwnerEventLog.count({ where }),
-      this.prisma.aiOwnerEventLog.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (f.page - 1) * f.perPage, take: f.perPage }),
-    ]);
-    const venueIds = [...new Set(rows.map((r) => r.venueId).filter((v): v is string => !!v))];
-    const userIds = [...new Set(rows.map((r) => r.userId).filter((v): v is string => !!v))];
-    const [venues, users] = await Promise.all([
-      this.prisma.venue.findMany({ where: { id: { in: venueIds } }, select: { id: true, nameAr: true, nameEn: true } }),
-      this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }),
-    ]);
-    const venueName = new Map<string, string>(venues.map((v) => [v.id, v.nameAr || v.nameEn]));
-    const userName = new Map<string, string>(users.map((u) => [u.id, u.name]));
-    return {
-      items: rows.map((r) => ({
-        id: r.id,
-        createdAt: r.createdAt.toISOString(),
-        venueId: r.venueId,
-        venueName: r.venueId ? (venueName.get(r.venueId) ?? null) : null,
-        userName: r.userId ? (userName.get(r.userId) ?? null) : null,
-        text: r.text,
-        intent: r.intent,
-        outcome: r.outcome,
-        detail: r.detail,
-        confidence: r.confidence,
-        model: r.model,
-        ms: r.ms,
-        costUsd: Number(fromMicros(r.costMicros).toFixed(6)),
-      })),
-      pagination: buildPagination(f.page, f.perPage, total),
-    };
+  /**
+   * What venue owners asked their assistant, as typed, with the answer, who and where —
+   * read from the permanent transcript the server keeps (it survives a deleted venue,
+   * and it does not depend on the app having posted the line).
+   */
+  async ownerRequests(f: {
+    outcome?: string;
+    q?: string;
+    venueId?: string;
+    ownerId?: string;
+    flag?: TranscriptFlag;
+    notable?: boolean;
+    page: number;
+    perPage: number;
+  }) {
+    return this.transcript.listTurns(f);
+  }
+
+  ownerRequestsSummary(days?: number) {
+    return this.transcript.summary(days);
   }
 }

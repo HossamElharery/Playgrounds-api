@@ -26,6 +26,10 @@ export interface QuestionLogInput {
   costUsd?: number;
   /** The quota key (`dev:…`, `ip:…`, `user:…`), hashed here into a short reference. */
   askerKey?: string;
+  /** The signed-in player, so the admin can open their whole conversation. Never set for visitors. */
+  userId?: string;
+  /** What Captain answered, as the player saw it. */
+  replyText?: string;
 }
 
 export interface OwnerEventInput {
@@ -108,6 +112,8 @@ export class AiLogService {
           ms: Math.max(0, Math.round(input.ms ?? 0)),
           costMicros: toMicros(input.costUsd ?? 0),
           askerRef,
+          userId: input.userId ? input.userId.slice(0, 40) : null,
+          replyText: input.replyText ? input.replyText.replace(/\s+/g, ' ').trim().slice(0, 700) : null,
         },
       })
       .catch((err: unknown) => this.logger.warn(`[ai-log] could not store a question: ${String(err)}`));

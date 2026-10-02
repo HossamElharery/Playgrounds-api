@@ -147,4 +147,33 @@ describe('Administrator management', () => {
       db.user.findMany.mock.calls[0][0].select.refreshTokens,
     ).toBeUndefined();
   });
+  describe('seeing what a user said to the assistants', () => {
+    it('reads an owner’s whole assistant history from the permanent transcript, in the shape the user screen reads', async () => {
+      const transcript = {
+        forOwner: jest.fn().mockResolvedValue({
+          items: [{ id: 't1', ownerId: 'o1', venueName: 'نيون', sender: 'owner', text: 'اقفل', flags: ['unrecognized'] }],
+          nextCursor: 't0',
+        }),
+      };
+      const svc = new ManagementService(db, transcript as never);
+      const out = await svc.assistantMessages('o1', 30, 'c');
+      expect(transcript.forOwner).toHaveBeenCalledWith('o1', 30, 'c');
+      expect(out.nextCursor).toBe('t0');
+      expect(out.items[0]).toMatchObject({ text: 'اقفل', flags: ['unrecognized'], venue: { nameAr: 'نيون' } });
+    });
+
+    it('shows a user’s Captain questions with the answers, newest first, paged', async () => {
+      db.aiQuestionLog = {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'a', createdAt: new Date('2026-10-02T10:00:00Z'), textRedacted: 'بادل في المعادي', replyText: 'لقيتلك 2 أماكن', intent: 'find_venues', outcome: 'venues', feedback: null, model: 'm', lang: 'ar' },
+          { id: 'b', createdAt: new Date('2026-10-02T09:00:00Z'), textRedacted: 'مين رئيس أمريكا', replyText: null, intent: 'unknown', outcome: 'clarify', feedback: 'down', model: 'm', lang: 'ar' },
+        ]),
+      };
+      const out = await service.captainQuestions('u1', 1);
+      expect(db.aiQuestionLog.findMany.mock.calls[0][0]).toMatchObject({ where: { userId: 'u1' }, take: 2 });
+      expect(out.items).toHaveLength(1);
+      expect(out.items[0]).toMatchObject({ text: 'بادل في المعادي', reply: 'لقيتلك 2 أماكن', outcome: 'venues' });
+      expect(out.nextCursor).toBe('a');
+    });
+  });
 });

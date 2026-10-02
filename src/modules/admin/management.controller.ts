@@ -46,6 +46,13 @@ export class ManagementController {
   ) {
     return this.management.assistantMessages(id, limit ? Number(limit) : undefined, cursor);
   }
+  @Get('users/:id/captain-questions') captainQuestions(
+    @Param('id') id: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.management.captainQuestions(id, limit ? Number(limit) : undefined, cursor);
+  }
   @Patch('users/:id') async updateUser(
     @CurrentUser() u: AuthenticatedUser,
     @Param('id') id: string,

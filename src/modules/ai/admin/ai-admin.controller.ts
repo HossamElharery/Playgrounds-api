@@ -15,6 +15,7 @@ import {
   KnowledgeBodyDto,
   ListAiQuestionsDto,
   ListOwnerRequestsDto,
+  OwnerRequestsSummaryDto,
   PreviewKnowledgeDto,
   ReorderKnowledgeDto,
   ResolveQuestionDto,
@@ -62,6 +63,12 @@ export class AiAdminController {
   async ownerRequests(@Query() q: ListOwnerRequestsDto) {
     const { items, pagination } = await this.questions.ownerRequests(q);
     return { message: 'ok', result: items, pagination };
+  }
+
+  /** How much the owners wrote this week and how much of it went wrong, per flag and per owner. */
+  @Get('owner-requests/summary')
+  ownerRequestsSummary(@Query() q: OwnerRequestsSummaryDto) {
+    return this.questions.ownerRequestsSummary(q.days);
   }
 
   @Get('questions/inbox')

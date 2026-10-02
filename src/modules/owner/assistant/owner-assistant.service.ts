@@ -139,6 +139,7 @@ export class OwnerAssistantService {
       venueId,
       userId: user.id,
       event: 'ask',
+      text,
       intent: plan.intent,
       outcome,
       detail: blocking?.code,

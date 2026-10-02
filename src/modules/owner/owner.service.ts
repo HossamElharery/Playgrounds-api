@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { loadStaffScope } from '../../common/access/staff-scope';
 import { PERMISSION_KEYS } from '../../common/access/permissions';
@@ -21,6 +22,8 @@ import { zonedDayBounds } from '../../common/utils/timezone.util';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
 import { BookingsService } from '../bookings/bookings.service';
 import { GeminiNluService, NluResult } from './gemini-nlu.service';
+import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
+import { UNDO_ANCHOR_TEXT } from './assistant/assistant-undo';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { assertVenueAccess } from '../../common/access/owner-access';
 import { sourceDisplay } from '../../common/utils/source-label.util';

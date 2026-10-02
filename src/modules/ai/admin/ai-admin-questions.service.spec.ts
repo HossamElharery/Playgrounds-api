@@ -16,6 +16,8 @@ const row = (id: string, over: Record<string, unknown> = {}) => ({
   ms: 100,
   costMicros: 1500,
   askerRef: 'abc',
+  userId: null,
+  replyText: null,
   feedback: null,
   feedbackAt: null,
   status: 'new',
@@ -41,8 +43,9 @@ function build(rows: ReturnType<typeof row>[], readFactIds: string[][] = [['andr
   let i = 0;
   const nlu = { read: jest.fn().mockImplementation(async () => ({ intent: 'faq', factIds: readFactIds[Math.min(i++, readFactIds.length - 1)] })) };
   const tools = { preview: jest.fn().mockResolvedValue({ outcome: 'answered_fact' }) };
-  const service = new AiAdminQuestionsService(prisma as never, knowledge as never, nlu as never, tools as never);
-  return { service, prisma, knowledge, nlu, tools };
+  const transcript = { listTurns: jest.fn().mockResolvedValue({ items: [], pagination: {} }), summary: jest.fn().mockResolvedValue({}) };
+  const service = new AiAdminQuestionsService(prisma as never, knowledge as never, nlu as never, tools as never, transcript as never);
+  return { service, prisma, knowledge, nlu, tools, transcript };
 }
 
 describe('AiAdminQuestionsService', () => {
@@ -126,17 +129,18 @@ describe('AiAdminQuestionsService', () => {
     });
   });
 
-  it('lists what owners asked their assistant, as typed, with the venue and who asked', async () => {
-    const { service, prisma } = build([row('1')]);
-    const p = prisma as unknown as Record<string, unknown>;
-    p['aiOwnerEventLog'] = {
-      count: jest.fn().mockResolvedValue(1),
-      findMany: jest.fn().mockResolvedValue([{ id: 'e1', createdAt: new Date('2026-10-02T10:00:00Z'), venueId: 'v1', userId: 'u1', text: 'احجز لمحمد 01012345678', intent: 'book', outcome: 'planned', detail: null, confidence: 0.9, model: 'm', ms: 900, costMicros: 2000 }]),
-    };
-    p['venue'] = { findMany: jest.fn().mockResolvedValue([{ id: 'v1', nameAr: 'نيون', nameEn: 'Neon' }]) };
-    p['user'] = { findMany: jest.fn().mockResolvedValue([{ id: 'u1', name: 'أحمد' }]) };
-    const out = await service.ownerRequests({ q: 'محمد', outcome: 'planned', page: 1, perPage: 20 });
-    expect((p['aiOwnerEventLog'] as { findMany: jest.Mock }).findMany.mock.calls[0][0].where).toMatchObject({ event: 'ask', outcome: 'planned', text: { contains: 'محمد', mode: 'insensitive' } });
-    expect(out.items[0]).toMatchObject({ text: 'احجز لمحمد 01012345678', venueName: 'نيون', userName: 'أحمد', costUsd: 0.002 });
+  it('lists owner requests from the permanent transcript, passing every filter through', async () => {
+    const { service, transcript } = build([]);
+    await service.ownerRequests({ q: 'محمد', flag: 'unrecognized', notable: true, ownerId: 'u1', page: 2, perPage: 20 });
+    expect(transcript.listTurns).toHaveBeenCalledWith({ q: 'محمد', flag: 'unrecognized', notable: true, ownerId: 'u1', page: 2, perPage: 20 });
+    await service.ownerRequestsSummary(14);
+    expect(transcript.summary).toHaveBeenCalledWith(14);
+  });
+
+  it('names a signed-in asker in the question list so the admin can open the account', async () => {
+    const { service, prisma } = build([row('1', { userId: 'u9', replyText: 'ابعت على support@matchena.com' })]);
+    (prisma as Record<string, unknown>)['user'] = { findMany: jest.fn().mockResolvedValue([{ id: 'u9', name: 'منى' }]) };
+    const out = await service.list({ page: 1, perPage: 20 });
+    expect(out.items[0]).toMatchObject({ userId: 'u9', askerName: 'منى', reply: 'ابعت على support@matchena.com' });
   });
 });

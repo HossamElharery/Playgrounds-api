@@ -2780,8 +2780,8 @@ model AiQuestionLog {
   @@index([userId, createdAt])
 }
 
-/// Owner assistant telemetry WITHOUT any message text: customers' names and
-/// amounts live in those sentences, so only intent, outcome, model, time, cost.
+/// Owner assistant requests: what was asked (exactly as typed, admin-only — it can name
+/// customers and amounts), what it was understood as, how it ended, which model, time, cost.
 model AiOwnerEventLog {
   id         String   @id @default(uuid())
   createdAt  DateTime @default(now())
@@ -2794,6 +2794,8 @@ model AiOwnerEventLog {
   outcome    String   @db.VarChar(24)
   /// Controlled vocabulary only (e.g. an error class), never user text.
   detail     String?  @db.VarChar(60)
+  /// The owner's sentence as typed (only on `ask` events).
+  text       String?  @db.VarChar(500)
   confidence Float?
   model      String?  @db.VarChar(120)
   ms         Int      @default(0)

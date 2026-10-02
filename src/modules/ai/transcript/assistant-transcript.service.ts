@@ -271,6 +271,36 @@ export class AssistantTranscriptService {
     return { items: rows.map(present), pagination: buildPagination(f.page, f.perPage, total) };
   }
 
+  /**
+   * The admin's request list: every sentence an owner typed, each with the answer
+   * that came back, newest first. (The answer is the assistant's next line for
+   * the same owner and venue, within a minute.)
+   */
+  async listTurns(f: Omit<TranscriptFilters, 'sender'>) {
+    const page = await this.list({ ...f, sender: 'owner' });
+    if (!this.prisma || !page.items.length) return page;
+    const times = page.items.map((i) => new Date(i.createdAt).getTime());
+    const replies = await this.prisma.assistantTranscript.findMany({
+      where: {
+        sender: 'assistant',
+        ownerId: { in: [...new Set(page.items.map((i) => i.ownerId))] },
+        createdAt: { gte: new Date(Math.min(...times)), lte: new Date(Math.max(...times) + 60_000) },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, ownerId: true, venueId: true, createdAt: true, text: true, kind: true },
+    });
+    return {
+      ...page,
+      items: page.items.map((item) => {
+        const t = new Date(item.createdAt).getTime();
+        const reply = replies.find(
+          (r) => r.ownerId === item.ownerId && r.venueId === item.venueId && r.kind === 'chat' && r.createdAt.getTime() >= t && r.createdAt.getTime() <= t + 60_000,
+        );
+        return { ...item, reply: reply?.text ?? null };
+      }),
+    };
+  }
+
   /** One owner's whole history, newest first, in pages the admin's user screen loads on demand. */
   async forOwner(ownerId: string, limit = 30, cursor?: string) {
     if (!this.prisma) return { items: [], nextCursor: null };
