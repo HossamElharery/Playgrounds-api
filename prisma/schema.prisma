@@ -571,6 +571,9 @@ model Venue {
   taggedPosts        Post[]
   ledgerEntries      VenueLedgerEntry[]
   settlements        VenueSettlement[]
+  cashShifts         CashShift[]
+  customerProfiles   VenueCustomer[]
+  importBatches      VenueImportBatch[]
   subscription       VenueSubscription?
   pricingDiscounts   PricingDiscount[]
   bookingSources     VenueBookingSource[]
@@ -788,6 +791,8 @@ model Booking {
   commissionBps       Int?
   commissionAmount    Int?
   ownerNetAmount      Int?
+  /// Set on bookings that came in through an Excel/CSV import, so the whole batch can be undone.
+  importBatchId       String?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
 
@@ -813,6 +818,7 @@ model Booking {
   @@index([venueId, slotStart])
   @@index([venueId, status])
   @@index([venueId, source, slotStart])
+  @@index([importBatchId])
   @@index([venueId, status, slotStart])
 }
 
@@ -839,17 +845,64 @@ model BookingSplitShare {
 }
 
 model Payment {
-  id          String        @id @default(uuid())
-  bookingId   String
-  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  amount      Int
-  currency    String        @default("EGP")
-  method      PaymentMethod
-  status      PaymentStatus @default(pending)
-  providerRef String?
-  createdAt   DateTime      @default(now())
+  id                String        @id @default(uuid())
+  bookingId         String
+  booking           Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amount            Int
+  currency          String        @default("EGP")
+  method            PaymentMethod
+  status            PaymentStatus @default(pending)
+  providerRef       String?
+  /// Who took the money at the venue (null for online/wallet payments and imported history).
+  recordedByUserId  String?
+  /// Set when a cash shift is closed over this payment; null = still in somebody's open drawer.
+  shiftId           String?
+  shift             CashShift?    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  /// A taken-back payment is never deleted: a negative `refunded` row points at the original, so a
+  /// closed shift stays true and the correction lands in the shift that was open when it happened.
+  reversesPaymentId String?       @unique
+  note              String?
+  createdAt         DateTime      @default(now())
 
   @@index([bookingId])
+  @@index([shiftId])
+  @@index([recordedByUserId, shiftId])
+  @@index([createdAt])
+}
+
+/// A closed cash drawer: what the system expected, what was counted, and the difference.
+/// Shifts exist only once closed (no "open shift" to forget about); the movements still waiting for
+/// a close are simply the payments / drawer expenses whose `shiftId` is null.
+model CashShift {
+  id             String    @id @default(uuid())
+  venueId        String
+  venue          Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  /// Whose drawer this was. Null = one shared drawer covering every person's payments.
+  drawerUserId   String?
+  closedByUserId String
+  periodStart    DateTime
+  closedAt       DateTime  @default(now())
+  openingFloat   Int       @default(0)
+  cashIn         Int       @default(0)
+  cashRefunds    Int       @default(0)
+  cashExpenses   Int       @default(0)
+  expectedCash   Int       @default(0)
+  countedCash    Int       @default(0)
+  /// counted − expected: negative = short, positive = over.
+  difference     Int       @default(0)
+  /// Cash left in the drawer for the next shift; the rest (counted − carryOver) was handed to the owner.
+  carryOver      Int       @default(0)
+  currency       String    @default("EGP")
+  /// { cash: { in, out, count }, instapay: {...}, ... } — every method, for the receipt.
+  breakdown      Json
+  note           String?
+  reviewedAt     DateTime?
+  reviewedById   String?
+  reviewNote     String?
+  payments       Payment[]
+
+  @@index([venueId, closedAt])
+  @@index([venueId, drawerUserId, closedAt])
 }
 
 /// An owner's request to change or cancel a booking that came from Matchena. The owner cannot do it
@@ -898,6 +951,9 @@ model VenueExpense {
   recurringParentId String?
   recurringParent   VenueExpense?  @relation("ExpenseRecurrence", fields: [recurringParentId], references: [id], onDelete: SetNull)
   children          VenueExpense[] @relation("ExpenseRecurrence")
+  /// Paid out of the cash drawer, so the shift close subtracts it from the expected cash.
+  fromDrawer        Boolean        @default(false)
+  shiftId           String?
   createdById       String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @default(now()) @updatedAt
@@ -2019,11 +2075,11 @@ model Banner {
 }
 
 model FaqEntry {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   questionEn String
   questionAr String
-  answerEn   String @db.Text
-  answerAr   String @db.Text
+  answerEn   String  @db.Text
+  answerAr   String  @db.Text
   /// booking | payments | account | play | owners | policies
   category   String  @default("booking")
   position   Int     @default(0)
@@ -2809,21 +2865,21 @@ model AiOwnerEventLog {
 /// What Captain may tell a player about Matchena. `ar`/`en` are shown verbatim;
 /// the model only picks an entry by `id` using `topicAr`/`topicEn`.
 model AssistantKnowledge {
-  id         String                  @id @db.VarChar(60)
-  topicAr    String                  @db.VarChar(200)
-  topicEn    String                  @db.VarChar(200)
-  ar         String                  @db.Text
-  en         String                  @db.Text
+  id          String                  @id @db.VarChar(60)
+  topicAr     String                  @db.VarChar(200)
+  topicEn     String                  @db.VarChar(200)
+  ar          String                  @db.Text
+  en          String                  @db.Text
   /// A named destination (explore, help, login …) or an in-app path.
-  ctaTarget  String?                 @db.VarChar(100)
-  ctaLabelAr String?                 @db.VarChar(80)
-  ctaLabelEn String?                 @db.VarChar(80)
-  flag       AssistantKnowledgeFlag?
-  active     Boolean                 @default(true)
-  position   Int                     @default(0)
+  ctaTarget   String?                 @db.VarChar(100)
+  ctaLabelAr  String?                 @db.VarChar(80)
+  ctaLabelEn  String?                 @db.VarChar(80)
+  flag        AssistantKnowledgeFlag?
+  active      Boolean                 @default(true)
+  position    Int                     @default(0)
   updatedById String?
-  createdAt  DateTime                @default(now())
-  updatedAt  DateTime                @updatedAt
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
 
   @@index([active, position])
 }
@@ -2867,4 +2923,43 @@ model AiEvalRun {
 
   @@index([createdAt])
   @@index([kind, createdAt])
+}
+
+/// What the owner knows about a customer that the bookings alone cannot say: a note, tags, or a
+/// person imported from a spreadsheet who has not booked yet. `key` is the same key the customers
+/// list uses (`m:<phone>`, `n:<name>`, `p:<userId>`), so a profile attaches to the derived row.
+model VenueCustomer {
+  id            String   @id @default(uuid())
+  venueId       String
+  venue         Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  key           String
+  name          String?
+  phone         String?
+  note          String?  @db.Text
+  imported      Boolean  @default(false)
+  importBatchId String?
+  updatedById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([venueId, key])
+  @@index([venueId])
+  @@index([importBatchId])
+}
+
+/// One spreadsheet import. Undoing it deletes the bookings carrying this batch id.
+model VenueImportBatch {
+  id          String    @id @default(uuid())
+  venueId     String
+  venue       Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  createdById String
+  fileName    String?
+  rowsTotal   Int       @default(0)
+  bookings    Int       @default(0)
+  customers   Int       @default(0)
+  skipped     Int       @default(0)
+  undoneAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([venueId, createdAt])
 }

@@ -27,6 +27,9 @@ function build(perms: string[] = []) {
       findUnique: jest.fn(async () => ({ id: 'st', ownerId: 'o1', permissions: perms, venueIds: ['v1'], title: null })),
     },
     booking: { findMany: jest.fn(async () => []) },
+    payment: { findMany: jest.fn(async () => []) },
+    user: { findMany: jest.fn(async () => []) },
+    cashShift: { findMany: jest.fn(async () => []) },
     venueExpense: { findMany: jest.fn(async () => []) },
     pricingDiscount: { findMany: jest.fn(async () => []) },
     auditLogEntry: { create: jest.fn(async () => ({})) },
@@ -36,6 +39,7 @@ function build(perms: string[] = []) {
       range: { from: '2026-03-01', to: '2026-03-31', timezone: 'Africa/Cairo', key: 'custom' },
       currency: 'EGP',
       totals,
+      cashbook: { received: 70000, forPeriod: 40000, advance: 25000, late: 5000, fromCancelled: 0, refunds: 0, byMethod: [] },
       byDay: [{ date: '2026-03-01', bookings: 1, revenue: 100000 }],
       byUnit: [],
       bySource: [],
@@ -51,14 +55,22 @@ describe('ExportService', () => {
     const { svc } = build();
     const sheets = await svc.sheets(owner, 'v1', '2026-03-01', '2026-03-31', 'en');
     const rows = Object.fromEntries(sheets[0].rows.map(([k, v]) => [k, v]));
-    expect(rows['Collected revenue']).toBe(1000);
+    expect(rows['Collected revenue (games played in the period)']).toBe(1000);
     expect(rows['Matchena commission']).toBe(60);
     expect(rows['Take-home after commission']).toBe(940);
     expect(rows['Expenses']).toBe(200);
     expect(rows['Real profit']).toBe(740);
     expect(rows['Real profit']).toBe((rows['Take-home after commission'] as number) - (rows['Expenses'] as number));
+    // The two bases are both on the sheet, and the received money splits into exactly its parts.
+    expect(rows['Money received (by day received)']).toBe(700);
+    expect(
+      (rows['of which: for games in the period'] as number) +
+        (rows['of which: advance for later games'] as number) +
+        (rows['of which: collected for earlier games'] as number) +
+        (rows['of which: kept from cancelled bookings'] as number),
+    ).toBe(700);
     expect(sheets.map((s) => s.name)).toEqual([
-      'Summary', 'Bookings', 'Daily', 'By court', 'By source', 'Top customers', 'Expenses', 'Matchena account', 'Discounts',
+      'Summary', 'Bookings', 'Money received', 'Daily', 'By court', 'By source', 'Top customers', 'Expenses', 'Matchena account', 'Discounts',
     ]);
   });
 

@@ -53,6 +53,11 @@ export class CreateExpenseDto {
   @IsBoolean()
   recurringMonthly?: boolean;
 
+  @ApiPropertyOptional({ description: 'Paid out of the cash drawer: the shift close subtracts it from the expected cash.' })
+  @IsOptional()
+  @IsBoolean()
+  fromDrawer?: boolean;
+
   @ApiPropertyOptional({ description: 'Last month (any day in it) the expense repeats in' })
   @IsOptional()
   @Matches(LOCAL_DATE)

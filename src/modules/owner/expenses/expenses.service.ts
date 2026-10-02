@@ -63,6 +63,8 @@ export class ExpensesService {
         note: dto.note?.trim() || null,
         recurringMonthly: !!dto.recurringMonthly,
         recurringUntil: dto.recurringMonthly ? (dto.recurringUntil ?? null) : null,
+        // A monthly template is a bill, never a hand-out of drawer cash.
+        fromDrawer: !!dto.fromDrawer && !dto.recurringMonthly,
         createdById: user.id,
       },
     });
@@ -72,6 +74,9 @@ export class ExpensesService {
 
   async update(user: AuthenticatedUser, id: string, dto: UpdateExpenseDto) {
     const row = await this.load(user, id);
+    if (row.shiftId && dto.amount != null && dto.amount !== row.amount) {
+      throw new ApiException(HttpStatus.CONFLICT, 'EXPENSE_IN_CLOSED_SHIFT', 'This expense was already counted in a closed shift. Add a new one instead.');
+    }
     const category = dto.category ?? (row.category as CreateExpenseDto['category']);
     const label = dto.categoryLabel ?? row.categoryLabel ?? undefined;
     this.validate(category, label, dto.incurredOn ?? row.incurredOn, dto.recurringUntil);
@@ -92,7 +97,10 @@ export class ExpensesService {
   }
 
   async remove(user: AuthenticatedUser, id: string) {
-    await this.load(user, id);
+    const row = await this.load(user, id);
+    if (row.shiftId) {
+      throw new ApiException(HttpStatus.CONFLICT, 'EXPENSE_IN_CLOSED_SHIFT', 'This expense was already counted in a closed shift and cannot be deleted.');
+    }
     await this.prisma.venueExpense.delete({ where: { id } });
     return { ok: true };
   }
@@ -172,6 +180,8 @@ export class ExpensesService {
       recurringMonthly: r.recurringMonthly,
       recurringUntil: r.recurringUntil,
       isMonthlyCopy: r.recurringParentId != null,
+      fromDrawer: r.fromDrawer,
+      settled: r.shiftId != null,
     };
   }
 }

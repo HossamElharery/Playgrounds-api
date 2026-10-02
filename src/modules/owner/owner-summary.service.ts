@@ -1,4 +1,6 @@
 import { createHash } from 'crypto';
+import { buildBookingStatement } from '../../common/money/booking-statement';
+import { netOf } from './cash/payment-trail';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ExpensesService } from './expenses/expenses.service';
@@ -77,6 +79,12 @@ export function matchesManualPaid(b: {
   return b.source === 'manual' && b.status !== 'cancelled' && b.paymentStatus === 'paid';
 }
 
+/** Mirrors `MANUAL_RECEIVED_SQL`: what a manual booking has actually received so far. */
+export function manualReceived(b: { totalAmount: number; paymentStatus: string; receivedAmount?: number }): number {
+  if (b.paymentStatus === 'paid') return b.totalAmount;
+  return Math.max(0, Math.min(b.totalAmount, b.receivedAmount ?? 0));
+}
+
 export const PLATFORM_COLLECTED_SQL = `(
   source = 'platform' AND status <> 'cancelled' AND (
     ("paymentModeSnapshot" = 'online' AND "paymentStatus" = 'paid' AND status IN ('confirmed','completed','no_show'))
@@ -89,6 +97,9 @@ export const PLATFORM_COLLECTED_SQL = `(
 
 export const MANUAL_PAID_SQL = `(source = 'manual' AND status <> 'cancelled' AND "paymentStatus" = 'paid')`;
 
+/** A manual booking that is not cancelled — its revenue is whatever has been received on it. */
+export const MANUAL_COUNTED_SQL = `(source = 'manual' AND status <> 'cancelled')`;
+
 export function collectedFromBookings(
   bookings: Array<{
     source: string;
@@ -100,6 +111,8 @@ export function collectedFromBookings(
     ownerFundedDiscount?: number | null;
     commissionAmount?: number | null;
     totalAmount: number;
+    /** Net payments received (partial deposits count). Falls back to "paid = whole price". */
+    receivedAmount?: number;
   }>,
 ) {
   let matchenaRevenue = 0;
@@ -112,8 +125,8 @@ export function collectedFromBookings(
       const gross = Math.max(0, b.baseAmount - (b.ownerFundedDiscount ?? 0));
       matchenaRevenue += gross;
       commission += b.commissionAmount ?? 0;
-    } else if (matchesManualPaid(b)) {
-      ownRevenue += b.totalAmount;
+    } else if (b.source === 'manual' && b.status !== 'cancelled') {
+      ownRevenue += manualReceived(b);
     }
   }
   const collectedRevenue = matchenaRevenue + ownRevenue;
@@ -157,16 +170,26 @@ const MANUAL_SQL = Prisma.sql`"source" = 'manual'`;
  * that are collected count `baseAmount − ownerFundedDiscount` (never the player
  * fee); manual bookings count what was paid. Everything else is 0.
  */
-const AMOUNT_SQL = Prisma.sql`(CASE
+/**
+ * Net money actually received on ONE booking: every counted payment minus the refunds.
+ * A deposit counts the moment it is taken, so a part-paid booking shows what it really holds.
+ */
+export const NET_PAID_SQL = `COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded')), 0)`;
+const NET_CASH_SQL = `COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded') AND p."method" = 'cash'), 0)`;
+
+/** A manual booking's revenue is what was received on it (a fully paid one is its whole price). */
+export const MANUAL_RECEIVED_SQL = `(CASE WHEN "paymentStatus" = 'paid' THEN "totalAmount" ELSE GREATEST(0, LEAST("totalAmount", ${NET_PAID_SQL})) END)`;
+
+export const AMOUNT_SQL = Prisma.sql`(CASE
   WHEN ${Prisma.raw(PLATFORM_COLLECTED_SQL)} THEN GREATEST(0, "baseAmount" - "ownerFundedDiscount")
-  WHEN ${Prisma.raw(MANUAL_PAID_SQL)} THEN "totalAmount"
+  WHEN ${Prisma.raw(MANUAL_COUNTED_SQL)} THEN ${Prisma.raw(MANUAL_RECEIVED_SQL)}
   ELSE 0 END)`;
 
-/** Revenue taken as cash: platform at-venue payments and manual cash payments. */
-const CASH_SQL = Prisma.sql`(
-  ("source" = 'platform' AND COALESCE("paymentModeSnapshot", 'at_venue') = 'at_venue')
-  OR ("source" = 'manual' AND COALESCE("paymentMethod", 'cash') = 'cash')
-)`;
+/** Revenue that came in as cash: Matchena bookings paid at the venue, and the cash payments on the venue's own bookings. */
+const CASH_AMOUNT_SQL = Prisma.sql`(CASE
+  WHEN ${Prisma.raw(PLATFORM_COLLECTED_SQL)} AND COALESCE("paymentModeSnapshot", 'at_venue') = 'at_venue' THEN GREATEST(0, "baseAmount" - "ownerFundedDiscount")
+  WHEN ${Prisma.raw(MANUAL_COUNTED_SQL)} THEN GREATEST(0, ${Prisma.raw(NET_CASH_SQL)})
+  ELSE 0 END)`;
 
 /**
  * `Booking.slotStart` is `timestamp without time zone` holding UTC. It must be
@@ -248,7 +271,7 @@ export class OwnerSummaryService {
             status: { not: 'cancelled' },
             paymentStatus: { in: ['pending', 'partial'] },
           },
-          select: { id: true, totalAmount: true, payments: { where: { status: 'paid' }, select: { amount: true } } },
+          select: { id: true, totalAmount: true, payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } } },
         }),
         this.prisma.booking.aggregate({
           where: { venueId, slotStart: { gt: now }, status: 'confirmed' },
@@ -328,6 +351,7 @@ export class OwnerSummaryService {
 
     // Real profit = money kept after Matchena's commission − what the owner spent, same period.
     const spent = this.expenses ? await this.expenses.totals(venueId, range.from, range.to) : { total: 0, byCategory: [] };
+    const cashbook = await this.cashbook(venueId, range.start, range.end);
 
     return {
       range: { from: range.from, to: range.to, timezone: tz, key: range.range },
@@ -367,6 +391,7 @@ export class OwnerSummaryService {
         };
       }),
       expensesByCategory: spent.byCategory,
+      cashbook,
       byDay,
       byHour,
       quietHours: byHour
@@ -382,35 +407,93 @@ export class OwnerSummaryService {
   }
 
   /**
-   * "Expected cash today": what has been recorded as paid on today's bookings, split by
-   * payment method, plus what is still owed. Read-only — there is no shift closing; the
-   * owner compares this with the drawer. Derived from the existing Payment rows.
+   * Money that came IN during a period, by the day it was received — the other way to read the
+   * books. The play-date numbers answer "what did my bookings in this period earn"; this answers
+   * "what reached my hands in this period", and splits it so nothing is mysterious:
+   *   - `period`    : taken for a booking that is itself in the period,
+   *   - `advance`   : a deposit/payment for a booking AFTER the period (e.g. a Tuesday deposit),
+   *   - `late`      : collected now for a booking BEFORE the period,
+   *   - `cancelled` : kept from a booking that was later cancelled.
+   * Only money the venue itself handled counts: its own bookings and Matchena bookings paid at
+   * the venue. Wallet/online money Matchena holds is in the Matchena account, not here.
+   */
+  async cashbook(venueId: string, start: Date, end: Date) {
+    const rows = await this.prisma.$queryRaw<
+      { method: string; bucket: 'period' | 'advance' | 'late' | 'cancelled'; amount: number; count: number; refunded: number }[]
+    >(Prisma.sql`
+      SELECT p."method"::text AS method,
+             CASE WHEN b."status" = 'cancelled' THEN 'cancelled'
+                  WHEN b."slotStart" >= (${end}::timestamptz AT TIME ZONE 'UTC') THEN 'advance'
+                  WHEN b."slotStart" <  (${start}::timestamptz AT TIME ZONE 'UTC') THEN 'late'
+                  ELSE 'period' END AS bucket,
+             COALESCE(SUM(p."amount"), 0)::int AS amount,
+             (COUNT(*) FILTER (WHERE p."amount" > 0))::int AS count,
+             COALESCE(SUM(-p."amount") FILTER (WHERE p."amount" < 0), 0)::int AS refunded
+      FROM "Payment" p
+      JOIN "Booking" b ON b."id" = p."bookingId"
+      WHERE b."venueId" = ${venueId}
+        AND p."status" IN ('paid', 'refunded')
+        AND (b."source" = 'manual' OR p."recordedByUserId" IS NOT NULL)
+        AND p."createdAt" >= (${start}::timestamptz AT TIME ZONE 'UTC')
+        AND p."createdAt" <  (${end}::timestamptz AT TIME ZONE 'UTC')
+      GROUP BY 1, 2
+    `);
+    const buckets = { period: 0, advance: 0, late: 0, cancelled: 0 };
+    const methods = new Map<string, { method: string; amount: number; count: number }>();
+    let refunds = 0;
+    for (const r of rows) {
+      buckets[r.bucket] += r.amount;
+      refunds += r.refunded;
+      const m = methods.get(r.method) ?? { method: r.method, amount: 0, count: 0 };
+      m.amount += r.amount;
+      m.count += r.count;
+      methods.set(r.method, m);
+    }
+    const byMethod = [...methods.values()].filter((m) => m.amount !== 0 || m.count > 0).sort((a, b) => b.amount - a.amount);
+    return {
+      received: byMethod.reduce((sum, m) => sum + m.amount, 0),
+      byMethod,
+      forPeriod: buckets.period,
+      advance: buckets.advance,
+      late: buckets.late,
+      fromCancelled: buckets.cancelled,
+      refunds,
+    };
+  }
+
+  /**
+   * "Received today": every payment taken today, by the day it was taken (not the day of the
+   * booking it belongs to), split into what is for today's games, deposits for later days, and
+   * collections on past games — plus what today's bookings still owe. Closing the drawer is
+   * `CashService`; this is the live read-only picture.
    */
   async cashToday(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const tz =
       (await this.prisma.venue.findUnique({ where: { id: venueId }, select: { country: { select: { timezone: true } } } }))
         ?.country?.timezone ?? 'Africa/Cairo';
-    const { start, end } = resolveOwnerRange('today', tz);
-    const bookings = { venueId, status: { not: 'cancelled' as const }, slotStart: { gte: start, lt: end } };
-    const [paid, totals] = await Promise.all([
-      this.prisma.payment.groupBy({
-        by: ['method'],
-        where: { status: 'paid', booking: bookings },
-        _sum: { amount: true },
-        _count: { _all: true },
+    const { start, end, from } = resolveOwnerRange('today', tz);
+    const [book, todays] = await Promise.all([
+      this.cashbook(venueId, start, end),
+      this.prisma.booking.findMany({
+        where: { venueId, status: { not: 'cancelled' }, slotStart: { gte: start, lt: end } },
+        select: { totalAmount: true, payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } } },
       }),
-      this.prisma.booking.aggregate({ where: bookings, _sum: { totalAmount: true }, _count: { _all: true } }),
     ]);
-    const byMethod = paid.map((p) => ({ method: p.method as string, amount: p._sum.amount ?? 0, count: p._count._all }));
-    const received = byMethod.reduce((s, m) => s + m.amount, 0);
+    const bookingsTotal = todays.reduce((s, b) => s + b.totalAmount, 0);
+    const stillOwed = todays.reduce((s, b) => s + Math.max(0, b.totalAmount - b.payments.reduce((x, p) => x + p.amount, 0)), 0);
     return {
-      date: resolveOwnerRange('today', tz).from,
-      byMethod,
-      received,
-      bookingsTotal: totals._sum.totalAmount ?? 0,
-      stillOwed: Math.max(0, (totals._sum.totalAmount ?? 0) - received),
-      bookings: totals._count._all,
+      date: from,
+      byMethod: book.byMethod,
+      received: book.received,
+      forToday: book.forPeriod,
+      advance: book.advance,
+      late: book.late,
+      fromCancelled: book.fromCancelled,
+      refunds: book.refunds,
+      bookingsTotal,
+      stillOwed,
+      bookings: todays.length,
     };
   }
 
@@ -428,7 +511,11 @@ export class OwnerSummaryService {
         slotStart: { gte: range.start, lt: range.end },
         status: { not: 'cancelled' },
       },
-      include: { court: true, user: { select: { name: true } } },
+      include: {
+        court: true,
+        user: { select: { name: true } },
+        payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } },
+      },
       orderBy: { slotStart: 'asc' },
     });
     const header = [
@@ -439,16 +526,19 @@ export class OwnerSummaryService {
       'customer',
       'status',
       'payment status',
-      'price',
+      'list price',
+      'your discount',
+      'owed before commission',
       'matchena commission',
       'net',
+      'received',
+      'remaining',
     ];
     const rows = bookings.map((b) => {
       const display = sourceDisplay(b.source, b.sourceKey, b.sourceLabel);
-      const commission = b.source === 'platform' ? (b.commissionAmount ?? 0) : 0;
-      const net = b.source === 'platform'
-        ? (b.ownerNetAmount ?? b.baseAmount - commission)
-        : b.totalAmount;
+      const { received, refunded } = netOf(b.payments);
+      // The same statement the booking sheet shows, so the file can never disagree with the app.
+      const st = buildBookingStatement(b, received, refunded);
       return this.csvRow([
         localDateTime(b.slotStart, summary.range.timezone).date,
         localDateTime(b.slotStart, summary.range.timezone).time,
@@ -457,13 +547,13 @@ export class OwnerSummaryService {
         b.guestName ?? b.user.name,
         b.status,
         b.paymentStatus,
-        // Owner-facing price: what the owner is owed for the slot, never the
-        // player-paid total (which includes Matchena's service fee).
-        b.source === 'platform'
-          ? Math.max(0, b.baseAmount - (b.ownerFundedDiscount ?? 0))
-          : b.totalAmount,
-        commission,
-        net,
+        st.listPrice,
+        st.ownerDiscount,
+        st.venueGross,
+        st.commission,
+        st.ownerNet,
+        st.received,
+        st.outstanding,
       ]);
     });
     return `\uFEFF${header.join(',')}\n${rows.join('\n')}\n# collectedRevenue,${summary.totals.collectedRevenue}\n# commission,${summary.totals.commission}\n# takeHome,${summary.totals.takeHome}\n`;
@@ -498,7 +588,7 @@ export class OwnerSummaryService {
              COALESCE(SUM(CASE WHEN ${PLATFORM_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::int AS matchena,
              COALESCE(SUM(CASE WHEN ${MANUAL_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::int AS own,
              COALESCE(SUM(CASE WHEN ${Prisma.raw(PLATFORM_COLLECTED_SQL)} THEN COALESCE("commissionAmount", 0) ELSE 0 END), 0)::int AS commission,
-             COALESCE(SUM(CASE WHEN ${CASH_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::int AS cash
+             COALESCE(SUM(${CASH_AMOUNT_SQL}), 0)::int AS cash
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
     `);

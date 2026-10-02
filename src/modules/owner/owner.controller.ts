@@ -8,11 +8,15 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   StreamableFile,
   UseGuards,
+  UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../../common/guards/auth.guard';
@@ -52,6 +56,12 @@ import { PlatformRequestsService } from './requests/platform-requests.service';
 import { QuickstartService } from './quickstart/quickstart.service';
 import { ExportService } from './exports/export.service';
 import { ExpensesService } from './expenses/expenses.service';
+import { CashService } from './cash/cash.service';
+import { ImportService } from './import/import.service';
+import { ImportBodyDto } from './import/import.dto';
+import { CustomerNoteDto } from './customers/customers.dto';
+import { MAX_IMPORT_BYTES } from './import/spreadsheet.util';
+import { CashDrawerQueryDto, CloseShiftDto, ReviewShiftDto, ShiftListQueryDto } from './cash/cash.dto';
 import { CreateExpenseDto, UpdateExpenseDto } from './expenses/expenses.dto';
 import { InsightsService } from './insights/insights.service';
 import {
@@ -62,9 +72,11 @@ import {
 import {
   AddManualPaymentDto,
   CreateManualBookingDto,
+  OwnerCheckInDto,
   OwnerRemittanceDto,
   OwnerSummaryQueryDto,
   UpdateManualBookingDto,
+  VoidPaymentDto,
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
@@ -91,6 +103,8 @@ export class OwnerController {
     private readonly insights: InsightsService,
     private readonly fixed: FixedBookingsService,
     private readonly expenses: ExpensesService,
+    private readonly cash: CashService,
+    private readonly imports: ImportService,
     private readonly exportCentre: ExportService,
     private readonly platformRequests: PlatformRequestsService,
     private readonly quickstart: QuickstartService,
@@ -449,6 +463,106 @@ export class OwnerController {
     return this.summary.cashToday(user, venueId);
   }
 
+  @RequirePermission('customers.view')
+  @Put('customers/note')
+  @ApiOperation({ summary: 'Save (or clear) the venue\'s note about one customer' })
+  customerNote(@CurrentUser() user: AuthenticatedUser, @Body() dto: CustomerNoteDto) {
+    return this.owner.setCustomerNote(user, dto.venueId, dto.key, dto.note ?? null);
+  }
+
+  @RequirePermission('payments.record')
+  @Get('cash/drawer')
+  @ApiOperation({
+    summary:
+      'My open cash drawer (and, for reviewers, everybody\'s) — what is waiting to be closed',
+  })
+  cashDrawer(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: CashDrawerQueryDto,
+  ) {
+    return this.cash.drawer(user, q.venueId);
+  }
+
+  @RequirePermission('payments.record')
+  @Post('cash/shifts')
+  @ApiOperation({
+    summary:
+      'Close a cash drawer: expected vs counted, difference, and what is left for the next shift',
+  })
+  closeShift(@CurrentUser() user: AuthenticatedUser, @Body() dto: CloseShiftDto) {
+    return this.cash.closeShift(user, dto);
+  }
+
+  @RequirePermission('payments.record')
+  @Get('cash/shifts')
+  @ApiOperation({ summary: 'Closed shifts (all of them for reviewers, otherwise mine)' })
+  listShifts(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: ShiftListQueryDto,
+  ) {
+    return this.cash.list(user, q);
+  }
+
+  @RequirePermission('payments.record')
+  @Get('cash/shifts/:id')
+  @ApiOperation({ summary: 'One closed shift with every payment and expense behind it' })
+  shiftDetail(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.cash.detail(user, id);
+  }
+
+  @RequirePermission('shifts.review')
+  @Post('cash/shifts/:id/review')
+  @ApiOperation({ summary: 'Mark a shift as reviewed (with an optional note)' })
+  reviewShift(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ReviewShiftDto,
+  ) {
+    return this.cash.review(user, id, dto?.note);
+  }
+
+  @RequirePermission('venue.manage')
+  @Post('import/preview')
+  @UseInterceptors(
+    FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_IMPORT_BYTES, files: 1 } }),
+  )
+  @ApiOperation({ summary: 'Read an Excel/CSV file and show what an import would do — writes nothing' })
+  importPreview(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFile() file: { buffer: Buffer; originalname?: string } | undefined,
+    @Body() body: ImportBodyDto,
+  ) {
+    return this.imports.preview(user, file, body.config);
+  }
+
+  @RequirePermission('venue.manage')
+  @Post('import/commit')
+  @UseInterceptors(
+    FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_IMPORT_BYTES, files: 1 } }),
+  )
+  @ApiOperation({ summary: 'Import the rows of an Excel/CSV file that are fine (as one undoable batch)' })
+  importCommit(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFile() file: { buffer: Buffer; originalname?: string } | undefined,
+    @Body() body: ImportBodyDto,
+  ) {
+    return this.imports.commit(user, file, body.config);
+  }
+
+  @RequirePermission('venue.manage')
+  @Get('import/batches')
+  @ApiOperation({ summary: 'Recent imports of a venue' })
+  importBatches(@CurrentUser() user: AuthenticatedUser, @Query('venueId') venueId: string) {
+    return this.imports.listBatches(user, venueId);
+  }
+
+  @RequirePermission('venue.manage')
+  @Post('import/batches/:id/undo')
+  @ApiOperation({ summary: 'Take a whole import back' })
+  importUndo(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.imports.undo(user, id);
+  }
+
   @RequirePermission('reports.view')
   @Get('expenses')
   @ApiOperation({
@@ -563,6 +677,21 @@ export class OwnerController {
       dto.amount,
       dto.method,
     );
+  }
+
+  @RequirePermission('payments.record')
+  @Post('bookings/:id/payments/:paymentId/void')
+  @ApiOperation({
+    summary:
+      'Take a payment back (refund). Nothing is deleted: a negative row answers the original.',
+  })
+  voidPayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: VoidPaymentDto,
+  ) {
+    return this.ownerBookings.voidManualPayment(user, id, paymentId, dto?.reason);
   }
 
   @RequirePermission('bookings.view')
@@ -809,7 +938,8 @@ export class OwnerController {
   ownerCheckIn(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
+    @Body() dto: OwnerCheckInDto,
   ) {
-    return this.bookings.checkInById(user, id);
+    return this.bookings.checkInById(user, id, dto?.method);
   }
 }

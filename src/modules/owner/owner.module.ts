@@ -19,6 +19,8 @@ import { VenueHealthService } from './health/venue-health.service';
 import { ExportService } from './exports/export.service';
 import { ExpensesService } from './expenses/expenses.service';
 import { InsightsService } from './insights/insights.service';
+import { CashService } from './cash/cash.service';
+import { ImportService } from './import/import.service';
 import { AssistantNluService } from './assistant/assistant-nlu.service';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
 import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
@@ -38,6 +40,8 @@ import { AssistantRemindersService } from './assistant/assistant-reminders.servi
     InsightsService,
     FixedBookingsService,
     ExpensesService,
+    CashService,
+    ImportService,
     ExportService,
     PlatformRequestsService,
     QuickstartService,

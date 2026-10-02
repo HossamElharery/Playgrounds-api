@@ -170,8 +170,23 @@ export class AddManualPaymentDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsIn(['cash', 'instapay', 'wallet', 'card', 'other'])
-  method?: 'cash' | 'instapay' | 'wallet' | 'card' | 'other';
+  @IsIn(['cash', 'instapay', 'wallet', 'card', 'fawry', 'other'])
+  method?: 'cash' | 'instapay' | 'wallet' | 'card' | 'fawry' | 'other';
+}
+
+export class VoidPaymentDto {
+  @ApiPropertyOptional({ description: 'Why the money was handed back (kept in the audit trail).' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+}
+
+export class OwnerCheckInDto {
+  @ApiPropertyOptional({ description: 'How the player paid at the venue (default cash).' })
+  @IsOptional()
+  @IsIn(['cash', 'instapay', 'wallet', 'card', 'fawry', 'other'])
+  method?: 'cash' | 'instapay' | 'wallet' | 'card' | 'fawry' | 'other';
 }
 
 export class OwnerSummaryQueryDto {

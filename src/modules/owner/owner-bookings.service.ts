@@ -23,7 +23,8 @@ import {
 } from '../../common/access/owner-access';
 import { ApiException } from '../../common/errors/api-exception';
 import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
-import { maskPlayerPhone, normalizeOptionalPhone } from '../../common/utils/phone.util';
+import { maskPlayerPhone } from '../../common/utils/phone.util';
+import { guestPhoneForStorage, phoneSearchNeedle } from '../../common/utils/guest-phone.util';
 import { quoteDurationPrice } from '../../common/utils/price-quote.util';
 import {
   assertCustomSourceLabel,
@@ -43,15 +44,19 @@ import {
 } from './dto/manual-booking.dto';
 import { CreateWalkInDto } from './dto/walk-in.dto';
 import { formatMoney, notifyFinance } from '../finance/finance-notify';
+import { buildBookingStatement } from '../../common/money/booking-statement';
+import { COUNTED_PAYMENT_STATUSES, derivePaymentStatus, netOf, netReceived } from './cash/payment-trail';
 
 const NINETY_DAYS_MS = 90 * 86_400_000;
 
 function mapPaymentMethod(
   method?: string,
 ): PaymentMethod {
-  if (method === 'instapay' || method === 'wallet' || method === 'card' || method === 'cash') {
+  if (method === 'instapay' || method === 'wallet' || method === 'card' || method === 'cash' || method === 'fawry') {
     return method;
   }
+  // "Other" is never cash: a mislabelled payment must not inflate the money the drawer should hold.
+  if (method === 'other') return 'wallet';
   return 'cash';
 }
 
@@ -186,6 +191,11 @@ export class OwnerBookingsService {
       sourceLabel?: string | null;
       notes?: string | null;
       recurringSeriesId?: string;
+      /** Who took the first payment. Defaults to `userId`; `null` for imported history (never in a drawer). */
+      paymentRecordedBy?: string | null;
+      /** When the first payment was taken (imports back-date it to the play date). */
+      paidAt?: Date;
+      importBatchId?: string;
     },
   ) {
     await this.assertSlotFree(tx, input.courtId, input.venueId, input.slotStart, input.slotEnd);
@@ -214,13 +224,14 @@ export class OwnerBookingsService {
         paymentStatus,
         paymentMethod,
         guestName: input.customerName?.trim() || null,
-        guestPhone: normalizeOptionalPhone(input.customerPhone ?? undefined) ?? null,
+        guestPhone: guestPhoneForStorage(input.customerPhone),
         source: 'manual',
         sourceKey: sourceLabel ? null : (input.sourceKey ?? 'walk_in'),
         sourceLabel: sourceLabel ?? null,
         notes: input.notes?.trim() || null,
         createdByUserId: input.userId,
         recurringSeriesId: input.recurringSeriesId ?? null,
+        importBatchId: input.importBatchId ?? null,
       },
     });
     const paidNow =
@@ -237,6 +248,8 @@ export class OwnerBookingsService {
           currency: created.currency,
           method: paymentMethod,
           status: 'paid',
+          recordedByUserId: input.paymentRecordedBy === undefined ? input.userId : input.paymentRecordedBy,
+          ...(input.paidAt ? { createdAt: input.paidAt } : {}),
         },
       });
     }
@@ -342,7 +355,7 @@ export class OwnerBookingsService {
     }
     if (dto.customerPhone !== undefined) {
       assign('guestPhone', booking.guestPhone, dto.customerPhone, {
-        guestPhone: normalizeOptionalPhone(dto.customerPhone) ?? null,
+        guestPhone: guestPhoneForStorage(dto.customerPhone),
       });
     }
     if (dto.notes !== undefined) assign('notes', booking.notes, dto.notes, { notes: dto.notes });
@@ -360,7 +373,7 @@ export class OwnerBookingsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.assertSlotFree(tx, courtId, booking.venueId, slotStart, slotEnd, booking.id);
-      await this.reconcilePayment(tx, booking, dto, next, changed);
+      await this.reconcilePayment(tx, booking, dto, next, changed, user.id);
       const row = await tx.booking.update({ where: { id: bookingId }, data: next });
       if (customLabel) await this.touchCustomSource(tx, booking.venueId, customLabel);
       await tx.auditLogEntry.create({
@@ -379,37 +392,75 @@ export class OwnerBookingsService {
   }
 
   /**
-   * Takes back one payment the assistant just recorded (its Undo). Only a manual
-   * booking's own `paid` row can go, and the booking's status is re-derived from
-   * what is left, exactly as `addManualPayment` derived it on the way in.
+   * Takes back one payment (the assistant's Undo, or a refund the owner hands over). Nothing is
+   * deleted: a negative `refunded` row answers the original, so the cash drawer, the shift
+   * history and the audit trail all stay true. The booking's status is re-derived from what
+   * is left, exactly as `addManualPayment` derived it on the way in.
+   *
+   * A staff member can take back only their own payment that is still in their open drawer;
+   * the owner (and anyone with `shifts.review`) can take back anybody's.
    */
-  async voidManualPayment(user: AuthenticatedUser, bookingId: string, paymentId: string) {
+  async voidManualPayment(
+    user: AuthenticatedUser,
+    bookingId: string,
+    paymentId: string,
+    reason?: string,
+  ) {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
     }
+    const canAll = await this.canManageEveryonesCash(user);
     await this.prisma.$transaction(
       async (tx) => {
         const payment = await tx.payment.findFirst({
-          where: { id: paymentId, bookingId, status: 'paid' },
+          where: { id: paymentId, bookingId, status: 'paid', amount: { gt: 0 } },
         });
         if (!payment) throw new NotFoundException('Payment not found');
-        await tx.payment.delete({ where: { id: paymentId } });
-        const left = await tx.payment.aggregate({
-          where: { bookingId, status: 'paid' },
-          _sum: { amount: true },
+        const already = await tx.payment.findUnique({ where: { reversesPaymentId: paymentId } });
+        if (already) {
+          throw new ApiException(HttpStatus.CONFLICT, 'PAYMENT_ALREADY_REVERSED', 'This payment was already taken back');
+        }
+        if (!canAll && !(payment.recordedByUserId === user.id && payment.shiftId == null)) {
+          throw new ApiException(
+            HttpStatus.FORBIDDEN,
+            'PAYMENT_NOT_YOURS',
+            'You can only take back a payment you recorded that is still in your open drawer',
+          );
+        }
+        await tx.payment.create({
+          data: {
+            bookingId,
+            amount: -payment.amount,
+            currency: payment.currency,
+            method: payment.method,
+            status: 'refunded',
+            reversesPaymentId: payment.id,
+            // Same drawer as the original while that drawer is still open, so the two net out
+            // there; once it was closed, the correction belongs to whoever hands the money back.
+            recordedByUserId: payment.shiftId == null ? payment.recordedByUserId : user.id,
+            note: reason?.trim() ? reason.trim().slice(0, 200) : null,
+          },
         });
-        const paid = left._sum.amount ?? 0;
-        const paymentStatus: PaymentStatus =
-          paid >= booking.totalAmount ? 'paid' : paid > 0 ? 'partial' : 'pending';
-        await tx.booking.update({ where: { id: bookingId }, data: { paymentStatus } });
+        const { received } = await netReceived(tx, bookingId);
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { paymentStatus: derivePaymentStatus(booking.totalAmount, received) },
+        });
         await tx.auditLogEntry.create({
           data: {
             actorUserId: user.id,
             action: 'owner.booking.payment_voided',
             targetType: 'booking',
             targetId: bookingId,
-            metadata: { bookingId, venueId: booking.venueId, paymentId, amount: payment.amount } as Prisma.InputJsonValue,
+            metadata: {
+              bookingId,
+              venueId: booking.venueId,
+              paymentId,
+              amount: payment.amount,
+              method: payment.method,
+              ...(reason?.trim() ? { reason: reason.trim().slice(0, 200) } : {}),
+            } as Prisma.InputJsonValue,
           },
         });
       },
@@ -419,6 +470,12 @@ export class OwnerBookingsService {
       await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
       user,
     );
+  }
+
+  /** Owner, admin, or staff holding `shifts.review`. */
+  private async canManageEveryonesCash(user: AuthenticatedUser): Promise<boolean> {
+    if (user.roles.includes('admin') || user.roles.includes('owner')) return true;
+    return scopeCan(await loadStaffScope(this.prisma, user.id), 'shifts.review');
   }
 
   async deleteManualBooking(user: AuthenticatedUser, bookingId: string) {
@@ -488,16 +545,12 @@ export class OwnerBookingsService {
       async (tx) => {
         // Read inside the transaction so two quick taps cannot both pass the
         // "does not exceed the balance" check.
-        const paid = await tx.payment.aggregate({
-          where: { bookingId, status: 'paid' },
-          _sum: { amount: true },
-        });
-        const already = paid._sum.amount ?? 0;
+        const { received: already } = await netReceived(tx, bookingId);
         if (already + amount > booking.totalAmount) {
           throw new ApiException(HttpStatus.BAD_REQUEST, 'OVERPAYMENT', 'Payment exceeds remaining balance');
         }
         const nextPaid = already + amount;
-        const paymentStatus: PaymentStatus = nextPaid >= booking.totalAmount ? 'paid' : 'partial';
+        const paymentStatus: PaymentStatus = derivePaymentStatus(booking.totalAmount, nextPaid);
         await tx.payment.create({
           data: {
             bookingId,
@@ -505,6 +558,7 @@ export class OwnerBookingsService {
             currency: booking.currency,
             method: mapPaymentMethod(method),
             status: 'paid',
+            recordedByUserId: user.id,
           },
         });
         await tx.booking.update({
@@ -540,13 +594,10 @@ export class OwnerBookingsService {
     dto: UpdateManualBookingDto,
     next: Prisma.BookingUpdateInput,
     changed: Record<string, [unknown, unknown]>,
+    actorId: string,
   ) {
     const newTotal = dto.priceAmount ?? booking.totalAmount;
-    const agg = await tx.payment.aggregate({
-      where: { bookingId: booking.id, status: 'paid' },
-      _sum: { amount: true },
-    });
-    let paid = agg._sum.amount ?? 0;
+    let paid = (await netReceived(tx, booking.id)).received;
     if (paid > newTotal) {
       throw new ApiException(
         HttpStatus.BAD_REQUEST,
@@ -577,12 +628,12 @@ export class OwnerBookingsService {
           currency: booking.currency,
           method: mapPaymentMethod(dto.paymentMethod ?? booking.paymentMethod ?? undefined),
           status: 'paid',
+          recordedByUserId: actorId,
         },
       });
       paid = newTotal;
     }
-    const status: PaymentStatus =
-      paid >= newTotal ? 'paid' : paid > 0 ? 'partial' : 'pending';
+    const status: PaymentStatus = derivePaymentStatus(newTotal, paid);
     if (status !== booking.paymentStatus) {
       changed.paymentStatus = [booking.paymentStatus, status];
       next.paymentStatus = status;
@@ -597,7 +648,7 @@ export class OwnerBookingsService {
   async requestPlatformChange(
     user: AuthenticatedUser,
     bookingId: string,
-    dto: { kind: 'cancel' | 'change'; reason: string },
+    dto: { kind: 'cancel' | 'change'; reason: string; urgent?: boolean },
   ) {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source !== 'platform') {
@@ -644,7 +695,7 @@ export class OwnerBookingsService {
         action: 'owner.booking.change_requested',
         targetType: 'booking',
         targetId: bookingId,
-        metadata: { bookingId, venueId: booking.venueId, kind: dto.kind, reason } as Prisma.InputJsonValue,
+        metadata: { bookingId, venueId: booking.venueId, kind: dto.kind, reason, urgent: !!dto.urgent } as Prisma.InputJsonValue,
       },
     });
 
@@ -654,7 +705,8 @@ export class OwnerBookingsService {
     });
     const verbEn = dto.kind === 'cancel' ? 'cancel' : 'change';
     const verbAr = dto.kind === 'cancel' ? 'إلغاء' : 'تعديل';
-    const subject = `Venue request: ${verbEn} booking ${booking.code}`;
+    const urgent = !!dto.urgent;
+    const subject = `${urgent ? 'URGENT — ' : ''}Venue request: ${verbEn} booking ${booking.code}`;
     const body =
       `${venue?.nameEn ?? 'A venue'} asks to ${verbEn} Matchena booking ${booking.code} ` +
       `(${when}, ${tz}). Reason: ${reason}. ` +
@@ -666,11 +718,11 @@ export class OwnerBookingsService {
             userId: admin.id,
             category: 'system',
             titleEn: subject,
-            titleAr: `طلب ${verbAr} حجز ${booking.code} من ${venue?.nameAr ?? 'منشأة'}`,
+            titleAr: `${urgent ? '🔴 عاجل — ' : ''}طلب ${verbAr} حجز ${booking.code} من ${venue?.nameAr ?? 'منشأة'}`,
             bodyEn: `${when} · ${reason}`,
             bodyAr: `${when} · ${reason}`,
             deepLink: '/admin/bookings',
-            payload: { kind: 'booking_change_request', bookingId, venueId: booking.venueId },
+            payload: { kind: 'booking_change_request', bookingId, venueId: booking.venueId, urgent },
           })
           .catch(() => undefined);
         if (admin.email && this.email) {
@@ -769,7 +821,7 @@ export class OwnerBookingsService {
       where.OR = [
         { code: { contains: q, mode: 'insensitive' } },
         { guestName: { contains: q, mode: 'insensitive' } },
-        ...(phonesVisible ? [{ guestPhone: { contains: q } }] : []),
+        ...(phonesVisible ? [{ guestPhone: { contains: phoneSearchNeedle(q) ?? q } }] : []),
       ];
     }
     const rows = await this.prisma.booking.findMany({
@@ -777,7 +829,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true, nameEn: true, nameAr: true } } } },
         user: { select: { id: true, name: true, phone: true } },
-        payments: { where: { status: 'paid' }, select: { amount: true } },
+        payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: [{ slotStart: 'desc' }, { id: 'desc' }],
       take: limit + 1,
@@ -807,7 +859,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
-        payments: true,
+        payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: { slotEnd: 'asc' },
     });
@@ -822,7 +874,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
-        payments: true,
+        payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: { slotStart: 'asc' },
     });
@@ -949,11 +1001,53 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
-        payments: { where: { status: 'paid' }, select: { amount: true } },
+        payments: {
+          where: { status: { in: COUNTED_PAYMENT_STATUSES } },
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            amount: true,
+            method: true,
+            createdAt: true,
+            recordedByUserId: true,
+            reversesPaymentId: true,
+            shiftId: true,
+            note: true,
+          },
+        },
       },
     });
     const dto = this.mapLoaded(loaded);
-    return (await this.canSeePhones(user)) ? dto : this.withoutPhone(dto);
+    const reversed = new Set(loaded.payments.map((p) => p.reversesPaymentId).filter((x): x is string => !!x));
+    const recorders = [...new Set(loaded.payments.map((p) => p.recordedByUserId).filter((x): x is string => !!x))];
+    const names = new Map(
+      (
+        await this.prisma.user.findMany({ where: { id: { in: recorders } }, select: { id: true, name: true } })
+      ).map((u) => [u.id, u.name]),
+    );
+    const canAll = await this.canManageEveryonesCash(user);
+    const manual = loaded.source === 'manual';
+    const withPayments = {
+      ...dto,
+      payments: loaded.payments.map((p) => ({
+        id: p.id,
+        kind: p.amount < 0 ? ('refund' as const) : ('payment' as const),
+        amount: p.amount,
+        method: p.method,
+        at: p.createdAt.toISOString(),
+        byUserId: p.recordedByUserId,
+        byName: p.recordedByUserId ? (names.get(p.recordedByUserId) ?? null) : null,
+        note: p.note,
+        reversesPaymentId: p.reversesPaymentId,
+        reversed: reversed.has(p.id),
+        canVoid:
+          manual &&
+          p.amount > 0 &&
+          !reversed.has(p.id) &&
+          (canAll || (p.recordedByUserId === user.id && p.shiftId == null)),
+      })),
+    };
+    return (await this.canSeePhones(user)) ? withPayments : this.withoutPhone(withPayments);
   }
 
   private mapLoaded(b: {
@@ -975,6 +1069,9 @@ export class OwnerBookingsService {
     totalAmount: number;
     baseAmount: number;
     feeAmount: number;
+    discountAmount: number;
+    ownerFundedDiscount: number;
+    commissionBps: number | null;
     commissionAmount: number | null;
     ownerNetAmount: number | null;
     paymentStatus: Booking['paymentStatus'];
@@ -986,7 +1083,8 @@ export class OwnerBookingsService {
     payments?: { amount: number }[];
   }) {
     const durationMinutes = Math.round((b.slotEnd.getTime() - b.slotStart.getTime()) / 60_000);
-    const paidAmount = (b.payments ?? []).reduce((s, p) => s + p.amount, 0);
+    const { received: paidAmount, refunded } = netOf(b.payments ?? []);
+    const statement = buildBookingStatement(b, paidAmount, refunded);
     const isLocked = b.source === 'platform';
     const tooOld = Date.now() - b.slotStart.getTime() > NINETY_DAYS_MS;
     const display = sourceDisplay(b.source, b.sourceKey, b.sourceLabel);
@@ -1023,6 +1121,10 @@ export class OwnerBookingsService {
         ownerNet: isLocked ? b.ownerNetAmount : undefined,
         paidAmount,
         outstanding: Math.max(0, b.totalAmount - paidAmount),
+        refunded,
+        // Owner-funded discount, shown as its own line so base − discount − commission = net adds up.
+        ownerFundedDiscount: statement.ownerDiscount,
+        statement,
         currency: b.currency,
       },
       paymentStatus: b.paymentStatus,

@@ -197,4 +197,9 @@ export class PlatformChangeRequestDto {
   @MinLength(5)
   @MaxLength(500)
   reason!: string;
+
+  @ApiPropertyOptional({ description: 'The venue is closed or the slot cannot be honoured right now: flagged urgent for the admin.' })
+  @IsOptional()
+  @IsBoolean()
+  urgent?: boolean;
 }

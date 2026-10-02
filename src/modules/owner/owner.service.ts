@@ -11,6 +11,7 @@ import { PERMISSION_KEYS } from '../../common/access/permissions';
 import { assertSlotNotInPast } from '../../common/utils/past-slot.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { queryCustomers } from './customers/customers.query';
 import {
   CreateAssistantMessageDto,
   CreateCalendarBlockDto,
@@ -631,109 +632,25 @@ export class OwnerService {
 
   async customers(user: AuthenticatedUser, venueId: string) {
     const venue = await this.requireVenue(user, venueId, false);
-    const [platform, manualPhone, manualName, sourceRows] = await Promise.all([
-      this.prisma.booking.groupBy({
-        by: ['userId'],
-        where: {
-          venueId,
-          source: 'platform',
-          status: { not: 'cancelled' },
-          userId: { not: venue.ownerId },
-        },
-        _count: { _all: true },
-        _max: { slotStart: true },
-        _sum: { baseAmount: true, ownerFundedDiscount: true, totalAmount: true },
-      }),
-      this.prisma.booking.groupBy({
-        by: ['guestPhone'],
-        where: {
-          venueId,
-          source: 'manual',
-          status: { not: 'cancelled' },
-          guestPhone: { not: null },
-        },
-        _count: { _all: true },
-        _max: { slotStart: true, guestName: true },
-        _sum: { totalAmount: true },
-      }),
-      this.prisma.booking.groupBy({
-        by: ['guestName'],
-        where: {
-          venueId,
-          source: 'manual',
-          status: { not: 'cancelled' },
-          guestPhone: null,
-        },
-        _count: { _all: true },
-        _max: { slotStart: true },
-        _sum: { totalAmount: true },
-      }),
-      this.prisma.booking.groupBy({
-        by: ['userId', 'source', 'sourceKey', 'sourceLabel', 'guestPhone', 'guestName'],
-        where: { venueId, status: { not: 'cancelled' } },
-        _count: { _all: true },
-      }),
-    ]);
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: platform.map((p) => p.userId) } },
-      select: { id: true, name: true, phone: true },
+    const items = await queryCustomers(this.prisma, venueId, venue.ownerId);
+    return { items, total: items.length, owedTotal: items.reduce((s, c) => s + c.owed, 0) };
+  }
+
+  /** A note on one customer ("always late", "VIP"): the venue's own memory, kept next to the bookings. */
+  async setCustomerNote(user: AuthenticatedUser, venueId: string, key: string, note: string | null) {
+    await this.requireVenue(user, venueId, true);
+    if (!/^(p|m|n):.{1,80}$/.test(key)) throw new BadRequestException('Invalid customer key');
+    const clean = note?.trim() ? note.trim().slice(0, 500) : null;
+    if (!clean) {
+      await this.prisma.venueCustomer.updateMany({ where: { venueId, key }, data: { note: null, updatedById: user.id } });
+      return { key, note: null };
+    }
+    await this.prisma.venueCustomer.upsert({
+      where: { venueId_key: { venueId, key } },
+      create: { venueId, key, note: clean, updatedById: user.id },
+      update: { note: clean, updatedById: user.id },
     });
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const sourcesFor = (
-      pred: (row: (typeof sourceRows)[number]) => boolean,
-    ): string[] => {
-      const keys = new Set<string>();
-      for (const row of sourceRows) {
-        if (!pred(row)) continue;
-        keys.add(sourceDisplay(row.source, row.sourceKey, row.sourceLabel).label);
-      }
-      return [...keys];
-    };
-    const items = [
-      ...platform.map((p) => {
-        const u = userMap.get(p.userId);
-        return {
-          key: `p:${p.userId}`,
-          name: u?.name ?? null,
-          phone: null as string | null,
-          phoneMasked: maskPlayerPhone(u?.phone),
-          bookings: p._count._all,
-          spent: Math.max(0, (p._sum.baseAmount ?? 0) - (p._sum.ownerFundedDiscount ?? 0)),
-          lastVisit: p._max.slotStart,
-          sources: sourcesFor((r) => r.source === 'platform' && r.userId === p.userId),
-          isMatchenaPlayer: true,
-        };
-      }),
-      ...manualPhone
-        .filter((m) => m.guestPhone)
-        .map((m) => ({
-          key: `m:${m.guestPhone}`,
-          name: m._max.guestName,
-          phone: m.guestPhone,
-          phoneMasked: null as string | null,
-          bookings: m._count._all,
-          spent: m._sum.totalAmount ?? 0,
-          lastVisit: m._max.slotStart,
-          sources: sourcesFor((r) => r.source === 'manual' && r.guestPhone === m.guestPhone),
-          isMatchenaPlayer: false,
-        })),
-      ...manualName
-        .filter((m) => m.guestName)
-        .map((m) => ({
-          key: `n:${m.guestName}`,
-          name: m.guestName,
-          phone: null as string | null,
-          phoneMasked: null as string | null,
-          bookings: m._count._all,
-          spent: m._sum.totalAmount ?? 0,
-          lastVisit: m._max.slotStart,
-          sources: sourcesFor(
-            (r) => r.source === 'manual' && !r.guestPhone && r.guestName === m.guestName,
-          ),
-          isMatchenaPlayer: false,
-        })),
-    ].sort((a, b) => b.bookings - a.bookings || (b.lastVisit?.getTime() ?? 0) - (a.lastVisit?.getTime() ?? 0));
-    return { items, total: items.length };
+    return { key, note: clean };
   }
 
   async createCalendarBlock(user: AuthenticatedUser, dto: CreateCalendarBlockDto) {

@@ -124,6 +124,12 @@ describe('CSV export', () => {
       commissionAmount: 0,
       ownerNetAmount: null,
       baseAmount: 100,
+      feeAmount: 0,
+      discountAmount: 0,
+      ownerFundedDiscount: 0,
+      commissionBps: null,
+      currency: 'EGP',
+      payments: [{ amount: 100 }],
     };
     const prisma = {
       venue: {

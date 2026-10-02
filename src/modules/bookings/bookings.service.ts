@@ -28,6 +28,7 @@ import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.
 import { matchPricingRule } from '../../common/utils/pricing-rule.util';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
 import { assertBookingAccess, assertVenueAccess } from '../../common/access/owner-access';
+import { netReceived } from '../owner/cash/payment-trail';
 import { randomUUID } from 'crypto';
 import {
   PAYMENT_PROVIDER,
@@ -616,7 +617,7 @@ export class BookingsService {
 
   // ---------- Check-in / completion ----------
 
-  async checkIn(staffUser: AuthenticatedUser, qrPayload: string) {
+  async checkIn(staffUser: AuthenticatedUser, qrPayload: string, method?: string) {
     const { valid, bookingId } = verifyQrPayload(
       qrPayload,
       this.config.get<string>('QR_SIGNING_SECRET')!,
@@ -641,6 +642,7 @@ export class BookingsService {
           status: 'completed',
         },
       });
+      await this.recordAtVenueCollection(tx, booking, staffUser.id, method);
       await this.ledger.syncBookingLedger(tx, bookingId, 'checked_in');
       return row;
     });
@@ -659,13 +661,42 @@ export class BookingsService {
     return updated;
   }
 
-  async checkInById(staffUser: AuthenticatedUser, bookingId: string) {
+  /**
+   * A Matchena booking paid AT the venue: the player hands the money over when they arrive, so
+   * it enters the drawer of whoever checked them in (and the shift close counts it). Online-paid
+   * bookings were already paid through the wallet and add nothing here.
+   */
+  private async recordAtVenueCollection(
+    tx: Prisma.TransactionClient,
+    booking: { id: string; source: string; paymentModeSnapshot: string | null; totalAmount: number; currency: string },
+    staffUserId: string,
+    method?: string,
+  ) {
+    if (booking.source !== 'platform' || booking.paymentModeSnapshot === 'online') return;
+    const { received } = await netReceived(tx, booking.id);
+    const due = booking.totalAmount - received;
+    if (due <= 0) return;
+    const m = method === 'instapay' || method === 'wallet' || method === 'card' || method === 'fawry' ? method : method === 'other' ? 'wallet' : 'cash';
+    await tx.payment.create({
+      data: {
+        bookingId: booking.id,
+        amount: due,
+        currency: booking.currency,
+        method: m,
+        status: 'paid',
+        recordedByUserId: staffUserId,
+        note: 'at_venue_check_in',
+      },
+    });
+  }
+
+  async checkInById(staffUser: AuthenticatedUser, bookingId: string, method?: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException('Booking not found');
     await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
-    if (booking.qrPayload) return this.checkIn(staffUser, booking.qrPayload);
+    if (booking.qrPayload) return this.checkIn(staffUser, booking.qrPayload, method);
     if (booking.status !== 'confirmed') {
       throw new BadRequestException('Booking is not confirmed');
     }
@@ -679,6 +710,7 @@ export class BookingsService {
           status: 'completed',
         },
       });
+      await this.recordAtVenueCollection(tx, booking, staffUser.id, method);
       await this.ledger.syncBookingLedger(tx, bookingId, 'checked_in');
       return row;
     });

@@ -11,6 +11,8 @@ import { addDays, isLocalDate } from '../../../common/utils/fixed-series.util';
 import { resolveOwnerRange } from '../../../common/utils/owner-range.util';
 import { sourceDisplay } from '../../../common/utils/source-label.util';
 import { buildCsvZip, buildXlsx, type ExportSheet } from '../../../common/utils/tabular-export.util';
+import { buildBookingStatement } from '../../../common/money/booking-statement';
+import { COUNTED_PAYMENT_STATUSES, netOf } from '../cash/payment-trail';
 
 export type ExportLang = 'ar' | 'en';
 export type ExportFormat = 'xlsx' | 'csv';
@@ -34,7 +36,43 @@ const T = {
   period: ['الفترة', 'Period'],
   currency: ['العملة', 'Currency'],
   bookingsCount: ['عدد الحجوزات', 'Bookings'],
-  collected: ['الإيراد المحصّل', 'Collected revenue'],
+  collected: ['الإيراد المحصّل (على ألعاب الفترة)', 'Collected revenue (games played in the period)'],
+  basisPlay: ['الأساس: تاريخ اللعب', 'Basis: the day the game is played'],
+  basisReceived: ['الأساس: تاريخ القبض', 'Basis: the day the money was received'],
+  received: ['المقبوض (حسب تاريخ القبض)', 'Money received (by day received)'],
+  receivedForPeriod: ['منه: عن ألعاب الفترة', 'of which: for games in the period'],
+  receivedAdvance: ['منه: عربون ودفعات لحجوزات قادمة', 'of which: advance for later games'],
+  receivedLate: ['منه: تحصيل متأخر لألعاب سابقة', 'of which: collected for earlier games'],
+  receivedCancelled: ['منه: محتفظ به من حجوزات ملغية', 'of which: kept from cancelled bookings'],
+  refundsTotal: ['مرتجعات (مخصومة من المقبوض)', 'Refunds (already deducted from received)'],
+  moneyIn: ['المقبوض بالتاريخ', 'Money received'],
+  shifts: ['الخزنة والورديات', 'Cash shifts'],
+  receivedOn: ['تاريخ القبض', 'Received on'],
+  receivedAt: ['ساعة القبض', 'Received at'],
+  playDate: ['تاريخ اللعب', 'Game day'],
+  by: ['بواسطة', 'Taken by'],
+  forWhat: ['يخص', 'Belongs to'],
+  bucketPeriod: ['الفترة', 'The period'],
+  bucketAdvance: ['عربون لحجز قادم', 'Advance for a later game'],
+  bucketLate: ['تحصيل لحجز سابق', 'Collected for an earlier game'],
+  bucketCancelled: ['من حجز ملغي', 'From a cancelled booking'],
+  listPrice: ['سعر الحجز', 'List price'],
+  ownerDiscount: ['خصم تتحمله أنت', 'Discount you absorb'],
+  venueGross: ['المستحق قبل العمولة', 'Owed before commission'],
+  closedAt: ['وقت الإقفال', 'Closed at'],
+  drawer: ['الخزنة', 'Drawer'],
+  sharedDrawer: ['خزنة مشتركة', 'Shared drawer'],
+  closedBy: ['أقفلها', 'Closed by'],
+  openingFloat: ['رصيد البداية', 'Opening float'],
+  cashInCol: ['كاش مستلم', 'Cash in'],
+  cashRefunds: ['مرتجع كاش', 'Cash refunds'],
+  cashExpenses: ['مصروفات من الخزنة', 'Paid out of the drawer'],
+  expectedCash: ['المتوقع', 'Expected'],
+  countedCash: ['المعدود', 'Counted'],
+  difference: ['الفرق', 'Difference'],
+  carryOver: ['متروك للوردية التالية', 'Left for next shift'],
+  handedOver: ['مُسلَّم للمالك', 'Handed over'],
+  reviewed: ['مراجَع', 'Reviewed'],
   fromMatchena: ['من حجوزات ماتشنا', 'From Matchena bookings'],
   ownRevenue: ['من حجوزاتك', 'From your own bookings'],
   commission: ['عمولة ماتشنا', 'Matchena commission'],
@@ -53,7 +91,7 @@ const T = {
   status: ['الحالة', 'Status'],
   customer: ['العميل', 'Customer'],
   price: ['السعر', 'Price'],
-  paid: ['المدفوع', 'Paid'],
+  paid: ['المدفوع', 'Received'],
   remaining: ['المتبقي', 'Remaining'],
   method: ['طريقة الدفع', 'Payment method'],
   net: ['الصافي', 'Net'],
@@ -147,6 +185,7 @@ export class ExportService {
         [t('period'), `${from} → ${to}`],
         [t('currency'), s.currency],
         [t('bookingsCount'), totals.bookings],
+        [t('basisPlay'), ''],
         [t('collected'), major(totals.collectedRevenue)],
         [t('fromMatchena'), major(totals.matchenaRevenue)],
         [t('ownRevenue'), major(totals.ownRevenue)],
@@ -157,6 +196,13 @@ export class ExportService {
         [t('outstanding'), major(totals.outstanding)],
         [t('cash'), major(totals.cashCollected)],
         [t('online'), major(totals.onlineCollected)],
+        [t('basisReceived'), ''],
+        [t('received'), major(s.cashbook.received)],
+        [t('receivedForPeriod'), major(s.cashbook.forPeriod)],
+        [t('receivedAdvance'), major(s.cashbook.advance)],
+        [t('receivedLate'), major(s.cashbook.late)],
+        [t('receivedCancelled'), major(s.cashbook.fromCancelled)],
+        [t('refundsTotal'), major(s.cashbook.refunds)],
       ],
     };
 
@@ -165,7 +211,7 @@ export class ExportService {
       include: {
         court: { select: { name: true } },
         user: { select: { name: true } },
-        payments: { where: { status: 'paid' }, select: { amount: true } },
+        payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: { slotStart: 'asc' },
       take: MAX_BOOKING_ROWS,
@@ -175,17 +221,16 @@ export class ExportService {
       columns: [
         { header: t('code'), width: 16 }, { header: t('source'), width: 18 }, { header: t('court'), width: 18 },
         { header: t('date'), width: 12 }, { header: t('time'), width: 8 }, { header: t('minutes'), width: 12 },
-        { header: t('status'), width: 12 }, { header: t('customer'), width: 22 }, { header: t('price'), width: 12 },
-        { header: t('paid'), width: 12 }, { header: t('remaining'), width: 12 }, { header: t('method'), width: 12 },
+        { header: t('status'), width: 12 }, { header: t('customer'), width: 22 },
+        { header: t('listPrice'), width: 12 }, { header: t('ownerDiscount'), width: 14 }, { header: t('venueGross'), width: 16 },
         { header: t('commission'), width: 12 }, { header: t('net'), width: 12 },
+        { header: t('paid'), width: 12 }, { header: t('remaining'), width: 12 }, { header: t('method'), width: 12 },
       ],
       rows: bookingRows.map((b) => {
-        const platform = b.source === 'platform';
         const local = localDateTime(b.slotStart, tz);
-        // What the owner is owed for the slot — never the player-paid total, which includes the service fee.
-        const price = platform ? Math.max(0, b.baseAmount - (b.ownerFundedDiscount ?? 0)) : b.totalAmount;
-        const commission = platform ? (b.commissionAmount ?? 0) : 0;
-        const paid = b.payments.reduce((sum, p) => sum + p.amount, 0);
+        // The same statement the booking sheet shows: price − your discount = owed − commission = what you keep.
+        const { received, refunded } = netOf(b.payments);
+        const st = buildBookingStatement(b, received, refunded);
         return [
           b.code,
           sourceDisplay(b.source, b.sourceKey, b.sourceLabel).label,
@@ -195,12 +240,64 @@ export class ExportService {
           Math.round((b.slotEnd.getTime() - b.slotStart.getTime()) / 60_000),
           b.status,
           b.guestName ?? b.user.name,
-          major(price),
-          platform ? null : major(paid),
-          platform ? null : major(Math.max(0, b.totalAmount - paid)),
+          major(st.listPrice),
+          st.ownerDiscount ? major(st.ownerDiscount) : null,
+          major(st.venueGross),
+          major(st.commission),
+          major(st.ownerNet),
+          major(st.received),
+          major(st.outstanding),
           b.paymentMethod ?? '',
-          major(commission),
-          major(platform ? (b.ownerNetAmount ?? price - commission) : price),
+        ];
+      }),
+    };
+
+    // Money by the day it was received — what actually reached the venue's hands in the period,
+    // each line saying which game it belongs to.
+    const paymentRows = await this.prisma.payment.findMany({
+      where: {
+        status: { in: COUNTED_PAYMENT_STATUSES },
+        createdAt: { gte: range.start, lt: range.end },
+        booking: { venueId },
+        OR: [{ booking: { source: 'manual' } }, { recordedByUserId: { not: null } }],
+      },
+      include: { booking: { select: { code: true, slotStart: true, status: true, guestName: true, source: true, user: { select: { name: true } } } } },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_BOOKING_ROWS,
+    });
+    const takers = await this.prisma.user.findMany({
+      where: { id: { in: [...new Set(paymentRows.map((p) => p.recordedByUserId).filter((x): x is string => !!x))] } },
+      select: { id: true, name: true },
+    });
+    const takerName = new Map(takers.map((u) => [u.id, u.name]));
+    const bucketOf = (p: (typeof paymentRows)[number]) =>
+      p.booking.status === 'cancelled'
+        ? t('bucketCancelled')
+        : p.booking.slotStart >= range.end
+          ? t('bucketAdvance')
+          : p.booking.slotStart < range.start
+            ? t('bucketLate')
+            : t('bucketPeriod');
+    const moneyInSheet: ExportSheet = {
+      name: t('moneyIn'),
+      columns: [
+        { header: t('receivedOn'), width: 12 }, { header: t('receivedAt'), width: 10 }, { header: t('code'), width: 16 },
+        { header: t('playDate'), width: 12 }, { header: t('customer'), width: 22 }, { header: t('method'), width: 12 },
+        { header: t('amount'), width: 12 }, { header: t('by'), width: 16 }, { header: t('forWhat'), width: 24 }, { header: t('note'), width: 24 },
+      ],
+      rows: paymentRows.map((p) => {
+        const at = localDateTime(p.createdAt, tz);
+        return [
+          at.date,
+          at.time,
+          p.booking.code,
+          localDateTime(p.booking.slotStart, tz).date,
+          p.booking.source === 'manual' ? (p.booking.guestName ?? '') : (p.booking.user?.name ?? ''),
+          p.method,
+          major(p.amount),
+          p.recordedByUserId ? (takerName.get(p.recordedByUserId) ?? '') : '',
+          bucketOf(p),
+          p.note ?? '',
         ];
       }),
     };
@@ -208,6 +305,7 @@ export class ExportService {
     const sheets: ExportSheet[] = [
       summarySheet,
       bookingsSheet,
+      moneyInSheet,
       {
         name: t('daily'),
         columns: [{ header: t('date'), width: 14 }, { header: t('bookingsCount'), width: 12 }, { header: t('revenue'), width: 14 }],
@@ -252,6 +350,41 @@ export class ExportService {
         e.recurringMonthly || e.recurringParentId ? t('yes') : '',
       ]),
     });
+
+    const shiftRows = await this.prisma.cashShift.findMany({
+      where: { venueId, closedAt: { gte: range.start, lt: range.end } },
+      orderBy: { closedAt: 'asc' },
+    });
+    if (shiftRows.length) {
+      const people = await this.prisma.user.findMany({
+        where: { id: { in: [...new Set(shiftRows.flatMap((r) => [r.drawerUserId, r.closedByUserId]).filter((x): x is string => !!x))] } },
+        select: { id: true, name: true },
+      });
+      const who = new Map(people.map((u) => [u.id, u.name]));
+      sheets.push({
+        name: t('shifts'),
+        columns: [
+          { header: t('closedAt'), width: 18 }, { header: t('drawer'), width: 16 }, { header: t('closedBy'), width: 16 },
+          { header: t('openingFloat'), width: 12 }, { header: t('cashInCol'), width: 12 }, { header: t('cashRefunds'), width: 12 },
+          { header: t('cashExpenses'), width: 16 }, { header: t('expectedCash'), width: 12 }, { header: t('countedCash'), width: 12 },
+          { header: t('difference'), width: 12 }, { header: t('carryOver'), width: 16 }, { header: t('handedOver'), width: 14 },
+          { header: t('note'), width: 28 }, { header: t('reviewed'), width: 10 },
+        ],
+        rows: shiftRows.map((r) => {
+          const c = localDateTime(r.closedAt, tz);
+          return [
+            `${c.date} ${c.time}`,
+            r.drawerUserId ? (who.get(r.drawerUserId) ?? '') : t('sharedDrawer'),
+            who.get(r.closedByUserId) ?? '',
+            major(r.openingFloat), major(r.cashIn), major(r.cashRefunds), major(r.cashExpenses),
+            major(r.expectedCash), major(r.countedCash), major(r.difference),
+            major(r.carryOver), major(r.countedCash - r.carryOver),
+            r.note ?? '',
+            r.reviewedAt ? t('yes') : '',
+          ];
+        }),
+      });
+    }
 
     if (await this.can(user, 'account.view')) {
       const balance = await this.ledger.getBalance(venueId, s.currency);

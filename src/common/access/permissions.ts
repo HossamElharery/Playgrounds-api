@@ -14,6 +14,7 @@ export const PERMISSION_KEYS = [
   'customers.view',
   'reports.view',
   'expenses.manage',
+  'shifts.review',
   'account.view',
   'account.remit',
   'venue.manage',
@@ -117,6 +118,15 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
     requires: ['reports.view'],
   },
   {
+    key: 'shifts.review',
+    group: 'money',
+    labelAr: 'يراجع الخزنة والورديات',
+    labelEn: 'Review cash drawers & shifts',
+    hintAr: 'يشوف فلوس كل موظف ويقفل خزنة مشتركة أو عن موظف، ويراجع الفروقات ويسترد دفعات الغير.',
+    hintEn: "See everyone's cash, close a shared drawer or close for someone, review differences, refund others' payments.",
+    requires: ['payments.record', 'reports.view'],
+  },
+  {
     key: 'account.view',
     group: 'money',
     labelAr: 'يشوف الحساب مع ماتشنا',
@@ -201,7 +211,7 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
     key: 'accountant',
     labelAr: 'محاسب',
     labelEn: 'Accountant',
-    permissions: ['bookings.view', 'payments.record', 'reports.view', 'expenses.manage', 'account.view', 'account.remit'],
+    permissions: ['bookings.view', 'payments.record', 'reports.view', 'expenses.manage', 'shifts.review', 'account.view', 'account.remit'],
   },
   {
     key: 'supervisor',
@@ -216,6 +226,7 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
       'schedule.manage',
       'customers.view',
       'reports.view',
+      'shifts.review',
     ],
   },
   {

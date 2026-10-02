@@ -53,11 +53,13 @@ function bookingRow(over: Record<string, unknown> = {}) {
     guestPhone: '+201111',
     notes: null,
     checkedInAt: null,
+    commissionBps: null,
     commissionAmount: null,
     ownerNetAmount: null,
+    ownerFundedDiscount: 0,
     court: { name: 'Court 1', sport: { activityKind: 'padel' } },
     user: { id: 'owner-1', name: 'Owner', phone: '+201000000001' },
-    payments: [{ amount: 400 }],
+    payments: [{ id: 'p1', amount: 400, method: 'cash', createdAt: new Date('2026-09-20T09:00:00.000Z'), recordedByUserId: null, reversesPaymentId: null, shiftId: null, note: null }],
     ...over,
   };
 }
@@ -77,8 +79,9 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
     payment: {
       create: jest.fn().mockResolvedValue({}),
       aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
       findFirst: jest.fn(),
-      delete: jest.fn().mockResolvedValue({}),
     },
     calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
     venueBookingSource: { upsert: jest.fn().mockResolvedValue({}) },
@@ -96,6 +99,7 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
       payment: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }) },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
       venueBookingSource: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
@@ -262,7 +266,7 @@ describe('OwnerBookingsService', () => {
 
   it('refuses overpayment on a later manual payment', async () => {
     const { prisma, tx } = makePrisma();
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 400 } });
+    tx.payment.findMany.mockResolvedValue([{ amount: 400 }]);
     try {
       await service(prisma).addManualPayment(owner, 'b1', 50, 'cash');
       throw new Error('expected throw');
@@ -322,29 +326,61 @@ describe('OwnerBookingsService', () => {
     const booking = bookingRow({ paymentStatus: 'pending', payments: [] });
     const { prisma, tx } = makePrisma({ booking });
     prisma.booking.findUnique.mockResolvedValue(booking);
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    tx.payment.findMany.mockResolvedValue([]);
     await service(prisma).addManualPayment(owner, 'b1', 150, 'cash');
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ paymentStatus: 'partial' }) }),
     );
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 150 } });
+    tx.payment.findMany.mockResolvedValue([{ amount: 150 }]);
     await service(prisma).addManualPayment(owner, 'b1', 250, 'instapay');
     expect(tx.booking.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ paymentStatus: 'paid' }) }),
     );
   });
 
-  it('voiding a payment removes that row and re-derives the status from what is left', async () => {
+  it('voiding a payment never deletes it: a negative row answers it and the status is re-derived', async () => {
     const booking = bookingRow({ paymentStatus: 'paid' });
     const { prisma, tx } = makePrisma({ booking });
     prisma.booking.findUnique.mockResolvedValue(booking);
-    tx.payment.findFirst.mockResolvedValue({ id: 'p1', amount: 250 });
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 150 } });
-    await service(prisma).voidManualPayment(owner, 'b1', 'p1');
-    expect(tx.payment.delete).toHaveBeenCalledWith({ where: { id: 'p1' } });
+    tx.payment.findFirst.mockResolvedValue({ id: 'p1', amount: 250, currency: 'EGP', method: 'cash', recordedByUserId: 'owner-1', shiftId: null });
+    tx.payment.findMany.mockResolvedValue([{ amount: 150 }]);
+    await service(prisma).voidManualPayment(owner, 'b1', 'p1', 'العميل ألغى');
+    expect(tx.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: 'b1',
+        amount: -250,
+        status: 'refunded',
+        reversesPaymentId: 'p1',
+        recordedByUserId: 'owner-1',
+        note: 'العميل ألغى',
+      }),
+    });
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { paymentStatus: 'partial' } }),
     );
+  });
+
+  it('a payment cannot be taken back twice', async () => {
+    const booking = bookingRow();
+    const { prisma, tx } = makePrisma({ booking });
+    prisma.booking.findUnique.mockResolvedValue(booking);
+    tx.payment.findFirst.mockResolvedValue({ id: 'p1', amount: 250, shiftId: null, recordedByUserId: 'owner-1' });
+    tx.payment.findUnique.mockResolvedValue({ id: 'r1' });
+    await expect(service(prisma).voidManualPayment(owner, 'b1', 'p1')).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'PAYMENT_ALREADY_REVERSED' }),
+    });
+  });
+
+  it('once the drawer was closed, the correction belongs to whoever hands the money back', async () => {
+    const booking = bookingRow({ paymentStatus: 'paid' });
+    const { prisma, tx } = makePrisma({ booking });
+    prisma.booking.findUnique.mockResolvedValue(booking);
+    tx.payment.findFirst.mockResolvedValue({ id: 'p1', amount: 100, currency: 'EGP', method: 'cash', recordedByUserId: 'staff-9', shiftId: 'shift-1' });
+    tx.payment.findMany.mockResolvedValue([]);
+    await service(prisma).voidManualPayment(owner, 'b1', 'p1');
+    expect(tx.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ recordedByUserId: 'owner-1', reversesPaymentId: 'p1' }),
+    });
   });
 
   it('cannot void a payment that is not on this booking', async () => {
@@ -361,7 +397,7 @@ describe('OwnerBookingsService', () => {
     const booking = bookingRow({ paymentStatus: 'partial' });
     const { prisma, tx } = makePrisma({ booking });
     prisma.booking.findUnique.mockResolvedValue(booking);
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 300 } });
+    tx.payment.findMany.mockResolvedValue([{ amount: 300 }]);
     await expect(
       service(prisma).updateManualBooking(owner, 'b1', { priceAmount: 200 }),
     ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'PRICE_BELOW_PAID' }) });
@@ -371,7 +407,7 @@ describe('OwnerBookingsService', () => {
     const booking = bookingRow({ paymentStatus: 'paid' });
     const { prisma, tx } = makePrisma({ booking });
     prisma.booking.findUnique.mockResolvedValue(booking);
-    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 400 } });
+    tx.payment.findMany.mockResolvedValue([{ amount: 400 }]);
     await service(prisma).updateManualBooking(owner, 'b1', { priceAmount: 500 });
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ paymentStatus: 'partial' }) }),
@@ -454,6 +490,7 @@ describe('phone numbers need customers.view', () => {
     const prisma: any = {
       booking: { findUniqueOrThrow: jest.fn().mockResolvedValue(bookingRow({ guestPhone: '+201111111111' })) },
       staffMember: { findUnique: jest.fn() },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const svc = new OwnerBookingsService(prisma, {} as any, {} as any, {} as any);
     const staff: AuthenticatedUser = { id: 's1', phone: '', name: 'S', roles: ['staff'] };
