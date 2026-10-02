@@ -52,7 +52,14 @@ function build(subs: any[]) {
 describe('SubscriptionsService', () => {
   it('extend: adds the days from the current end, records who took what, and tells the owner', async () => {
     const { svc, tx, notifications } = build([sub({ currentPeriodEnd: at(10) })]);
-    await svc.extend(admin, 'v1', { days: 90, amount: 200000, method: 'instapay', note: 'paid in full' });
+    // `extend` counts from the later of "now" and the current end. Pin the clock to the
+    // fixture's `now`, or this passes only while the real date is before the fixture's end.
+    jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      await svc.extend(admin, 'v1', { days: 90, amount: 200000, method: 'instapay', note: 'paid in full' });
+    } finally {
+      jest.useRealTimers();
+    }
     const update = tx.venueSubscription.update.mock.calls[0][0].data;
     expect(update.currentPeriodEnd.getTime()).toBe(at(100).getTime());
     expect(update.lastNoticeDate).toBeNull();
