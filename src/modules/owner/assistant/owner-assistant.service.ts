@@ -30,7 +30,7 @@ import {
   todayIn,
   courtDetails,
 } from './assistant-reading';
-import { findOwed } from './assistant-attention';
+import { findAllOwed, findOwed, type OwedRow } from './assistant-attention';
 import {
   bi,
   type AssistantAction,
@@ -229,7 +229,7 @@ export class OwnerAssistantService {
         },
         orderBy: { name: 'asc' },
       }),
-      this.openBalanceBookings(venueId, tz, today),
+      this.openBalanceBookings(venueId),
     ]);
     const courts: NluCourtRef[] = courtRows.map((c) => ({
       id: c.id,
@@ -823,35 +823,58 @@ export class OwnerAssistantService {
   ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.view')))
       return this.denied('debts');
-    const rows = await this.openBalanceBookings(venueId, tz, r.date);
-    if (!rows.length) {
+    const { overdue, upcoming } = await findAllOwed(this.prisma, venueId);
+    if (!overdue.length && !upcoming.length) {
       return this.blank(
         'debts',
         bi(
-          'محدش عليه فلوس — كله خالص ✅',
-          'Nobody owes you anything — all settled ✅',
+          'محدش عليه فلوس — كله خالص ✅ (راجعت الحجوزات اللي خلصت واللي جاية).',
+          'Nobody owes you anything — all settled ✅ (finished and upcoming bookings checked).',
         ),
         { confidence: r.confidence },
       );
     }
-    const total = rows.reduce((sum, b) => sum + b.outstanding, 0);
-    const lines = rows
-      .slice(0, 10)
-      .map((b) =>
-        bi(
-          `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).ar} (${b.courtName} ${zonedHhmm(new Date(b.startsAt), tz)})`,
-          `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).en} (${b.courtName} ${zonedHhmm(new Date(b.startsAt), tz)})`,
-        ),
+    const day = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
+    const line = (b: OwedRow) =>
+      bi(
+        `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).ar} (${b.courtName}، ${day(b.slotStart)} ${zonedHhmm(b.slotStart, tz)})`,
+        `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).en} (${b.courtName}, ${day(b.slotStart)} ${zonedHhmm(b.slotStart, tz)})`,
       );
-    const head = bi(
-      `${rows.length} حجز عليهم ${fmt(total, currency).ar}:`,
-      `${rows.length} bookings owe you ${fmt(total, currency).en}:`,
-    );
+    const sum = (rows: OwedRow[]) => rows.reduce((s, b) => s + b.outstanding, 0);
+    const lines: Bi[] = [];
+    if (overdue.length) {
+      lines.push(
+        bi(
+          `💰 ${overdue.length} حجز خلص وعليهم ${fmt(sum(overdue), currency).ar}:`,
+          `💰 ${overdue.length} finished bookings owe ${fmt(sum(overdue), currency).en}:`,
+        ),
+        ...overdue.slice(0, 8).map(line),
+      );
+    }
+    if (upcoming.length) {
+      lines.push(
+        bi(
+          `⏰ ${upcoming.length} حجز جاي وعليهم ${fmt(sum(upcoming), currency).ar}:`,
+          `⏰ ${upcoming.length} upcoming bookings carry ${fmt(sum(upcoming), currency).en}:`,
+        ),
+        ...upcoming.slice(0, 8).map(line),
+      );
+    }
+    const refs = [...overdue, ...upcoming].slice(0, 10).map((b) => ({
+      id: b.id,
+      code: b.code,
+      customerName: b.customerName,
+      courtName: b.courtName,
+      startsAt: b.slotStart.toISOString(),
+      endsAt: b.slotEnd.toISOString(),
+      totalAmount: b.totalAmount,
+      paidAmount: b.paidAmount,
+      outstanding: b.outstanding,
+      currency: b.currency,
+    }));
     return {
-      ...this.blank('debts', joinBi([head, ...lines], '\n'), {
-        confidence: r.confidence,
-      }),
-      bookings: rows.slice(0, 10),
+      ...this.blank('debts', joinBi(lines, '\n'), { confidence: r.confidence }),
+      bookings: refs,
     };
   }
 
@@ -1426,29 +1449,21 @@ export class OwnerAssistantService {
   // ------------------------------------------------------------ helpers ----
 
   /** Manual bookings with money still on them, for the day asked about and the week after it. */
-  private async openBalanceBookings(
-    venueId: string,
-    tz: string,
-    date: string,
-  ): Promise<AssistantBookingRef[]> {
-    const { start } = zonedDayBounds(date, tz);
-    const end = new Date(start.getTime() + 7 * 86_400_000);
-    const rows = await this.prisma.booking.findMany({
-      where: {
-        venueId,
-        source: 'manual',
-        status: { not: 'cancelled' },
-        paymentStatus: { in: ['pending', 'partial'] },
-        slotStart: { gte: start, lt: end },
-      },
-      include: {
-        court: { select: { name: true } },
-        payments: { where: { status: 'paid' }, select: { amount: true } },
-      },
-      orderBy: { slotStart: 'asc' },
-      take: 50,
-    });
-    return rows.map((b) => this.toRef(b));
+  /** Every booking that still owes money — finished and upcoming — so a payment can be matched to an old debt too. */
+  private async openBalanceBookings(venueId: string): Promise<AssistantBookingRef[]> {
+    const { overdue, upcoming } = await findAllOwed(this.prisma, venueId);
+    return [...overdue, ...upcoming].map((b) => ({
+      id: b.id,
+      code: b.code,
+      customerName: b.customerName,
+      courtName: b.courtName,
+      startsAt: b.slotStart.toISOString(),
+      endsAt: b.slotEnd.toISOString(),
+      totalAmount: b.totalAmount,
+      paidAmount: b.paidAmount,
+      outstanding: b.outstanding,
+      currency: b.currency,
+    }));
   }
 
   private toRef(b: {
