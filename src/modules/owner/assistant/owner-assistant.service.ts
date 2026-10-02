@@ -268,7 +268,7 @@ export class OwnerAssistantService {
     }
     if (reading.intent === 'help') return this.blank('help', this.helpText());
 
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     try {
       switch (reading.intent) {
         case 'book':
@@ -1353,7 +1353,7 @@ export class OwnerAssistantService {
       write: false,
     });
     const tz = await this.venueTz(venueId);
-    return this.attention(user, venueId, tz, venue.priceFromCurrency ?? 'EGP');
+    return this.attention(user, venueId, tz, venue.currency);
   }
 
   // ------------------------------------------------------ smart-guard bits ----

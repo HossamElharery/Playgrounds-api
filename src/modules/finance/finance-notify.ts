@@ -1,10 +1,11 @@
 import type { NotificationsService } from '../notifications/notifications.service';
+import { currencyLabel } from '../../common/money/currency-label';
 
 export const MATCHENA_ACCOUNT_LINK = '/owner/earnings?section=matchena-account';
 
 export function formatMoney(amount: number, currency: string, locale: 'en' | 'ar' = 'en'): string {
   const formatted = new Intl.NumberFormat(locale === 'ar' ? 'ar-EG' : 'en-EG').format(amount);
-  return locale === 'ar' ? `${formatted} ${currency}` : `${formatted} ${currency}`;
+  return `${formatted} ${currencyLabel(currency, locale)}`;
 }
 
 export async function notifyFinance(

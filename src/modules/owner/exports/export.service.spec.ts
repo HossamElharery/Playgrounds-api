@@ -22,7 +22,7 @@ const totals = {
 
 function build(perms: string[] = []) {
   const prisma: any = {
-    venue: { findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', priceFromCurrency: 'EGP' })) },
+    venue: { findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', currency: 'EGP' })) },
     staffMember: {
       findUnique: jest.fn(async () => ({ id: 'st', ownerId: 'o1', permissions: perms, venueIds: ['v1'], title: null })),
     },

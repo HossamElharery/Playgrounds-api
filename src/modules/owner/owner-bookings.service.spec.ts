@@ -16,7 +16,7 @@ const venue = {
   id: 'v1',
   ownerId: 'owner-1',
   weeklyHours: null,
-  priceFromCurrency: 'EGP',
+  currency: 'EGP',
   paymentMode: 'at_venue',
 };
 
@@ -83,6 +83,7 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
       findUnique: jest.fn().mockResolvedValue(null),
       findFirst: jest.fn(),
     },
+    venue: { findUnique: jest.fn().mockResolvedValue({ currency: 'EGP' }) },
     calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
     venueBookingSource: { upsert: jest.fn().mockResolvedValue({}) },
     auditLogEntry: { create: jest.fn().mockResolvedValue({}) },
@@ -147,6 +148,7 @@ describe('OwnerBookingsService', () => {
           feeAmount: 0,
           baseAmount: 400,
           totalAmount: 400,
+          currency: 'EGP',
           userId: 'owner-1',
         }),
       }),
@@ -164,6 +166,13 @@ describe('OwnerBookingsService', () => {
       checkedInAt: null,
       money: { ownerNet: 360, total: 400 },
     })).toBe(0);
+  });
+
+  it('books and takes the first payment in the venue\'s own currency, not the column default', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.venue.findUnique.mockResolvedValue({ currency: 'AED' });
+    await service(prisma).createManualBooking(owner, { ...dto, paymentStatus: 'paid' });
+    expect(tx.booking.create.mock.calls[0][0].data.currency).toBe('AED');
   });
 
   it('rejects overlapping slots', async () => {

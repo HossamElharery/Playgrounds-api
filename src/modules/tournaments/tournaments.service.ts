@@ -121,6 +121,10 @@ export class TournamentsService {
         'registrationDeadline must be before startsAt',
       );
     }
+    // A venue's tournament charges in the venue's currency; a platform-wide one defaults to EGP.
+    const venueCurrency = dto.venueId
+      ? (await this.prisma.venue.findUnique({ where: { id: dto.venueId }, select: { currency: true } }))?.currency
+      : undefined;
     return this.prisma.tournament.create({
       data: {
         venueId: dto.venueId,
@@ -129,7 +133,7 @@ export class TournamentsService {
         nameAr: dto.nameAr,
         entryFeeAmount: dto.entryFeeAmount,
         entryFeeCurrency:
-          dto.entryFeeCurrency ?? (dto.entryFeeAmount ? 'EGP' : undefined),
+          venueCurrency ?? dto.entryFeeCurrency ?? (dto.entryFeeAmount ? 'EGP' : undefined),
         maxParticipants: dto.maxParticipants,
         registrationDeadline: new Date(dto.registrationDeadline),
         startsAt: new Date(dto.startsAt),

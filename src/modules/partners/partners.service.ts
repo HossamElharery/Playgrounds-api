@@ -703,9 +703,15 @@ export class PartnersService {
         ? CANCELLATION_PRESETS[payload.cancellationPreset]
         : payload.cancellationPolicy;
 
+    const country = await tx.countryConfig.findUnique({
+      where: { code: countryCode },
+      select: { currency: true },
+    });
+    if (!country) throw new ApiException(HttpStatus.BAD_REQUEST, 'UNKNOWN_COUNTRY', 'Unknown country');
     const venueData = {
       ownerId,
       countryCode,
+      currency: country.currency,
       nameEn: payload.publicNameEn!,
       nameAr: payload.publicNameAr!,
       descriptionEn: payload.descriptionEn,
@@ -796,13 +802,7 @@ export class PartnersService {
         base: draft.basePriceAmount ?? 0,
         peak: draft.peakPriceAmount ?? draft.basePriceAmount ?? 0,
       };
-      const currency =
-        (
-          await tx.countryConfig.findUnique({
-            where: { code: countryCode },
-            select: { currency: true },
-          })
-        )?.currency ?? 'EGP';
+      const currency = country.currency;
 
       const sportId = this.normalizeSportId(draft.sportId);
       const sportCategory = sportId

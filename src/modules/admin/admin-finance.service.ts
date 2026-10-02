@@ -173,7 +173,7 @@ export class AdminFinanceService {
         nameEn: true,
         nameAr: true,
         paymentMode: true,
-        priceFromCurrency: true,
+        currency: true,
         owner: { select: { id: true, name: true } },
       },
     });
@@ -215,7 +215,7 @@ export class AdminFinanceService {
     const lastMap = new Map(last.map((p) => [p.venueId, p._max.createdAt]));
 
     let rows = venues.map((v) => {
-      const currency = v.priceFromCurrency ?? 'EGP';
+      const currency = v.currency;
       const balance = balMap.get(`${v.id}:${currency}`) ?? 0;
       return {
         venueId: v.id,
@@ -276,7 +276,7 @@ export class AdminFinanceService {
   async venueLedger(venueId: string, cursor?: string, limit = 30) {
     await this.requireVenue(venueId);
     const venue = await this.prisma.venue.findUnique({ where: { id: venueId } });
-    const currency = venue?.priceFromCurrency ?? 'EGP';
+    const currency = venue?.currency ?? 'EGP';
     const balance = await this.ledger.getBalance(venueId, currency);
     const page = await this.ledger.listEntries(venueId, { cursor, limit });
     // On later pages the first row is not the newest entry, so its running
@@ -321,7 +321,7 @@ export class AdminFinanceService {
       if (cached) return cached.responseBody;
     }
     const venue = await this.requireVenue(venueId);
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     this.assertCurrency(dto.currency, currency);
     this.assertReceipt(dto.receiptUrl);
 
@@ -396,7 +396,7 @@ export class AdminFinanceService {
 
   async recordRemittance(admin: AuthenticatedUser, venueId: string, dto: AdminPayoutDto) {
     const venue = await this.requireVenue(venueId);
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     this.assertCurrency(dto.currency, currency);
     this.assertReceipt(dto.receiptUrl);
     const result = await this.prisma.$transaction(async (tx) => {
@@ -544,7 +544,7 @@ export class AdminFinanceService {
       throw new BadRequestException('amount must be a non-zero integer');
     }
     const venue = await this.requireVenue(venueId);
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     const entry = await this.prisma.$transaction(async (tx) => {
       const row = await tx.venueLedgerEntry.create({
         data: {

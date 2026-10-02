@@ -342,6 +342,25 @@ export class ManagementService {
       const districtId = data.districtId ?? before.districtId;
       if (!/^[A-Z]{2}$/.test(countryCode))
         throw new BadRequestException('Invalid country code');
+      // The venue's currency follows its country — but never changes under existing money.
+      let nextCurrency: string | undefined;
+      if (countryCode !== before.countryCode) {
+        const country = await tx.countryConfig.findUnique({ where: { code: countryCode } });
+        if (!country?.active) throw new BadRequestException('Unknown or inactive country');
+        if (country.currency !== before.currency) {
+          const hasMoney =
+            (await tx.booking.count({ where: { venueId: id } })) +
+              (await tx.pricingRule.count({ where: { court: { venueId: id } } })) >
+            0;
+          if (hasMoney) {
+            throw new ConflictException({
+              code: 'VENUE_CURRENCY_LOCKED',
+              message: `This venue already has prices or bookings in ${before.currency}; it cannot move to a ${country.currency} country`,
+            });
+          }
+          nextCurrency = country.currency;
+        }
+      }
       if (governorateId) {
         const governorate = await tx.governorate.findUnique({
           where: { id: governorateId },
@@ -405,6 +424,7 @@ export class ManagementService {
         where: { id },
         data: {
           ...data,
+          ...(nextCurrency ? { currency: nextCurrency } : {}),
           ...(weeklyHours ? { weeklyHours: weeklyHours as unknown as Prisma.InputJsonValue } : {}),
           ...(data.lat !== undefined || data.lng !== undefined
             ? {

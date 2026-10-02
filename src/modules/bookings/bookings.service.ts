@@ -166,7 +166,7 @@ export class BookingsService {
         end: end.toISOString(),
         hhmm: zonedHhmm(start, timeZone),
         priceAmount: rule?.priceAmount ?? 0,
-        currency: rule?.currency ?? court.venue.country.currency,
+        currency: court.venue.currency,
         state,
       });
     }
@@ -308,7 +308,7 @@ export class BookingsService {
               feeAmount,
               discountAmount,
               totalAmount,
-              currency: rule.currency ?? court.venue.country.currency,
+              currency: court.venue.currency,
               promoCodeId,
               coinsRedeemed,
               status: 'held',

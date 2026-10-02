@@ -199,6 +199,9 @@ export class OwnerBookingsService {
     },
   ) {
     await this.assertSlotFree(tx, input.courtId, input.venueId, input.slotStart, input.slotEnd);
+    // The booking is written in the venue's own currency — never the column default.
+    const venueRow = await tx.venue.findUnique({ where: { id: input.venueId }, select: { currency: true } });
+    if (!venueRow) throw new NotFoundException('Venue not found');
     let code = generateManualCode();
     for (let i = 0; i < 5; i++) {
       const clash = await tx.booking.findUnique({ where: { code } });
@@ -216,6 +219,7 @@ export class OwnerBookingsService {
         userId: input.userId,
         slotStart: input.slotStart,
         slotEnd: input.slotEnd,
+        currency: venueRow.currency,
         baseAmount: input.priceAmount,
         feeAmount: 0,
         discountAmount: 0,
@@ -896,7 +900,7 @@ export class OwnerBookingsService {
     },
   ) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     if (dto.receiptUrl && !isSafeReceiptUrl(dto.receiptUrl, process.env.S3_PUBLIC_BASE)) {
       throw new BadRequestException('receiptUrl must point to Matchena storage');
     }
@@ -951,7 +955,7 @@ export class OwnerBookingsService {
 
   async getMatchenaAccount(user: AuthenticatedUser, venueId: string) {
     const venue = await assertVenueAccess(this.prisma, user, venueId, { write: false });
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     const [balance, commission, pending, settlements, entries] = await Promise.all([
       this.ledger.getBalance(venueId, currency),
       this.commission.resolveSource(venueId),

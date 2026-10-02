@@ -211,9 +211,9 @@ export class LedgerService {
   ): Promise<{ ok: boolean; balance: number; issues: LedgerIntegrityIssue[] }> {
     const venue = await this.prisma.venue.findUnique({
       where: { id: venueId },
-      select: { id: true, paymentMode: true, priceFromCurrency: true },
+      select: { id: true, paymentMode: true, currency: true },
     });
-    const currency = venue?.priceFromCurrency ?? 'EGP';
+    const currency = venue?.currency ?? 'EGP';
     const issues: LedgerIntegrityIssue[] = [];
     const bookings = await this.prisma.booking.findMany({
       where: { venueId, source: 'platform' },

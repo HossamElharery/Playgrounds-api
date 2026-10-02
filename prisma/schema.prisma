@@ -512,6 +512,8 @@ model Venue {
   owner                    User             @relation("VenueOwner", fields: [ownerId], references: [id])
   countryCode              String           @default("EG")
   country                  CountryConfig    @relation(fields: [countryCode], references: [code])
+  /// The venue's one currency (copied from its country). Every price, booking, payment, shift and report of the venue uses it.
+  currency                 String           @default("EGP")
   nameEn                   String
   nameAr                   String
   descriptionEn            String?          @db.Text

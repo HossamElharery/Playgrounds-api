@@ -37,6 +37,7 @@ export interface Tally {
 interface PaymentRow {
   id: string;
   amount: number;
+  currency: string;
   method: string;
   createdAt: Date;
   recordedByUserId: string | null;
@@ -44,8 +45,14 @@ interface PaymentRow {
 interface ExpenseRow {
   id: string;
   amount: number;
+  currency: string;
   createdAt: Date;
   createdById: string | null;
+}
+
+/** Rows whose currency is not the venue's — a drawer mixing currencies cannot be counted. Pure. */
+export function foreignCurrencyRows(currency: string, ...groups: Array<Array<{ id: string; currency: string }>>) {
+  return groups.flat().filter((r) => r.currency !== currency);
 }
 
 /** Adds the movements up: per method, plus the cash arithmetic the shift close is built on. Pure. */
@@ -121,7 +128,7 @@ export class CashService {
           recordedByUserId: userIds ? { in: userIds } : { not: null },
           booking: { venueId },
         },
-        select: { id: true, amount: true, method: true, createdAt: true, recordedByUserId: true },
+        select: { id: true, amount: true, currency: true, method: true, createdAt: true, recordedByUserId: true },
         orderBy: { createdAt: 'asc' },
       }),
       db.venueExpense.findMany({
@@ -131,7 +138,7 @@ export class CashService {
           shiftId: null,
           ...(userIds ? { createdById: { in: userIds } } : {}),
         },
-        select: { id: true, amount: true, createdAt: true, createdById: true },
+        select: { id: true, amount: true, currency: true, createdAt: true, createdById: true },
         orderBy: { createdAt: 'asc' },
       }),
     ]);
@@ -171,7 +178,7 @@ export class CashService {
   async drawer(user: AuthenticatedUser, venueId: string) {
     const venue = await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const reviewer = await this.canReview(user);
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
 
     const mine = await this.movements(this.prisma, venueId, [user.id]);
     const myFloat = await this.suggestedFloat(this.prisma, venueId, user.id);
@@ -183,10 +190,14 @@ export class CashService {
       mine: { ...this.toTallyDto(tally(mine.payments, mine.expenses), myFloat.float), lastClosedAt: myFloat.lastClosedAt?.toISOString() ?? null },
       people: [] as unknown[],
       shared: null as unknown,
+      mixedCurrencyCount: 0,
     };
 
+    const everything = reviewer ? await this.movements(this.prisma, venueId, null) : mine;
+    result.mixedCurrencyCount = foreignCurrencyRows(currency, everything.payments, everything.expenses).length;
+
     if (reviewer) {
-      const all = await this.movements(this.prisma, venueId, null);
+      const all = everything;
       const byPerson = new Map<string, { payments: PaymentRow[]; expenses: ExpenseRow[] }>();
       const slot = (id: string) => byPerson.get(id) ?? byPerson.set(id, { payments: [], expenses: [] }).get(id)!;
       for (const p of all.payments) if (p.recordedByUserId) slot(p.recordedByUserId).payments.push(p);
@@ -236,11 +247,19 @@ export class CashService {
       drawerUserId = null;
       userIds = null;
     }
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
 
     const shift = await this.prisma.$transaction(
       async (tx) => {
         const { payments, expenses } = await this.movements(tx, dto.venueId, userIds);
+        const foreign = foreignCurrencyRows(currency, payments, expenses);
+        if (foreign.length) {
+          throw new ApiException(
+            HttpStatus.CONFLICT,
+            'MIXED_CURRENCY',
+            `${foreign.length} movement(s) in this drawer are not in ${currency}. Fix them before closing the shift.`,
+          );
+        }
         const t = tally(payments, expenses);
         if (t.count === 0) {
           throw new ApiException(HttpStatus.CONFLICT, 'NOTHING_TO_CLOSE', 'There is nothing in this drawer to close');

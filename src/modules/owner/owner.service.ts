@@ -619,7 +619,7 @@ export class OwnerService {
     const commissionBps = commission?.percentageBps ?? 500;
 
     return {
-      currency: bookings[0]?.currency ?? venue.priceFromCurrency,
+      currency: bookings[0]?.currency ?? venue.currency,
       paidBookings: bookings.length,
       revenueByDay: byDay,
       revenueByCourt: byCourt,

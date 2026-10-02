@@ -75,7 +75,7 @@ describe('owner mutating routes are admin-read-only', () => {
 
   it('admin cannot create a manual booking or remittance', async () => {
     const prisma = {
-      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner-1', weeklyHours: null, priceFromCurrency: 'EGP' }) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner-1', weeklyHours: null, currency: 'EGP' }) },
       court: { findUnique: jest.fn() },
       booking: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
       $transaction: jest.fn(),

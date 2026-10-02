@@ -3,12 +3,13 @@ import type { AuthenticatedUser } from '../../../common/types/authenticated-user
 
 const owner: AuthenticatedUser = { id: 'owner-1', phone: '', name: 'المالك', roles: ['owner'] };
 const staff: AuthenticatedUser = { id: 'staff-1', phone: '', name: 'أحمد', roles: ['staff'] };
-const venue = { id: 'v1', ownerId: 'owner-1', nameAr: 'ملعب', nameEn: 'Venue', priceFromCurrency: 'EGP' };
+const venue = { id: 'v1', ownerId: 'owner-1', nameAr: 'ملعب', nameEn: 'Venue', currency: 'EGP' };
 
 const at = (h: number) => new Date(`2026-10-02T${String(h).padStart(2, '0')}:00:00.000Z`);
 const pay = (id: string, amount: number, method = 'cash', by = 'staff-1', h = 10) => ({
   id,
   amount,
+  currency: 'EGP',
   method,
   createdAt: at(h),
   recordedByUserId: by,
@@ -18,7 +19,7 @@ describe('tally / reconcile (pure)', () => {
   it('adds each method up and keeps refunds and drawer expenses out of the cash in', () => {
     const t = tally(
       [pay('p1', 300), pay('p2', 100, 'instapay'), pay('p3', -50), pay('p4', 200, 'cash', 'staff-1', 9)],
-      [{ id: 'e1', amount: 40, createdAt: at(11), createdById: 'staff-1' }],
+      [{ id: 'e1', amount: 40, currency: 'EGP', createdAt: at(11), createdById: 'staff-1' }],
     );
     expect(t.cashIn).toBe(500);
     expect(t.cashRefunds).toBe(50);
@@ -97,11 +98,20 @@ describe('CashService.closeShift', () => {
   });
 
   it('subtracts a cash expense paid out of the drawer', async () => {
-    const { service } = setup({ expenses: [{ id: 'e1', amount: 50, createdAt: at(11), createdById: 'staff-1' }] });
+    const { service } = setup({ expenses: [{ id: 'e1', amount: 50, currency: 'EGP', createdAt: at(11), createdById: 'staff-1' }] });
     const shift = await service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 400 });
     expect(shift.cashExpenses).toBe(50);
     expect(shift.expectedCash).toBe(400);
     expect(shift.difference).toBe(0);
+  });
+
+  it('refuses to close a drawer that holds money in another currency than the venue\'s', async () => {
+    const mixed = { ...pay('p2', 150), currency: 'AED' };
+    const { service, tx } = setup({ payments: [pay('p1', 300), mixed] });
+    await expect(service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 450 })).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MIXED_CURRENCY' }),
+    });
+    expect(tx.cashShift.create).not.toHaveBeenCalled();
   });
 
   it('refuses to close an empty drawer', async () => {

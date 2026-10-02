@@ -19,6 +19,7 @@ import {
   haversineKm,
   toSearchBoundary,
 } from '../../common/utils/geo.util';
+import { assertVenueCurrency } from '../../common/money/venue-currency';
 import { normalizeCountryCode } from '../../common/geo/country.util';
 import { zonedWallTimeToUtc } from '../../common/utils/timezone.util';
 import { buildPagination } from '../../common/dto/page-query.dto';
@@ -82,6 +83,7 @@ export class VenuesService {
         ownerId,
         slug,
         countryCode,
+        currency: country.currency,
         nameEn: dto.nameEn,
         nameAr: dto.nameAr,
         descriptionEn: dto.descriptionEn,
@@ -481,15 +483,15 @@ export class VenuesService {
       where: { court: { venueId }, kind: { not: 'discount' } },
       _min: { priceAmount: true },
     });
-    const sample = await this.prisma.pricingRule.findFirst({
-      where: { court: { venueId } },
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: venueId },
       select: { currency: true },
     });
     await this.prisma.venue.update({
       where: { id: venueId },
       data: {
         priceFromAmount: agg._min.priceAmount,
-        priceFromCurrency: sample?.currency ?? null,
+        priceFromCurrency: agg._min.priceAmount === null ? null : venue?.currency ?? null,
       },
     });
   }
@@ -552,16 +554,8 @@ export class VenuesService {
 
   async searchExplore(query: SearchVenuesDto) {
     const include = (query.include ?? 'pins,cards,count').split(',');
-    const { where, district, center, radiusKm, resolvedCountry } =
+    const { where, district, center, radiusKm } =
       await this.resolveSearchScope(query);
-
-    const country = resolvedCountry
-      ? await this.prisma.countryConfig.findUnique({
-          where: { code: resolvedCountry },
-          select: { currency: true },
-        })
-      : null;
-    const fallbackCurrency = country?.currency ?? 'EGP';
 
     const page = query.page ?? 1;
     const pageSize = Math.min(query.pageSize ?? query.perPage ?? 20, 50);
@@ -576,7 +570,7 @@ export class VenuesService {
       lat: true,
       lng: true,
       priceFromAmount: true,
-      priceFromCurrency: true,
+      currency: true,
       ratingAvg: true,
       instantBook: true,
       sports: { select: { sport: { select: { slug: true } } } },
@@ -588,7 +582,7 @@ export class VenuesService {
       lat: number;
       lng: number;
       priceFromAmount: number | null;
-      priceFromCurrency: string | null;
+      currency: string;
       ratingAvg: number;
       instantBook: boolean;
       sports: { sport: { slug: string } }[];
@@ -629,7 +623,7 @@ export class VenuesService {
       lng: v.lng,
       priceFrom: {
         amount: v.priceFromAmount ?? 0,
-        currency: v.priceFromCurrency ?? fallbackCurrency,
+        currency: v.currency,
       },
       sportIds: v.sports.map((s) => s.sport.slug),
       availableTonight: v.instantBook,
@@ -701,7 +695,7 @@ export class VenuesService {
           sportIds: v.sports.map((s) => s.sport.slug),
           priceFrom: {
             amount: v.priceFromAmount ?? 0,
-            currency: v.priceFromCurrency ?? fallbackCurrency,
+            currency: v.currency,
           },
           availableTonight: v.instantBook,
           hasOffers: v.promoCodes.length > 0,
@@ -797,11 +791,12 @@ export class VenuesService {
     if (!court) throw new NotFoundException('Court not found');
     if (!isPrivileged && court.venue.ownerId !== ownerId)
       throw new ForbiddenException('Not your venue');
+    assertVenueCurrency(court.venue.currency, dto.currency);
     const created = await this.prisma.pricingRule.create({
       data: {
         courtId,
         ...dto,
-        currency: dto.currency ?? court.venue.country.currency,
+        currency: court.venue.currency,
       },
     });
     await this.refreshVenuePriceFrom(court.venueId);
@@ -821,9 +816,10 @@ export class VenuesService {
     if (!rule) throw new NotFoundException('Pricing rule not found');
     if (!isPrivileged && rule.court.venue.ownerId !== ownerId)
       throw new ForbiddenException('Not your venue');
+    assertVenueCurrency(rule.court.venue.currency, dto.currency);
     const updated = await this.prisma.pricingRule.update({
       where: { id: ruleId },
-      data: dto,
+      data: { ...dto, currency: rule.court.venue.currency },
     });
     await this.refreshVenuePriceFrom(rule.court.venueId);
     return updated;

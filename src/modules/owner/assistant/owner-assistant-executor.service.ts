@@ -107,7 +107,7 @@ export class OwnerAssistantExecutorService {
         `actions must contain 1-${MAX_ACTIONS} items`,
       );
     }
-    const currency = venue.priceFromCurrency ?? 'EGP';
+    const currency = venue.currency;
     const done: string[] = [];
     const lines: Bi[] = [];
     // What it would take to put each write back, built from the rows as they

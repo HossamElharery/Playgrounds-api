@@ -34,7 +34,7 @@ const reading = (over: Partial<AssistantReading> = {}): AssistantReading => ({
 
 function buildAssistant(read: AssistantReading | null) {
   const prisma = {
-    venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', nameEn: 'Neon', priceFromCurrency: 'EGP', country: { timezone: 'Africa/Cairo' } }) },
+    venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', nameEn: 'Neon', currency: 'EGP', country: { timezone: 'Africa/Cairo' } }) },
     court: { findMany: jest.fn().mockResolvedValue([]) },
     booking: { findMany: jest.fn().mockResolvedValue([]) },
     calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
@@ -79,7 +79,7 @@ describe('the permanent transcript of owner ↔ assistant', () => {
 describe('what the assistant did after Confirm and Undo is on the record too', () => {
   function buildExecutor() {
     const prisma = {
-      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', priceFromCurrency: 'EGP' }) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', currency: 'EGP' }) },
       assistantMessage: { create: jest.fn().mockResolvedValue({ id: 'undo-1' }) },
     };
     const expenses = { create: jest.fn().mockResolvedValue({ id: 'e1' }) };

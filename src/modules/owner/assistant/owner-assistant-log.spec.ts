@@ -33,7 +33,7 @@ const reading = (over: Partial<AssistantReading> = {}): AssistantReading => ({
 
 function build(opts: { read?: AssistantReading | null; quota?: unknown; enabled?: boolean } = {}) {
   const prisma = {
-    venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', nameEn: 'Neon', priceFromCurrency: 'EGP', country: { timezone: 'Africa/Cairo' } }) },
+    venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', nameEn: 'Neon', currency: 'EGP', country: { timezone: 'Africa/Cairo' } }) },
     court: { findMany: jest.fn().mockResolvedValue([]) },
     booking: { findMany: jest.fn().mockResolvedValue([]) },
     calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
@@ -71,7 +71,7 @@ describe('owner assistant telemetry', () => {
   it('uses the admin-set per-day and per-minute allowance', async () => {
     const quota = { take: jest.fn().mockResolvedValue({ ok: true }) };
     const settings = { number: jest.fn().mockImplementation((k: string) => (k === 'ownerPerDay' ? 123 : 7)) };
-    const prisma = { venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', priceFromCurrency: 'EGP', country: { timezone: 'Africa/Cairo' } }) }, court: { findMany: jest.fn().mockResolvedValue([]) }, booking: { findMany: jest.fn().mockResolvedValue([]) } };
+    const prisma = { venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', currency: 'EGP', country: { timezone: 'Africa/Cairo' } }) }, court: { findMany: jest.fn().mockResolvedValue([]) }, booking: { findMany: jest.fn().mockResolvedValue([]) } };
     const nlu = { enabled: true, read: jest.fn().mockResolvedValue(reading({ intent: 'unknown' })) };
     const service = new OwnerAssistantService(prisma as never, nlu as never, {} as never, {} as never, {} as never, quota as never, settings as never);
     await service.ask(user, 'v1', 'إيه الحجوزات؟');

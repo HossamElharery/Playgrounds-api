@@ -45,7 +45,7 @@ function build(conflict: 'SLOT_BLOCKED' | 'SLOT_ALREADY_HELD' | null, read: Assi
         ownerId: 'u1',
         nameAr: 'نيون',
         nameEn: 'Neon',
-        priceFromCurrency: 'EGP',
+        currency: 'EGP',
         country: { timezone: 'Africa/Cairo' },
       }),
     },

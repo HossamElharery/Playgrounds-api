@@ -34,7 +34,7 @@ describe('ledger integrity after a 30-event script', () => {
     expect(desired.every((d) => d === 360)).toBe(true);
 
     const prisma = {
-      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', paymentMode: 'online', priceFromCurrency: 'EGP' }) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', paymentMode: 'online', currency: 'EGP' }) },
       booking: { findMany: jest.fn().mockResolvedValue(events) },
       venueLedgerEntry: {
         aggregate: jest.fn().mockImplementation(async ({ where }: { where: { bookingId?: string; kind?: { in?: string[] } } }) => {

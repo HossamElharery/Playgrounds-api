@@ -23,7 +23,7 @@ function build() {
   let n = 0;
   const prisma: any = {
     venue: {
-      findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', priceFromCurrency: 'EGP', country: { timezone: 'Africa/Cairo' } })),
+      findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', currency: 'EGP', country: { timezone: 'Africa/Cairo' } })),
     },
     venueExpense: {
       create: jest.fn(async ({ data }: any) => { const r = { id: `e${++n}`, recurringParentId: null, recurringUntil: null, categoryLabel: null, note: null, createdAt: new Date(), ...data }; rows.push(r); return r; }),

@@ -223,7 +223,7 @@ describe('LedgerService.verifyLedgerIntegrity', () => {
       { bookingId: null, kind: 'remittance_from_owner', amount: 50, venueId: 'v1', currency: 'EGP' },
     ];
     const prisma = {
-      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', paymentMode: 'at_venue', priceFromCurrency: 'EGP' }) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', paymentMode: 'at_venue', currency: 'EGP' }) },
       booking: { findMany: jest.fn().mockResolvedValue(bookings) },
       venueLedgerEntry: {
         aggregate: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {

@@ -333,7 +333,7 @@ export class BundlesService {
       discountAmount,
       feeAmount,
       totalAmount,
-      currency: lines[0]?.currency ?? bundle.venue.country.currency,
+      currency: bundle.venue.currency,
     };
   }
 }

@@ -136,7 +136,7 @@ describe('CSV export', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'v1',
           ownerId: 'owner-1',
-          priceFromCurrency: 'EGP',
+          currency: 'EGP',
           weeklyHours: null,
           paymentMode: 'at_venue',
           country: { timezone: 'Africa/Cairo' },

@@ -14,7 +14,7 @@ const venue = {
   id: 'v1',
   ownerId: 'owner-1',
   paymentMode: 'at_venue',
-  priceFromCurrency: 'EGP',
+  currency: 'EGP',
   paymentModeChangedAt: null,
   nameEn: 'Court',
   nameAr: 'ملعب',

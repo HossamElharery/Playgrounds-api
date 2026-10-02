@@ -33,7 +33,7 @@ function build(opts: { rules?: any[]; approvedAt?: Date; extraBookings?: any[]; 
     venue: {
       findUnique: jest.fn().mockResolvedValue({
         id: 'v1', ownerId: 'owner-1', weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '10:00', close: '22:00' }])),
-        approvedAt: opts.approvedAt ?? new Date('2026-09-01T00:00:00Z'), createdAt: new Date('2026-08-01T00:00:00Z'), priceFromCurrency: 'EGP',
+        approvedAt: opts.approvedAt ?? new Date('2026-09-01T00:00:00Z'), createdAt: new Date('2026-08-01T00:00:00Z'), currency: 'EGP',
         country: { timezone: 'Africa/Cairo' },
         courts: [{ id: 'c1', name: 'Court 1', sport: { activityKind: 'field-sport' }, pricingRules: opts.rules ?? [rule()] }],
       }),

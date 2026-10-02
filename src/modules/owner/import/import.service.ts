@@ -375,7 +375,7 @@ export class ImportService {
       mapping,
       sample: table.rows.slice(dataStart, dataStart + 4),
       courts: courts.map((c) => ({ id: c.id, name: c.name })),
-      currency: venue.priceFromCurrency ?? 'EGP',
+      currency: venue.currency,
       summary,
       rows,
       bookingsByRow,

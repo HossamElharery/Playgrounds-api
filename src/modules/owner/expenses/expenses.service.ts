@@ -58,7 +58,7 @@ export class ExpensesService {
         category: dto.category,
         categoryLabel: dto.category === 'other' ? dto.categoryLabel!.trim() : null,
         amount: dto.amount,
-        currency: venue.priceFromCurrency ?? 'EGP',
+        currency: venue.currency,
         incurredOn: dto.incurredOn,
         note: dto.note?.trim() || null,
         recurringMonthly: !!dto.recurringMonthly,

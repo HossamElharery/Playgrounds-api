@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { currencyLabel } from '../../../common/money/currency-label';
 import { ConfigService } from '@nestjs/config';
 import type { AiQuestionOutcome } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -833,7 +834,7 @@ interface Base {
 }
 
 function currencyAr(code: string): string {
-  return code === 'EGP' ? 'جنيه' : code;
+  return currencyLabel(code, 'ar', true);
 }
 
 function relaxedWords(relaxed: CaptainReply['relaxed'], lang: 'ar' | 'en'): string {

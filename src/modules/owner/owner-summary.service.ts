@@ -355,7 +355,7 @@ export class OwnerSummaryService {
 
     return {
       range: { from: range.from, to: range.to, timezone: tz, key: range.range },
-      currency: venue.priceFromCurrency ?? 'EGP',
+      currency: venue.currency,
       totals: {
         bookings: totalsRow.bookings,
         collectedRevenue,

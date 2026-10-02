@@ -1,4 +1,5 @@
 import { bi, type AssistantIssue, type Bi } from './assistant.types';
+import { currencyLabel } from '../../../common/money/currency-label';
 
 /** Minor units in, "٢٠٠ ج.م" / "200 EGP" out — one place, so no screen invents its own rounding. */
 export function fmtMoney(minor: number, currency: string): Bi {
@@ -6,8 +7,8 @@ export function fmtMoney(minor: number, currency: string): Bi {
     maximumFractionDigits: 2,
   }).format(minor / 100);
   return bi(
-    `${major} ${currency === 'EGP' ? 'ج.م' : currency}`,
-    `${major} ${currency}`,
+    `${major} ${currencyLabel(currency, 'ar')}`,
+    `${major} ${currencyLabel(currency, 'en')}`,
   );
 }
 

@@ -9,7 +9,7 @@ function build(opts: { row?: Record<string, unknown> | null; claim?: number } = 
       findUnique: jest.fn().mockResolvedValue({
         id: 'v1',
         ownerId: 'u1',
-        priceFromCurrency: 'EGP',
+        currency: 'EGP',
       }),
     },
     payment: {

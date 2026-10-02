@@ -51,7 +51,7 @@ interface Ctx {
     weeklyHours: WeeklyHours | null;
     approvedAt: Date | null;
     createdAt: Date;
-    priceFromCurrency: string | null;
+    currency: string;
   };
   timeZone: string;
   courts: {
@@ -92,7 +92,7 @@ export class InsightsService {
     const startDate = [addDays(today, -weeks * 7), localDate(dataSince, ctx.timeZone)].sort().pop()!;
     const dates = startDate < today ? dateRange(startDate, addDays(today, -1)) : [];
     const result = await this.grid(ctx, dates);
-    const currency = ctx.venue.priceFromCurrency ?? 'EGP';
+    const currency = ctx.venue.currency;
 
     const courts = ctx.courts.map((court) => {
       const cells: (number | null)[][] = [];
@@ -462,7 +462,7 @@ export class InsightsService {
         weeklyHours: true,
         approvedAt: true,
         createdAt: true,
-        priceFromCurrency: true,
+        currency: true,
         country: { select: { timezone: true } },
         courts: {
           select: {
@@ -482,7 +482,7 @@ export class InsightsService {
         weeklyHours: (venue.weeklyHours as WeeklyHours | null) ?? null,
         approvedAt: venue.approvedAt,
         createdAt: venue.createdAt,
-        priceFromCurrency: venue.priceFromCurrency,
+        currency: venue.currency,
       },
       timeZone: venue.country?.timezone ?? 'Africa/Cairo',
       courts: venue.courts.map((c) => ({

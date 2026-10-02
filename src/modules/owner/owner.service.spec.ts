@@ -7,7 +7,7 @@ describe('Owner dashboard integrity', () => {
   const owner = { id: 'owner', phone: '', name: 'Owner', roles: ['owner'] as UserRole[] };
   beforeEach(() => {
     db = {
-      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner', priceFromCurrency: 'EGP' }) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner', currency: 'EGP' }) },
       booking: { findMany: jest.fn().mockResolvedValue([]) },
       commissionSetting: { findUnique: jest.fn().mockResolvedValue({ percentageBps: 750 }) },
       staffInvite: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
