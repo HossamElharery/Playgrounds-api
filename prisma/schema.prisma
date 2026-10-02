@@ -2616,3 +2616,213 @@ model MorphRoll {
   @@index([userId, createdAt])
   @@index([createdAt])
 }
+
+// ============================================================
+// AI admin: durable usage, assistant questions, editable knowledge
+// ============================================================
+
+enum AiSurface {
+  captain
+  smart_search
+}
+
+enum AiAskerKind {
+  guest
+  player
+}
+
+enum AiQuestionOutcome {
+  answered_fact
+  answered_faq
+  venues
+  no_results
+  bookings
+  nav
+  smalltalk
+  unanswered
+  clarify
+  limited
+  unavailable
+  blocked
+}
+
+enum AiQuestionStatus {
+  new
+  reviewed
+  resolved
+  ignored
+}
+
+enum AiFeedback {
+  up
+  down
+}
+
+enum AssistantKnowledgeFlag {
+  morphs
+  movement
+  ball
+  kiosk
+}
+
+/// One row per (UTC day, audience, route): what the AI cost and how it behaved.
+/// Written in batches from memory (deltas added with ON CONFLICT), read at boot
+/// so the daily budget survives a restart.
+model AiCallDaily {
+  day           DateTime @db.Date
+  /// owner | public
+  profile       String   @db.VarChar(16)
+  /// openrouter | gemini
+  provider      String   @db.VarChar(24)
+  model         String   @db.VarChar(120)
+  calls         Int      @default(0)
+  failures      Int      @default(0)
+  /// Calls answered by a route that was not the first choice of the chain.
+  fallbackCalls Int      @default(0)
+  /// Millionths of a US dollar.
+  costMicros    Int      @default(0)
+  totalMs       Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@id([day, profile, provider, model])
+  @@index([day])
+}
+
+/// Small named counters per UTC day: per-identity message quotas
+/// (`scope` = quota:captain, `key` = a hashed ip/device or a user id) and
+/// platform stats (`scope` = stat, `key` = block:minute:guest, keyword_fallback:public …).
+model AiCounterDaily {
+  day       DateTime @db.Date
+  scope     String   @db.VarChar(40)
+  key       String   @db.VarChar(80)
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@id([day, scope, key])
+  @@index([day, scope, count])
+}
+
+/// What players and visitors asked Captain. Text is stored redacted (long digit
+/// runs and emails removed), visible to admins only, and purged after the
+/// retention window. Owner-assistant messages are never stored here.
+model AiQuestionLog {
+  id                  String            @id @default(uuid())
+  createdAt           DateTime          @default(now())
+  surface             AiSurface         @default(captain)
+  userKind            AiAskerKind
+  textRedacted        String            @db.VarChar(400)
+  lang                String?           @db.VarChar(2)
+  intent              String?           @db.VarChar(40)
+  outcome             AiQuestionOutcome
+  /// Why a question was limited or blocked: minute, day, budget, spam, noise, guests_off, challenge.
+  detail              String?           @db.VarChar(60)
+  factIds             String[]          @default([])
+  /// Small summary of what the model understood (intent + filters), no free text.
+  reading             Json?
+  /// null = no model answered (keyword fallback or refused before the model).
+  model               String?           @db.VarChar(120)
+  ms                  Int               @default(0)
+  costMicros          Int               @default(0)
+  /// Short salted hash of the device/user so repeat askers can be spotted without storing who they are.
+  askerRef            String?           @db.VarChar(16)
+  feedback            AiFeedback?
+  feedbackAt          DateTime?
+  status              AiQuestionStatus  @default(new)
+  resolvedNote        String?           @db.Text
+  resolvedAt          DateTime?
+  resolvedById        String?
+  resolvedKnowledgeId String?           @db.VarChar(60)
+  /// Result of re-asking the question after the answer was published.
+  verifiedOk          Boolean?
+
+  @@index([createdAt])
+  @@index([outcome, status])
+  @@index([feedback, status])
+}
+
+/// Owner assistant telemetry WITHOUT any message text: customers' names and
+/// amounts live in those sentences, so only intent, outcome, model, time, cost.
+model AiOwnerEventLog {
+  id         String   @id @default(uuid())
+  createdAt  DateTime @default(now())
+  venueId    String?
+  userId     String?
+  /// ask | applied | undone
+  event      String   @db.VarChar(16)
+  intent     String?  @db.VarChar(40)
+  /// planned | clarify | denied | unavailable | limited | error | applied | failed
+  outcome    String   @db.VarChar(24)
+  /// Controlled vocabulary only (e.g. an error class), never user text.
+  detail     String?  @db.VarChar(60)
+  confidence Float?
+  model      String?  @db.VarChar(120)
+  ms         Int      @default(0)
+  costMicros Int      @default(0)
+
+  @@index([createdAt])
+  @@index([venueId, createdAt])
+  @@index([outcome, createdAt])
+}
+
+/// What Captain may tell a player about Matchena. `ar`/`en` are shown verbatim;
+/// the model only picks an entry by `id` using `topicAr`/`topicEn`.
+model AssistantKnowledge {
+  id         String                  @id @db.VarChar(60)
+  topicAr    String                  @db.VarChar(200)
+  topicEn    String                  @db.VarChar(200)
+  ar         String                  @db.Text
+  en         String                  @db.Text
+  /// A named destination (explore, help, login …) or an in-app path.
+  ctaTarget  String?                 @db.VarChar(100)
+  ctaLabelAr String?                 @db.VarChar(80)
+  ctaLabelEn String?                 @db.VarChar(80)
+  flag       AssistantKnowledgeFlag?
+  active     Boolean                 @default(true)
+  position   Int                     @default(0)
+  updatedById String?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@index([active, position])
+}
+
+/// Every change to a knowledge entry, kept after the entry is deleted so it can be restored.
+model AssistantKnowledgeRevision {
+  id          String   @id @default(uuid())
+  knowledgeId String   @db.VarChar(60)
+  /// create | update | delete | restore | reset | seed
+  action      String   @db.VarChar(16)
+  snapshot    Json
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  @@index([knowledgeId, createdAt])
+}
+
+/// Admin-editable AI limits and budgets. A value here beats the environment variable of the same meaning.
+model AiSetting {
+  key         String   @id @db.VarChar(60)
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+/// A saved quality run: the `ai:eval` cases or a shadow comparison.
+model AiEvalRun {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  /// captain | owner | shadow
+  kind          String   @db.VarChar(16)
+  models        String[]
+  /// admin | cli
+  source        String   @db.VarChar(16)
+  passed        Int      @default(0)
+  total         Int      @default(0)
+  costMicros    Int      @default(0)
+  durationMs    Int      @default(0)
+  summary       Json
+  triggeredById String?
+
+  @@index([createdAt])
+  @@index([kind, createdAt])
+}
