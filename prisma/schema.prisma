@@ -1825,6 +1825,41 @@ model AssistantMessage {
   @@index([ownerId, createdAt])
 }
 
+/// Append-only record of what an owner and the assistant said to each other, written by the
+/// server itself so it never depends on the app remembering to post a line. There are no
+/// foreign keys on purpose: deleting a venue or an account must not erase what the admin
+/// needs to review. Nothing in the app edits or deletes these rows.
+model AssistantTranscript {
+  id         String          @id @default(uuid())
+  createdAt  DateTime        @default(now())
+  ownerId    String
+  /// Names as they were when the line was written.
+  ownerName  String?
+  venueId    String?
+  venueName  String?
+  sender     AssistantSender
+  /// chat | action | undo | schedule
+  kind       String          @default("chat") @db.VarChar(12)
+  text       String          @db.Text
+  intent     String?         @db.VarChar(40)
+  /// planned | clarify | denied | unavailable | limited | error | applied | failed | undone
+  outcome    String?         @db.VarChar(24)
+  confidence Float?
+  model      String?         @db.VarChar(120)
+  /// What stands out about the exchange: unrecognized, low_confidence, blocked, denied, limited, unavailable, failed, long, noise, repeated.
+  flags      String[]        @default([])
+  /// What the assistant proposed or did (the confirmed actions), for the admin to read.
+  meta       Json?
+  /// server = written by the API itself; client = a line the app posted that the server did not see.
+  source     String          @default("server") @db.VarChar(8)
+  /// A server line the app has since posted its own copy of, so that copy is not stored twice.
+  clientCopy Boolean         @default(false)
+
+  @@index([ownerId, createdAt])
+  @@index([venueId, createdAt])
+  @@index([createdAt])
+}
+
 model PayoutMethod {
   id               String           @id @default(uuid())
   ownerId          String
@@ -2725,6 +2760,10 @@ model AiQuestionLog {
   costMicros          Int               @default(0)
   /// Short salted hash of the device/user so repeat askers can be spotted without storing who they are.
   askerRef            String?           @db.VarChar(16)
+  /// The signed-in asker, so the admin can open one player's whole conversation. Null for visitors.
+  userId              String?           @db.VarChar(40)
+  /// What Captain answered, as the player saw it (capped).
+  replyText           String?           @db.VarChar(700)
   feedback            AiFeedback?
   feedbackAt          DateTime?
   status              AiQuestionStatus  @default(new)
@@ -2738,6 +2777,7 @@ model AiQuestionLog {
   @@index([createdAt])
   @@index([outcome, status])
   @@index([feedback, status])
+  @@index([userId, createdAt])
 }
 
 /// Owner assistant telemetry WITHOUT any message text: customers' names and

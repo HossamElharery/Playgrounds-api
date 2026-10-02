@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiLogService } from '../../ai/ai-log.service';
+import { AssistantTranscriptService } from '../../ai/transcript/assistant-transcript.service';
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { ExpensesService } from '../expenses/expenses.service';
 import { bi, type AssistantAction, type Bi } from './assistant.types';
@@ -15,6 +16,7 @@ import { fmtMoney as fmt } from './assistant-money';
 import { joinBi } from './assistant-reading';
 import { assertActionShape } from './assistant-action-shape';
 import {
+  UNDO_ANCHOR_TEXT,
   UNDO_WINDOW_MS,
   UNDO_KIND,
   isUndoRecord,
@@ -45,9 +47,10 @@ export class OwnerAssistantExecutorService {
     private readonly bookings: OwnerBookingsService,
     private readonly expenses: ExpensesService,
     @Optional() private readonly logs?: AiLogService,
+    @Optional() private readonly transcript?: AssistantTranscriptService,
   ) {}
 
-  /** Carries out the confirmed actions and leaves a text-free trace of how it went (action kinds and outcome only). */
+  /** Carries out the confirmed actions and leaves two traces: the numbers (kinds and outcome) and, in the permanent transcript, what was done and what it said. */
   async execute(
     user: AuthenticatedUser,
     venueId: string,
@@ -57,6 +60,16 @@ export class OwnerAssistantExecutorService {
     try {
       const result = await this.runActions(user, venueId, actions);
       this.logs?.logOwnerEvent({ venueId, userId: user.id, event: 'applied', intent: kinds, outcome: 'applied' });
+      void this.transcript?.recordEvent({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId,
+        kind: 'action',
+        intent: kinds,
+        outcome: 'applied',
+        text: `نُفِّذ بعد تأكيد صاحب الملعب:\n${result.reply.ar}`,
+        meta: { actions },
+      });
       return result;
     } catch (err) {
       this.logs?.logOwnerEvent({
@@ -66,6 +79,16 @@ export class OwnerAssistantExecutorService {
         intent: kinds,
         outcome: 'failed',
         detail: err instanceof Error ? err.constructor.name : 'error',
+      });
+      void this.transcript?.recordEvent({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId,
+        kind: 'action',
+        intent: kinds,
+        outcome: 'failed',
+        text: `فشل التنفيذ بعد التأكيد: ${err instanceof Error ? err.message : 'خطأ غير معروف'}`,
+        meta: { actions },
       });
       throw err;
     }
@@ -368,7 +391,7 @@ export class OwnerAssistantExecutorService {
           venueId,
           ownerId: user.id,
           sender: 'system',
-          text: 'assistant-undo',
+          text: UNDO_ANCHOR_TEXT,
           appliedChange: { kind: UNDO_KIND, v: 1, inverse } as never,
         },
         select: { id: true },
@@ -391,9 +414,25 @@ export class OwnerAssistantExecutorService {
     try {
       const result = await this.runUndo(user, venueId, undoId);
       this.logs?.logOwnerEvent({ venueId, userId: user.id, event: 'undone', outcome: result.ok ? 'applied' : 'failed', detail: result.ok ? undefined : 'partial' });
+      void this.transcript?.recordEvent({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId,
+        kind: 'undo',
+        outcome: result.ok ? 'undone' : 'failed',
+        text: `تراجع صاحب الملعب عن آخر تنفيذ:\n${result.reply.ar}`,
+      });
       return result;
     } catch (err) {
       this.logs?.logOwnerEvent({ venueId, userId: user.id, event: 'undone', outcome: 'failed', detail: err instanceof Error ? err.constructor.name : 'error' });
+      void this.transcript?.recordEvent({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId,
+        kind: 'undo',
+        outcome: 'failed',
+        text: `محاولة تراجع فشلت: ${err instanceof Error ? err.message : 'خطأ غير معروف'}`,
+      });
       throw err;
     }
   }

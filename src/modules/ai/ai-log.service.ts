@@ -34,8 +34,10 @@ export interface OwnerEventInput {
   event: 'ask' | 'applied' | 'undone';
   intent?: string;
   outcome: 'planned' | 'clarify' | 'denied' | 'unavailable' | 'limited' | 'error' | 'applied' | 'failed';
-  /** Controlled vocabulary only (an error class, a reason code) — never anything the owner typed. */
+  /** Controlled vocabulary only (an error class, a reason code). */
   detail?: string;
+  /** What the owner typed, exactly (admin-only; only on `ask` events). */
+  text?: string;
   confidence?: number;
   model?: string | null;
   ms?: number;
@@ -55,9 +57,7 @@ function code(value: string | undefined, max: number): string | null {
 }
 
 /**
- * Writes the two logs the admin reads: what players asked Captain (the
- * sentence as typed, admin-only, kept for a fixed window) and what happened to the owner assistant's
- * requests (no text at all). A log write is best effort — it never delays or
+ * Writes the two logs the admin reads: what players asked Captain and what owners asked their assistant (both as typed, admin-only, kept for a fixed window). A log write is best effort — it never delays or
  * fails the answer, and a flood of refused messages is counted, not stored row by row.
  */
 @Injectable()
@@ -140,6 +140,7 @@ export class AiLogService {
           intent: code(input.intent, 40),
           outcome: input.outcome,
           detail: code(input.detail, 60),
+          text: input.text ? input.text.replace(/\s+/g, ' ').trim().slice(0, 500) || null : null,
           confidence: typeof input.confidence === 'number' && Number.isFinite(input.confidence) ? input.confidence : null,
           model: input.model ? input.model.slice(0, 120) : null,
           ms: Math.max(0, Math.round(input.ms ?? 0)),

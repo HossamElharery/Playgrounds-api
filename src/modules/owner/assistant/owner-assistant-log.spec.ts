@@ -46,22 +46,20 @@ function build(opts: { read?: AssistantReading | null; quota?: unknown; enabled?
 }
 
 describe('owner assistant telemetry', () => {
-  it('records intent, outcome, model, time and cost — and no part of what the owner typed or the customer is called', async () => {
+  it('records what the owner typed together with intent, outcome, model, time and cost', async () => {
     const { service, logs } = build({ read: reading({ intent: 'unknown', confidence: 0.2 }) });
     await service.ask(user, 'v1', SECRET_TEXT);
     expect(logs.logOwnerEvent).toHaveBeenCalledTimes(1);
     const event = logs.logOwnerEvent.mock.calls[0][0];
-    expect(event).toMatchObject({ venueId: 'v1', userId: 'u1', event: 'ask', intent: 'unknown', outcome: 'clarify', model: 'google/gemini-3.8-flash', ms: 1234, costUsd: 0.002 });
-    const serialised = JSON.stringify(event);
-    for (const secret of ['محمد', '01012345678', '450', 'بلايستيشن', 'احجز']) expect(serialised).not.toContain(secret);
+    expect(event).toMatchObject({ venueId: 'v1', userId: 'u1', event: 'ask', text: SECRET_TEXT, intent: 'unknown', outcome: 'clarify', model: 'google/gemini-3.8-flash', ms: 1234, costUsd: 0.002 });
   });
 
-  it('records a refused-by-limit request as limited, without the text', async () => {
+  it('records a refused-by-limit request as limited, with the text', async () => {
     const quota = { take: jest.fn().mockResolvedValue({ ok: false, reason: 'day', retryAfterSec: 100, key: 'user:u1' }) };
     const { service, logs } = build({ quota });
     await service.ask(user, 'v1', SECRET_TEXT);
     expect(logs.logOwnerEvent.mock.calls[0][0]).toMatchObject({ outcome: 'limited' });
-    expect(JSON.stringify(logs.logOwnerEvent.mock.calls)).not.toContain('محمد');
+    expect(logs.logOwnerEvent.mock.calls[0][0].text).toBe(SECRET_TEXT);
   });
 
   it('records "unavailable" when no model could read the sentence', async () => {

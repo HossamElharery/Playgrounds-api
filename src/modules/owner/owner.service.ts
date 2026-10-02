@@ -59,6 +59,7 @@ export class OwnerService {
     private readonly prisma: PrismaService,
     private readonly bookings: BookingsService,
     private readonly nlu: GeminiNluService,
+    @Optional() private readonly transcript?: AssistantTranscriptService,
   ) {}
 
   private async venueTimeZone(venueId: string): Promise<string> {
@@ -454,7 +455,8 @@ export class OwnerService {
     return paginateByCursor(
       (args) =>
         this.prisma.assistantMessage.findMany({
-          where: { venueId },
+          // The hidden undo-point rows are bookkeeping, not chat: they would eat the page.
+          where: { venueId, NOT: { text: UNDO_ANCHOR_TEXT } },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           ...args,
         }),
@@ -464,8 +466,8 @@ export class OwnerService {
   }
 
   createAssistantMessage(user: AuthenticatedUser, dto: CreateAssistantMessageDto) {
-    return this.requireVenue(user, dto.venueId, true).then((venue) =>
-      this.prisma.assistantMessage.create({
+    return this.requireVenue(user, dto.venueId, true).then(async (venue) => {
+      const row = await this.prisma.assistantMessage.create({
         data: {
           venueId: venue.id,
           ownerId: user.id,
@@ -474,8 +476,18 @@ export class OwnerService {
           appliedChange: dto.appliedChange as Prisma.InputJsonValue | undefined,
           inverseChange: dto.inverseChange as Prisma.InputJsonValue | undefined,
         },
-      }),
-    );
+      });
+      // The admin's permanent copy: the server's own record of the line if it has one, else this one.
+      void this.transcript?.mirrorClientLine({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId: venue.id,
+        sender: dto.sender,
+        text: dto.text,
+        scheduleChange: !!dto.inverseChange || !!dto.appliedChange,
+      });
+      return row;
+    });
   }
 
   /**

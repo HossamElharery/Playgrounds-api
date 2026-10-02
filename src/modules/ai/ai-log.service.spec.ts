@@ -88,21 +88,27 @@ describe('AiLogService', () => {
     });
   });
 
-  describe('owner events (no text, ever)', () => {
-    it('stores intent, outcome, model, time and cost — and nothing a person typed', () => {
+  describe('owner events', () => {
+    it('stores what the owner typed with intent, outcome, model, time and cost', () => {
       const { logs, prisma } = build();
-      logs.logOwnerEvent({ venueId: 'v1', userId: 'u1', event: 'ask', intent: 'book', outcome: 'planned', confidence: 0.9, model: 'google/gemini-3.8-flash', ms: 1200, costUsd: 0.002 });
+      logs.logOwnerEvent({ venueId: 'v1', userId: 'u1', event: 'ask', text: '  احجز بلايستيشن لمحمد  01012345678 ', intent: 'book', outcome: 'planned', confidence: 0.9, model: 'google/gemini-3.8-flash', ms: 1200, costUsd: 0.002 });
       const data = prisma.aiOwnerEventLog.create.mock.calls[0][0].data;
-      expect(Object.keys(data).sort()).toEqual(['confidence', 'costMicros', 'detail', 'event', 'intent', 'model', 'ms', 'outcome', 'userId', 'venueId']);
-      expect(data.costMicros).toBe(2000);
+      expect(data).toMatchObject({ text: 'احجز بلايستيشن لمحمد 01012345678', intent: 'book', outcome: 'planned', costMicros: 2000, venueId: 'v1', userId: 'u1' });
     });
 
-    it('turns even a careless "detail" into a code, so a customer name cannot slip in', () => {
+    it('keeps the text off events that have none, and caps its length', () => {
+      const { logs, prisma } = build();
+      logs.logOwnerEvent({ event: 'applied', outcome: 'applied' });
+      logs.logOwnerEvent({ event: 'ask', outcome: 'planned', text: 'x'.repeat(900) });
+      expect(prisma.aiOwnerEventLog.create.mock.calls[0][0].data.text).toBeNull();
+      expect(prisma.aiOwnerEventLog.create.mock.calls[1][0].data.text).toHaveLength(500);
+    });
+
+    it('still turns a careless "detail" into a code, so a reason field never carries words', () => {
       const { logs, prisma } = build();
       logs.logOwnerEvent({ event: 'applied', outcome: 'failed', detail: 'Failed for Mohamed 0101 Ahmed' });
       const detail = prisma.aiOwnerEventLog.create.mock.calls[0][0].data.detail as string;
       expect(detail).toMatch(/^[a-z0-9_.:-]*$/);
-      expect(detail).not.toMatch(/\s/);
     });
   });
 

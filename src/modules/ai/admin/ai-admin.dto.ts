@@ -64,6 +64,25 @@ export class ListAiQuestionsDto extends PageQueryDto {
   to?: string;
 }
 
+export class ListOwnerRequestsDto extends PageQueryDto {
+  @ApiPropertyOptional({ enum: ['planned', 'clarify', 'denied', 'unavailable', 'limited', 'error'] })
+  @IsOptional()
+  @IsIn(['planned', 'clarify', 'denied', 'unavailable', 'limited', 'error'])
+  outcome?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  venueId?: string;
+}
+
 export class SetQuestionStatusDto {
   @ApiProperty({ enum: STATUSES })
   @IsIn(STATUSES as unknown as string[])

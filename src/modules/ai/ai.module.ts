@@ -8,6 +8,7 @@ import { AiSettingsService } from './ai-settings.service';
 import { AiLogService } from './ai-log.service';
 import { TurnstileService } from './turnstile.service';
 import { AssistantKnowledgeService } from './knowledge/assistant-knowledge.service';
+import { AssistantTranscriptService } from './transcript/assistant-transcript.service';
 import { GeoModule } from '../geo/geo.module';
 
 const SHARED = [
@@ -20,6 +21,7 @@ const SHARED = [
   AiLogService,
   TurnstileService,
   AssistantKnowledgeService,
+  AssistantTranscriptService,
 ];
 
 @Module({

@@ -14,6 +14,7 @@ import {
   DraftKnowledgeDto,
   KnowledgeBodyDto,
   ListAiQuestionsDto,
+  ListOwnerRequestsDto,
   PreviewKnowledgeDto,
   ReorderKnowledgeDto,
   ResolveQuestionDto,
@@ -54,6 +55,12 @@ export class AiAdminController {
   @Get('questions')
   async listQuestions(@Query() q: ListAiQuestionsDto) {
     const { items, pagination } = await this.questions.list(q);
+    return { message: 'ok', result: items, pagination };
+  }
+
+  @Get('owner-requests')
+  async ownerRequests(@Query() q: ListOwnerRequestsDto) {
+    const { items, pagination } = await this.questions.ownerRequests(q);
     return { message: 'ok', result: items, pagination };
   }
 

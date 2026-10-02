@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiQuotaService } from '../../ai/ai-quota.service';
 import { AiSettingsService } from '../../ai/ai-settings.service';
 import { AiLogService } from '../../ai/ai-log.service';
+import { AssistantTranscriptService } from '../../ai/transcript/assistant-transcript.service';
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { OwnerSummaryService } from '../owner-summary.service';
 import { ExpensesService } from '../expenses/expenses.service';
@@ -103,6 +104,7 @@ export class OwnerAssistantService {
     @Optional() private readonly quota?: AiQuotaService,
     @Optional() private readonly settings?: AiSettingsService,
     @Optional() private readonly logs?: AiLogService,
+    @Optional() private readonly transcript?: AssistantTranscriptService,
   ) {}
 
   get enabled(): boolean {
@@ -113,8 +115,7 @@ export class OwnerAssistantService {
 
   /**
    * Reads one sentence and plans what it asks for. Besides the plan it leaves a
-   * trace for the admin — intent, outcome, model, time, cost — and deliberately
-   * nothing the owner typed: those sentences carry customers' names and amounts.
+   * trace for the admin: the sentence as typed, intent, outcome, model, time, cost.
    */
   async ask(
     user: AuthenticatedUser,
@@ -125,26 +126,45 @@ export class OwnerAssistantService {
     const trace: { limited?: boolean; meta?: AssistantReading['meta'] } = {};
     const plan = await this.plan(user, venueId, text, extra, trace);
     const blocking = plan.issues.find((i) => i.blocking);
+    const outcome = trace.limited
+      ? 'limited'
+      : !plan.available
+        ? 'unavailable'
+        : blocking?.code === 'NO_PERMISSION'
+          ? 'denied'
+          : plan.intent === 'unknown'
+            ? 'clarify'
+            : 'planned';
     this.logs?.logOwnerEvent({
       venueId,
       userId: user.id,
       event: 'ask',
       intent: plan.intent,
-      outcome: trace.limited
-        ? 'limited'
-        : !plan.available
-          ? 'unavailable'
-          : blocking?.code === 'NO_PERMISSION'
-            ? 'denied'
-            : plan.intent === 'unknown'
-              ? 'clarify'
-              : 'planned',
+      outcome,
       detail: blocking?.code,
       confidence: plan.confidence,
       model: trace.meta?.model ?? null,
       ms: trace.meta?.ms,
       costUsd: trace.meta?.costUsd,
     });
+    if (this.transcript) {
+      const reply = plan.reply.ar || plan.reply.en || plan.summary?.ar || '';
+      void this.transcript.recordTurn({
+        ownerId: user.id,
+        ownerName: user.name,
+        venueId,
+        ownerText: text,
+        replyText: plan.needsConfirm && reply ? `${reply}\n(بانتظار تأكيد صاحب الملعب)` : reply,
+        intent: plan.intent,
+        outcome,
+        confidence: plan.confidence,
+        model: trace.meta?.model ?? null,
+        blockingCode: blocking?.code,
+        meta: plan.actions.length || plan.issues.length
+          ? { needsConfirm: plan.needsConfirm, actions: plan.actions, issues: plan.issues.map((i) => i.code) }
+          : undefined,
+      });
+    }
     return plan;
   }
 

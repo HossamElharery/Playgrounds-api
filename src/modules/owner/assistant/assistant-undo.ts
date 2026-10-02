@@ -3,6 +3,12 @@ import type { Bi } from './assistant.types';
 /** Discriminator stored in `AssistantMessage.appliedChange` for an undo anchor. */
 export const UNDO_KIND = 'assistant_undo';
 
+/**
+ * Text of the hidden bookkeeping row that anchors an undo. It is not conversation:
+ * the owner's chat window and the admin's transcript both leave it out.
+ */
+export const UNDO_ANCHOR_TEXT = 'assistant-undo';
+
 /** After this the books have moved on; reversing blindly would be a second mistake. */
 export const UNDO_WINDOW_MS = 15 * 60_000;
 
