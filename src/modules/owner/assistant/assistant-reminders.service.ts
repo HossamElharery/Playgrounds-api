@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -8,6 +9,14 @@ import { fmtMoney } from './assistant-money';
 import { zonedHhmm } from '../../../common/utils/timezone.util';
 
 const HOUR = 3_600_000;
+/** The same unpaid set is mentioned again only after this long; a changed set is sent at once. */
+const SAME_DEBT_REMINDER_MS = 72 * HOUR;
+
+/** Identifies exactly which bookings owe exactly how much, so an unchanged debt is not announced twice. */
+export function debtFingerprint(list: Pick<OwedRow, 'id' | 'outstanding'>[]): string {
+  const parts = list.map((b) => `${b.id}:${b.outstanding}`).sort();
+  return createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 16);
+}
 
 /**
  * The assistant's proactive side: it pushes the two reminders an owner would
@@ -60,6 +69,11 @@ export class AssistantRemindersService {
       // Once per venue per half-day: the digest is a nudge, not a feed.
       if (await this.recently(venue.ownerId, 'assistant_overdue', 'venueId', venueId, 10 * HOUR, now))
         continue;
+      // …and the same unpaid bookings are not announced again the next morning: only a change
+      // (a new debt, a part-payment) or three quiet days brings the digest back.
+      const fingerprint = debtFingerprint(list);
+      if (await this.recently(venue.ownerId, 'assistant_overdue', 'fingerprint', fingerprint, SAME_DEBT_REMINDER_MS, now))
+        continue;
       const total = list.reduce((sum, b) => sum + b.outstanding, 0);
       const names = list
         .slice(0, 3)
@@ -74,8 +88,9 @@ export class AssistantRemindersService {
           titleEn: `Still owed to you: ${fmtMoney(total, cur).en}`,
           bodyAr: `${list.length} حجز خلص ولسه عليهم فلوس (${names}${list.length > 3 ? '…' : ''}) — ${venue.nameAr}. افتح المساعد واكتب «فلان دفع» أول ما تحصّل.`,
           bodyEn: `${list.length} finished bookings still owe money (${names}${list.length > 3 ? '…' : ''}) — ${venue.nameEn}.`,
-          deepLink: '/owner/today',
-          payload: { kind: 'assistant_overdue', venueId, count: list.length, total },
+          // Opens THIS venue's Today screen, where the unpaid list lives — not whichever venue was last open.
+          deepLink: `/owner/today?venue=${venueId}`,
+          payload: { kind: 'assistant_overdue', venueId, count: list.length, total, fingerprint },
         })
         .then(() => sent++)
         .catch((err) => this.logger.warn(`overdue reminder failed: ${String(err)}`));
@@ -112,7 +127,8 @@ export class AssistantRemindersService {
           titleEn: `${who} arrives ${zonedHhmm(b.slotStart, tz)} owing ${fmtMoney(b.outstanding, b.currency).en}`,
           bodyAr: `${b.courtName} — حصّل الباقي وهو داخل.`,
           bodyEn: `${b.courtName} — collect the balance at the door.`,
-          deepLink: '/owner/today',
+          // Straight to the booking that owes, in the right venue.
+          deepLink: `/owner/today?venue=${b.venueId}&booking=${b.id}`,
           payload: { kind: 'assistant_arrival_due', venueId: b.venueId, bookingId: b.id },
         })
         .then(() => sent++)
@@ -124,7 +140,7 @@ export class AssistantRemindersService {
   private async recently(
     userId: string,
     kind: string,
-    key: 'venueId' | 'bookingId',
+    key: 'venueId' | 'bookingId' | 'fingerprint',
     value: string,
     withinMs: number,
     now: Date,

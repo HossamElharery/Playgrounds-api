@@ -544,6 +544,15 @@ export class CashService {
       where: { id: shiftId },
       data: { reviewedAt: new Date(), reviewedById: user.id, reviewNote: note?.trim() || null },
     });
+    await this.prisma.auditLogEntry.create({
+      data: {
+        actorUserId: user.id,
+        action: 'owner.shift.reviewed',
+        targetType: 'cash_shift',
+        targetId: shiftId,
+        metadata: { venueId: shift.venueId, shiftId, difference: shift.difference, currency: shift.currency, ...(note?.trim() ? { note: note.trim().slice(0, 300) } : {}) } as Prisma.InputJsonValue,
+      },
+    });
     return (await this.dtos([updated]))[0];
   }
 

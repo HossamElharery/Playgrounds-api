@@ -149,3 +149,29 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
     (a, b) => b.bookings - a.bookings || (b.lastVisit?.getTime() ?? 0) - (a.lastVisit?.getTime() ?? 0),
   );
 }
+
+export interface UnlinkedBookings {
+  /** Bookings with neither a name nor a phone: they appear in no customer's file. */
+  bookings: number;
+  /** What those bookings still owe for games already played — money with nobody to chase. */
+  owed: number;
+}
+
+/**
+ * The bookings a customer list cannot show because nobody wrote down who they were for. They are
+ * the reason "15 bookings" can become "2 customers": counted here so the owner can see it and fix it.
+ */
+export async function queryUnlinkedBookings(prisma: PrismaService, venueId: string): Promise<UnlinkedBookings> {
+  const [row] = await prisma.$queryRaw<{ bookings: number; owed: number }[]>(Prisma.sql`
+    SELECT COUNT(*)::int AS bookings,
+           COALESCE(SUM(CASE WHEN "slotStart" <= (NOW() AT TIME ZONE 'UTC') AND "status" IN ('confirmed', 'completed')
+                             THEN GREATEST(0, "totalAmount" - ${Prisma.raw(NET_PAID_SQL)}) ELSE 0 END), 0)::int AS owed
+    FROM "Booking"
+    WHERE "venueId" = ${venueId}
+      AND "source" = 'manual'
+      AND "status" <> 'cancelled'
+      AND COALESCE("guestPhone", '') = ''
+      AND COALESCE("guestName", '') = ''
+  `);
+  return { bookings: row?.bookings ?? 0, owed: row?.owed ?? 0 };
+}

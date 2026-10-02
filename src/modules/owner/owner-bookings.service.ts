@@ -163,6 +163,23 @@ export class OwnerBookingsService {
             sourceLabel,
             notes: dto.notes,
           });
+          await tx.auditLogEntry.create({
+            data: {
+              actorUserId: user.id,
+              action: 'owner.booking.created',
+              targetType: 'booking',
+              targetId: created.id,
+              metadata: {
+                bookingId: created.id,
+                venueId: dto.venueId,
+                code: created.code,
+                amount: dto.priceAmount,
+                currency: created.currency,
+                paymentStatus: dto.paymentStatus ?? 'unpaid',
+                customer: dto.customerName?.trim() || null,
+              } as Prisma.InputJsonValue,
+            },
+          });
           return created;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -506,6 +523,15 @@ export class OwnerBookingsService {
         },
       });
       await this.ledger.syncBookingLedger(tx, bookingId, 'cancelled');
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId: user.id,
+          action: 'owner.booking.cancelled',
+          targetType: 'booking',
+          targetId: bookingId,
+          metadata: { bookingId, venueId: booking.venueId, code: booking.code, amount: booking.totalAmount, currency: booking.currency, customer: booking.guestName } as Prisma.InputJsonValue,
+        },
+      });
       return row;
     });
     return this.toOwnerBookingDto(updated, user);
@@ -536,6 +562,15 @@ export class OwnerBookingsService {
         data: { status: 'confirmed', cancelledAt: null, cancellationReason: null },
       });
       await this.ledger.syncBookingLedger(tx, bookingId);
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId: user.id,
+          action: 'owner.booking.restored',
+          targetType: 'booking',
+          targetId: bookingId,
+          metadata: { bookingId, venueId: booking.venueId, code: booking.code, amount: booking.totalAmount, currency: booking.currency, customer: booking.guestName } as Prisma.InputJsonValue,
+        },
+      });
       return row;
     });
     return this.toOwnerBookingDto(updated, user);

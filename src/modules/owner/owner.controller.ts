@@ -80,6 +80,8 @@ import {
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
+import { CommandCentreService } from './command/command-centre.service';
+import { ActivityService } from './activity/activity.service';
 import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
 import {
   AssistantAskDto,
@@ -104,6 +106,8 @@ export class OwnerController {
     private readonly fixed: FixedBookingsService,
     private readonly expenses: ExpensesService,
     private readonly cash: CashService,
+    private readonly commandCentre: CommandCentreService,
+    private readonly activity: ActivityService,
     private readonly imports: ImportService,
     private readonly exportCentre: ExportService,
     private readonly platformRequests: PlatformRequestsService,
@@ -116,6 +120,24 @@ export class OwnerController {
   @Get('access')
   access(@CurrentUser() user: AuthenticatedUser) {
     return this.owner.access(user);
+  }
+
+  /** One screen for every venue the caller may see: today, what is owed, open drawers, what needs review. */
+  @AnyStaff()
+  @Get('command-centre')
+  centre(@CurrentUser() user: AuthenticatedUser) {
+    return this.commandCentre.centre(user);
+  }
+
+  /** Who booked, changed a price, took or returned money, took a drawer over — in plain sentences. */
+  @RequirePermission('reports.view')
+  @Get('activity')
+  activityLog(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.activity.list(user, venueId, cursor);
   }
 
   @OwnerOnly()

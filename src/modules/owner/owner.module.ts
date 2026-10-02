@@ -25,6 +25,8 @@ import { AssistantNluService } from './assistant/assistant-nlu.service';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
 import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
 import { AssistantRemindersService } from './assistant/assistant-reminders.service';
+import { CommandCentreService } from './command/command-centre.service';
+import { ActivityService } from './activity/activity.service';
 
 @Module({
   imports: [BookingsModule, AiModule, FinanceModule, NotificationsModule],
@@ -41,6 +43,8 @@ import { AssistantRemindersService } from './assistant/assistant-reminders.servi
     FixedBookingsService,
     ExpensesService,
     CashService,
+    CommandCentreService,
+    ActivityService,
     ImportService,
     ExportService,
     PlatformRequestsService,

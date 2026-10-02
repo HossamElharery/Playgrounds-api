@@ -11,7 +11,7 @@ import { PERMISSION_KEYS } from '../../common/access/permissions';
 import { assertSlotNotInPast } from '../../common/utils/past-slot.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { queryCustomers } from './customers/customers.query';
+import { queryCustomers, queryUnlinkedBookings } from './customers/customers.query';
 import {
   CreateAssistantMessageDto,
   CreateCalendarBlockDto,
@@ -632,8 +632,11 @@ export class OwnerService {
 
   async customers(user: AuthenticatedUser, venueId: string) {
     const venue = await this.requireVenue(user, venueId, false);
-    const items = await queryCustomers(this.prisma, venueId, venue.ownerId);
-    return { items, total: items.length, owedTotal: items.reduce((s, c) => s + c.owed, 0) };
+    const [items, unlinked] = await Promise.all([
+      queryCustomers(this.prisma, venueId, venue.ownerId),
+      queryUnlinkedBookings(this.prisma, venueId),
+    ]);
+    return { items, total: items.length, owedTotal: items.reduce((s, c) => s + c.owed, 0), unlinked };
   }
 
   /** A note on one customer ("always late", "VIP"): the venue's own memory, kept next to the bookings. */

@@ -69,6 +69,15 @@ export class ExpensesService {
       },
     });
     if (row.recurringMonthly) await this.materialize(row.venueId);
+    await this.prisma.auditLogEntry.create({
+      data: {
+        actorUserId: user.id,
+        action: 'owner.expense.recorded',
+        targetType: 'expense',
+        targetId: row.id,
+        metadata: { venueId: row.venueId, expenseId: row.id, amount: row.amount, currency: row.currency, category: row.category, categoryLabel: row.categoryLabel, fromDrawer: row.fromDrawer } as Prisma.InputJsonValue,
+      },
+    });
     return this.dto(row);
   }
 
