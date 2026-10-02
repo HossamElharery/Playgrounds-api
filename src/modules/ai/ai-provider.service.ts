@@ -1,28 +1,45 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AiUsageService } from './ai-usage.service';
 import {
-  AiProviderName,
   AiUnavailableError,
-  StructuredIntentRequest,
-  StructuredIntentResult,
+  type AiProfile,
+  type AiProviderName,
+  type AiReasoningEffort,
+  type StructuredIntentRequest,
+  type StructuredIntentResult,
 } from './ai-provider.types';
 
-const DEFAULT_TIMEOUT_MS = 8_000;
-const CIRCUIT_FAILURE_THRESHOLD = 3;
-const CIRCUIT_OPEN_MS = 120_000;
+const OWNER_TIMEOUT_MS = 12_000;
+const PUBLIC_TIMEOUT_MS = 9_000;
+/** No new route is tried after this long: an answer that late is worse than the keyword fallback. */
+const TOTAL_DEADLINE_MS = 22_000;
+const BREAKER_FAILURES = 3;
+const BREAKER_OPEN_MS = 120_000;
+const BREAKER_OUT_OF_CREDIT_MS = 10 * 60_000;
+const BREAKER_RATE_LIMIT_MS = 30_000;
+const CACHE_MAX = 300;
 
-// See the note in ai-provider.types.ts — these are the free models verified
-// working at implementation time, not the originally-suggested llama/qwen
-// (both retired from OpenRouter's free tier). "super" goes first: it
-// answered correctly on every test call, while "ultra" (a reasoning model)
-// intermittently returned empty content on the free tier — see the final
-// report for the measured failure rate.
-const OPENROUTER_MODELS = {
-  'openrouter-nemotron-super': 'nvidia/nemotron-3-super-120b-a12b:free',
-  'openrouter-nemotron-ultra': 'nvidia/nemotron-3-ultra-550b-a55b:free',
-} as const;
+/**
+ * Where each audience's sentences may go, best first. The owner assistant sees
+ * customer names and amounts, so it stays on Google's models; players and
+ * visitors send search intent only, so a cheaper second opinion is fine there.
+ */
+const DEFAULT_MODELS: Record<AiProfile, string[]> = {
+  owner: ['google/gemini-3.8-flash', 'google/gemini-3.6-flash', 'google/gemini-3.5-flash'],
+  public: ['google/gemini-3.8-flash', 'google/gemini-3.6-flash', 'deepseek/deepseek-v4.1-flash'],
+};
+/** Last resort for public traffic only: free, rate-limited, and never given private data. */
+const PUBLIC_FREE_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 
-/** A failure we should fall back on. `status` distinguishes an auth problem from a rate-limit/outage. */
+const DEFAULT_REASONING: Record<AiProfile, AiReasoningEffort> = {
+  owner: 'low',
+  public: 'minimal',
+};
+
+type Step = { kind: 'openrouter'; model: string } | { kind: 'gemini'; model: string };
+
+/** A failure we fall back on. `status` tells an auth/credit problem from a rate limit or an outage. */
 class AiCallFailure extends Error {
   constructor(
     message: string,
@@ -39,12 +56,11 @@ function extractJson(text: string): unknown {
 }
 
 /**
- * Single entry point for every AI call in the app: Gemini first, then two
- * free OpenRouter models as fallback. Callers never touch Gemini or
- * OpenRouter directly — they get back the same shape regardless of which
- * provider actually answered, and re-validate every field themselves (this
- * layer only proves the response is well-formed JSON, never that it's
- * semantically correct).
+ * Single entry point for every AI call in the app. It walks a per-audience
+ * chain of models (OpenRouter first, the direct Gemini key as an extra), skips
+ * routes whose breaker is open, enforces the day's budget, and hands back the
+ * same shape whichever model answered. Callers re-validate every field — this
+ * layer proves the reply is well-formed JSON, never that it is right.
  */
 @Injectable()
 export class AiProviderService {
@@ -53,13 +69,15 @@ export class AiProviderService {
   private readonly geminiModel: string;
   private readonly openRouterApiKey: string;
   private readonly forceFailure: string;
+  private readonly breakers = new Map<string, { fails: number; openUntil: number; reason?: 'credit' | 'rate_limit' | 'auth' | 'errors' }>();
+  private readonly cache = new Map<string, { exp: number; value: StructuredIntentResult }>();
 
-  private geminiFailCount = 0;
-  private geminiOpenUntil = 0;
-
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly usage: AiUsageService,
+  ) {
     this.geminiApiKey = this.config.get<string>('GEMINI_API_KEY') ?? '';
-    this.geminiModel = this.config.get<string>('GEMINI_MODEL') ?? 'gemini-3.6-flash';
+    this.geminiModel = this.config.get<string>('GEMINI_MODEL') ?? 'gemini-3.8-flash';
     this.openRouterApiKey = this.config.get<string>('OPENROUTER_API_KEY') ?? '';
     // TEST ONLY — see .env.example. Must never be set in a deployed environment.
     this.forceFailure = this.config.get<string>('AI_FORCE_FAILURE') ?? '';
@@ -69,77 +87,212 @@ export class AiProviderService {
     return this.geminiApiKey.length > 0 || this.openRouterApiKey.length > 0;
   }
 
+  /** The routes this audience may use, in order. Exposed for the admin view and the tests. */
+  chain(profile: AiProfile, override?: string[]): Step[] {
+    const steps: Step[] = [];
+    if (override?.length && profile === 'public' && this.openRouterApiKey) {
+      return override.map((model) => ({ kind: 'openrouter' as const, model }));
+    }
+    if (this.openRouterApiKey) {
+      const key = profile === 'owner' ? 'AI_OWNER_MODELS' : 'AI_PUBLIC_MODELS';
+      const custom = (this.config.get<string>(key) ?? '')
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean);
+      for (const model of custom.length ? custom : DEFAULT_MODELS[profile]) {
+        steps.push({ kind: 'openrouter', model });
+      }
+    }
+    if (this.geminiApiKey) steps.push({ kind: 'gemini', model: this.geminiModel });
+    if (profile === 'public' && this.openRouterApiKey) {
+      steps.push({ kind: 'openrouter', model: PUBLIC_FREE_MODEL });
+    }
+    return steps;
+  }
+
   async getStructuredIntent(req: StructuredIntentRequest): Promise<StructuredIntentResult> {
-    const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
-    if (this.geminiApiKey) {
-      if (this.geminiCircuitOpen()) {
-        this.logger.debug('[ai-provider] provider=gemini skipped reason=circuit-open');
-      } else {
-        const started = Date.now();
-        try {
-          const raw = await this.callGemini(req, timeoutMs);
-          this.geminiFailCount = 0;
-          this.logger.log(`[ai-provider] provider=gemini result=ok ms=${Date.now() - started}`);
-          return { raw, provider: 'gemini' };
-        } catch (err) {
-          this.recordGeminiFailure(err, Date.now() - started);
-        }
-      }
+    const profile: AiProfile = req.profile ?? 'owner';
+    const cacheKey = req.cacheTtlMs ? this.cacheKey(profile, req) : null;
+    if (cacheKey) {
+      const hit = this.cache.get(cacheKey);
+      if (hit && hit.exp > Date.now()) return { ...hit.value, ms: 0, costUsd: 0 };
     }
+    if (!req.skipBudget) this.usage.assertBudget(profile);
 
-    for (const provider of ['openrouter-nemotron-super', 'openrouter-nemotron-ultra'] as const) {
-      if (!this.openRouterApiKey) break;
-      const started = Date.now();
+    const started = Date.now();
+    const timeoutMs = req.timeoutMs ?? (profile === 'owner' ? OWNER_TIMEOUT_MS : PUBLIC_TIMEOUT_MS);
+    const reasoning = req.reasoning ?? this.reasoningFor(profile);
+
+    const steps = this.chain(profile, req.modelsOverride);
+    for (const [routeIndex, step] of steps.entries()) {
+      if (Date.now() - started > TOTAL_DEADLINE_MS) break;
+      const id = `${step.kind}:${step.model}`;
+      if (this.breakerOpen(id)) continue;
+      const t0 = Date.now();
       try {
-        const raw = await this.callOpenRouter(OPENROUTER_MODELS[provider], req, timeoutMs);
-        this.logger.log(
-          `[ai-provider] provider=${provider} result=ok ms=${Date.now() - started} fallback=true`,
-        );
-        return { raw, provider };
+        const out =
+          step.kind === 'openrouter'
+            ? await this.callOpenRouter(step.model, req, timeoutMs, reasoning)
+            : await this.callGemini(req, timeoutMs);
+        this.breakers.delete(id);
+        const result: StructuredIntentResult = {
+          raw: out.raw,
+          provider: step.kind,
+          model: step.model,
+          costUsd: out.costUsd,
+          ms: Date.now() - t0,
+        };
+        this.usage.record({ profile, provider: step.kind, model: step.model, ok: true, ms: result.ms, costUsd: out.costUsd, routeIndex });
+        if (cacheKey && req.cacheTtlMs) this.remember(cacheKey, result, req.cacheTtlMs);
+        return result;
       } catch (err) {
-        this.logFailure(provider, err, Date.now() - started);
+        const failure = err instanceof AiCallFailure ? err : new AiCallFailure(String(err));
+        this.usage.record({
+          profile,
+          provider: step.kind,
+          model: step.model,
+          ok: false,
+          ms: Date.now() - t0,
+          costUsd: 0,
+          status: failure.status,
+          routeIndex,
+        });
+        this.noteFailure(id, step, failure);
       }
     }
-
     throw new AiUnavailableError();
   }
 
-  private geminiCircuitOpen(): boolean {
-    return Date.now() < this.geminiOpenUntil;
-  }
-
-  private recordGeminiFailure(err: unknown, ms: number): void {
-    this.logFailure('gemini', err, ms);
-    this.geminiFailCount += 1;
-    if (this.geminiFailCount >= CIRCUIT_FAILURE_THRESHOLD) {
-      this.geminiOpenUntil = Date.now() + CIRCUIT_OPEN_MS;
-      this.geminiFailCount = 0;
-      this.logger.warn(
-        `[ai-provider] provider=gemini circuit-open for ${CIRCUIT_OPEN_MS / 1000}s after ${CIRCUIT_FAILURE_THRESHOLD} consecutive failures`,
-      );
+  /** Which routes are paused right now and why, for the admin overview. */
+  breakerStates(): { id: string; kind: string; model: string; reason: 'credit' | 'rate_limit' | 'auth' | 'errors'; openUntil: number }[] {
+    const now = Date.now();
+    const out: { id: string; kind: string; model: string; reason: 'credit' | 'rate_limit' | 'auth' | 'errors'; openUntil: number }[] = [];
+    for (const [id, b] of this.breakers) {
+      if (b.openUntil <= now) continue;
+      const [kind, ...rest] = id.split(':');
+      out.push({ id, kind, model: rest.join(':'), reason: b.reason ?? 'errors', openUntil: b.openUntil });
     }
+    return out;
   }
 
-  private logFailure(provider: AiProviderName, err: unknown, ms: number): void {
-    const failure = err instanceof AiCallFailure ? err : new AiCallFailure(String(err));
+  private reasoningFor(profile: AiProfile): AiReasoningEffort {
+    const raw = (this.config.get<string>(profile === 'owner' ? 'AI_OWNER_REASONING' : 'AI_PUBLIC_REASONING') ?? '').trim();
+    return (['minimal', 'low', 'medium', 'high'] as const).includes(raw as AiReasoningEffort)
+      ? (raw as AiReasoningEffort)
+      : DEFAULT_REASONING[profile];
+  }
+
+  // ---------------------------------------------------------- breaker ----
+
+  private breakerOpen(id: string): boolean {
+    const b = this.breakers.get(id);
+    return !!b && Date.now() < b.openUntil;
+  }
+
+  private noteFailure(id: string, step: Step, failure: AiCallFailure): void {
+    const label = `${step.kind}:${step.model}`;
     if (failure.status === 401 || failure.status === 403) {
-      this.logger.error(
-        `[ai-provider] provider=${provider} AUTH FAILURE (status ${failure.status}) — check the API key configuration`,
-      );
+      this.logger.error(`[ai-provider] ${label} AUTH FAILURE (${failure.status}) — check the API key configuration`);
+      this.breakers.set(id, { fails: 0, openUntil: Date.now() + BREAKER_OPEN_MS, reason: 'auth' });
       return;
     }
-    this.logger.warn(
-      `[ai-provider] provider=${provider} result=fail ms=${ms} reason=${failure.message} -> falling back`,
-    );
+    if (failure.status === 402) {
+      this.logger.error(`[ai-provider] ${label} OUT OF CREDIT (402) — top up OpenRouter; paused for 10 minutes`);
+      this.breakers.set(id, { fails: 0, openUntil: Date.now() + BREAKER_OUT_OF_CREDIT_MS, reason: 'credit' });
+      return;
+    }
+    if (failure.status === 429) {
+      this.logger.warn(`[ai-provider] ${label} rate limited (429) — paused for 30s`);
+      this.breakers.set(id, { fails: 0, openUntil: Date.now() + BREAKER_RATE_LIMIT_MS, reason: 'rate_limit' });
+      return;
+    }
+    const fails = (this.breakers.get(id)?.fails ?? 0) + 1;
+    if (fails >= BREAKER_FAILURES) {
+      this.breakers.set(id, { fails: 0, openUntil: Date.now() + BREAKER_OPEN_MS, reason: 'errors' });
+      this.logger.warn(`[ai-provider] ${label} circuit-open for ${BREAKER_OPEN_MS / 1000}s after ${BREAKER_FAILURES} failures`);
+    } else {
+      this.breakers.set(id, { fails, openUntil: 0 });
+      this.logger.warn(`[ai-provider] ${label} failed: ${failure.message} -> next route`);
+    }
   }
 
-  private async callGemini(req: StructuredIntentRequest, timeoutMs: number): Promise<string> {
+  // ------------------------------------------------------------ cache ----
+
+  private cacheKey(profile: AiProfile, req: StructuredIntentRequest): string {
+    return `${profile}\u0000${req.systemPrompt.length}\u0000${req.systemPrompt.slice(-200)}\u0000${req.userPrompt}`;
+  }
+
+  private remember(key: string, value: StructuredIntentResult, ttl: number): void {
+    if (this.cache.size >= CACHE_MAX) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
+    this.cache.set(key, { exp: Date.now() + ttl, value });
+  }
+
+  // ---------------------------------------------------------- routes ----
+
+  private async callOpenRouter(
+    model: string,
+    req: StructuredIntentRequest,
+    timeoutMs: number,
+    reasoning: AiReasoningEffort,
+  ): Promise<{ raw: string; costUsd: number }> {
+    if (this.forceFailure === 'openrouter') {
+      throw new AiCallFailure('forced-failure (AI_FORCE_FAILURE=openrouter)');
+    }
+    const schemaHint = req.responseSchema
+      ? `\n\nRespond with a single JSON object only (no prose, no markdown fences) matching exactly this structure: ${JSON.stringify(req.responseSchema)}`
+      : '';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.openRouterApiKey}`,
+          'X-Title': 'Matchena',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          usage: { include: true },
+          // Reasoning is billed as output: "minimal" keeps a search reading at a fraction of a cent.
+          reasoning: { effort: reasoning },
+          messages: [
+            { role: 'system', content: req.systemPrompt + schemaHint },
+            { role: 'user', content: req.userPrompt },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new AiCallFailure(`HTTP ${res.status}`, res.status);
+      const json = (await res.json()) as {
+        choices?: { message?: { content?: string } }[];
+        usage?: { cost?: number };
+      };
+      const text = json?.choices?.[0]?.message?.content;
+      if (typeof text !== 'string' || !text.trim()) throw new AiCallFailure('empty response');
+      return { raw: JSON.stringify(extractJson(text)), costUsd: Number(json?.usage?.cost) || 0 };
+    } catch (err) {
+      if (err instanceof AiCallFailure) throw err;
+      if ((err as { name?: string }).name === 'AbortError') throw new AiCallFailure('timeout');
+      if (err instanceof SyntaxError) throw new AiCallFailure('unparseable JSON');
+      throw new AiCallFailure(String(err));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async callGemini(
+    req: StructuredIntentRequest,
+    timeoutMs: number,
+  ): Promise<{ raw: string; costUsd: number }> {
     if (this.forceFailure === 'gemini') {
-      // TEST ONLY (see .env.example AI_FORCE_FAILURE) — never true in production.
       throw new AiCallFailure('forced-failure (AI_FORCE_FAILURE=gemini)');
     }
-
     const body = {
       contents: [{ role: 'user', parts: [{ text: req.userPrompt }] }],
       systemInstruction: { parts: [{ text: req.systemPrompt }] },
@@ -148,7 +301,6 @@ export class AiProviderService {
         ...(req.responseSchema ? { responseSchema: req.responseSchema } : {}),
       },
     };
-
     for (let attempt = 1; attempt <= 2; attempt++) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -157,10 +309,7 @@ export class AiProviderService {
           `https://generativelanguage.googleapis.com/v1beta/models/${this.geminiModel}:generateContent`,
           {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': this.geminiApiKey,
-            },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.geminiApiKey },
             body: JSON.stringify(body),
             signal: controller.signal,
           },
@@ -172,10 +321,9 @@ export class AiProviderService {
         }
         if (!res.ok) throw new AiCallFailure(`HTTP ${res.status}`, res.status);
         const json = await res.json();
-        const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (typeof raw !== 'string' || !raw.trim()) throw new AiCallFailure('empty response');
-        extractJson(raw); // throws if not valid JSON — triggers fallback rather than handing the caller garbage
-        return raw;
+        const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (typeof text !== 'string' || !text.trim()) throw new AiCallFailure('empty response');
+        return { raw: JSON.stringify(extractJson(text)), costUsd: 0 };
       } catch (err) {
         clearTimeout(timeout);
         if (err instanceof AiCallFailure) throw err;
@@ -186,50 +334,5 @@ export class AiProviderService {
       }
     }
     throw new AiCallFailure('exhausted retries');
-  }
-
-  private async callOpenRouter(
-    model: string,
-    req: StructuredIntentRequest,
-    timeoutMs: number,
-  ): Promise<string> {
-    const schemaHint = req.responseSchema
-      ? `\n\nRespond with a single JSON object only (no prose, no markdown fences) matching exactly this structure: ${JSON.stringify(req.responseSchema)}`
-      : '';
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.openRouterApiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.2,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: req.systemPrompt + schemaHint },
-            { role: 'user', content: req.userPrompt },
-          ],
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!res.ok) throw new AiCallFailure(`HTTP ${res.status}`, res.status);
-      const json = await res.json();
-      const raw = json?.choices?.[0]?.message?.content;
-      if (typeof raw !== 'string' || !raw.trim()) throw new AiCallFailure('empty response');
-      extractJson(raw);
-      return raw;
-    } catch (err) {
-      clearTimeout(timeout);
-      if (err instanceof AiCallFailure) throw err;
-      if ((err as { name?: string }).name === 'AbortError') throw new AiCallFailure('timeout');
-      if (err instanceof SyntaxError) throw new AiCallFailure('unparseable JSON');
-      throw new AiCallFailure(String(err));
-    }
   }
 }

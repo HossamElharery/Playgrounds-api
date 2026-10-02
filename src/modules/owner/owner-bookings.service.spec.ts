@@ -77,6 +77,8 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
     payment: {
       create: jest.fn().mockResolvedValue({}),
       aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      findFirst: jest.fn(),
+      delete: jest.fn().mockResolvedValue({}),
     },
     calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
     venueBookingSource: { upsert: jest.fn().mockResolvedValue({}) },
@@ -329,6 +331,29 @@ describe('OwnerBookingsService', () => {
     await service(prisma).addManualPayment(owner, 'b1', 250, 'instapay');
     expect(tx.booking.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ paymentStatus: 'paid' }) }),
+    );
+  });
+
+  it('voiding a payment removes that row and re-derives the status from what is left', async () => {
+    const booking = bookingRow({ paymentStatus: 'paid' });
+    const { prisma, tx } = makePrisma({ booking });
+    prisma.booking.findUnique.mockResolvedValue(booking);
+    tx.payment.findFirst.mockResolvedValue({ id: 'p1', amount: 250 });
+    tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 150 } });
+    await service(prisma).voidManualPayment(owner, 'b1', 'p1');
+    expect(tx.payment.delete).toHaveBeenCalledWith({ where: { id: 'p1' } });
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { paymentStatus: 'partial' } }),
+    );
+  });
+
+  it('cannot void a payment that is not on this booking', async () => {
+    const booking = bookingRow();
+    const { prisma, tx } = makePrisma({ booking });
+    prisma.booking.findUnique.mockResolvedValue(booking);
+    tx.payment.findFirst.mockResolvedValue(null);
+    await expect(service(prisma).voidManualPayment(owner, 'b1', 'nope')).rejects.toThrow(
+      'Payment not found',
     );
   });
 

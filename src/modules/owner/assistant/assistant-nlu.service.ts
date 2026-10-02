@@ -175,12 +175,13 @@ export class AssistantNluService {
       `رسالة الأونر الحالية: "${text.slice(0, 400)}"`;
 
     try {
-      const { raw } = await this.aiProvider.getStructuredIntent({
+      const { raw, model, ms, costUsd } = await this.aiProvider.getStructuredIntent({
         systemPrompt: `${SYSTEM_PROMPT}\n\n${synonyms}`,
         userPrompt: prompt,
         responseSchema: RESPONSE_SCHEMA,
       });
-      return this.parse(raw, courts, today);
+      const reading = this.parse(raw, courts, today);
+      return reading ? { ...reading, meta: { model, ms, costUsd } } : null;
     } catch (err) {
       if (!(err instanceof AiUnavailableError))
         this.logger.warn(`Assistant NLU failed: ${err}`);

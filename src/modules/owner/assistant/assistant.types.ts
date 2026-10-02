@@ -72,6 +72,8 @@ export interface AssistantReading {
   newCourtId: string | null;
   /** A short question in the owner's language when something is missing or unclear. */
   question: string;
+  /** Which model read the sentence, how long it took and what it cost. Never holds the sentence itself. */
+  meta?: { model: string; ms: number; costUsd: number };
 }
 
 /** A booking the assistant found and may act on — echoed back so the confirm card can name it. */

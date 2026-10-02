@@ -1,28 +1,53 @@
-// NOTE: OpenRouter's free-tier lineup changes over time — meta-llama/qwen
-// free models were retired by the time this was implemented (2026-09), so
-// the fallback models here are two currently-free Nvidia Nemotron models
-// (verified working via `npm run test:openrouter`). Re-check
-// https://openrouter.ai/models?max_price=0 periodically and swap these out
-// if they too get retired.
-export type AiProviderName = 'gemini' | 'openrouter-nemotron-ultra' | 'openrouter-nemotron-super';
+/**
+ * Who is asking decides where the sentence may travel.
+ *  - `owner`: the venue owner's assistant. Its prompts can carry customer
+ *    names and amounts, so it only ever goes to Google models.
+ *  - `public`: players and visitors (Captain, smart search). Search intent
+ *    only, no personal data, so cheaper or free fallbacks are acceptable.
+ */
+export type AiProfile = 'owner' | 'public';
+
+export type AiProviderName = 'openrouter' | 'gemini';
+
+export type AiReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 
 export interface StructuredIntentRequest {
   systemPrompt: string;
   userPrompt: string;
-  /** Gemini-native JSON schema (ignored by the OpenRouter fallbacks — they rely on the prompt text instead). */
+  /** Gemini-native JSON schema; the OpenRouter models get it as prompt text instead. */
   responseSchema?: Record<string, unknown>;
   timeoutMs?: number;
+  /** Defaults to `owner` — the most private route — so a caller must opt in to the wider one. */
+  profile?: AiProfile;
+  /** How long the model may think. Thinking tokens are billed as output. */
+  reasoning?: AiReasoningEffort;
+  /** Identical prompts inside this window reuse the previous answer. */
+  cacheTtlMs?: number;
+  /**
+   * Admin tools only (live preview, quality runs, shadow comparison): ask exactly
+   * these OpenRouter models, in order, instead of the audience's chain. Public
+   * profile only — the owner assistant never leaves its own chain.
+   */
+  modelsOverride?: string[];
+  /** Admin tools only: the call is real and still counted, but a spent daily budget does not stop an admin from testing. */
+  skipBudget?: boolean;
 }
 
 export interface StructuredIntentResult {
-  /** Raw model text — the caller re-validates every field, exactly as before this layer existed. */
+  /** Normalised JSON text — the caller still re-validates every field. */
   raw: string;
   provider: AiProviderName;
+  model: string;
+  costUsd: number;
+  ms: number;
 }
 
-/** Thrown when Gemini and both OpenRouter fallbacks all fail. Callers must catch this. */
+/** Thrown when every route failed or the day's AI budget is spent. Callers must catch this. */
 export class AiUnavailableError extends Error {
-  constructor(message = 'AI_UNAVAILABLE') {
+  constructor(
+    message = 'AI_UNAVAILABLE',
+    readonly reason: 'unavailable' | 'budget' = 'unavailable',
+  ) {
     super(message);
     this.name = 'AiUnavailableError';
   }

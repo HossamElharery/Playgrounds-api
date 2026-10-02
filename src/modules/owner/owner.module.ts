@@ -21,6 +21,7 @@ import { ExpensesService } from './expenses/expenses.service';
 import { InsightsService } from './insights/insights.service';
 import { AssistantNluService } from './assistant/assistant-nlu.service';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
+import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
 import { AssistantRemindersService } from './assistant/assistant-reminders.service';
 
 @Module({
@@ -30,6 +31,7 @@ import { AssistantRemindersService } from './assistant/assistant-reminders.servi
     GeminiNluService,
     AssistantNluService,
     OwnerAssistantService,
+    OwnerAssistantExecutorService,
     AssistantRemindersService,
     OwnerBookingsService,
     OwnerSummaryService,

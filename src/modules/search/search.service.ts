@@ -8,8 +8,6 @@ import { SmartSearchDto } from './dto/smart-search.dto';
 import { ParsedSearchIntent, SmartSearchResult } from './smart-search.types';
 
 const SESSION_TTL_MS = 10 * 60_000;
-/** Price cap used for a "cheap" preference — 2000 EGP in piasters, matching how prices are stored elsewhere. */
-const CHEAP_PRICE_MAX = 200_000;
 /** Default search radius for a "near me" request, once we actually have coordinates for it. */
 const NEAR_ME_RADIUS_KM = 8;
 /** How far ahead one venue's rating must lead the runner-up before we redirect instead of showing choices. */
@@ -77,6 +75,9 @@ export class SearchService {
       systemPrompt: `${SYSTEM_PROMPT}\n\n${context}`,
       userPrompt: text.slice(0, 200),
       responseSchema: RESPONSE_SCHEMA,
+      profile: 'public',
+      reasoning: 'minimal',
+      cacheTtlMs: 120_000,
     });
     return this.validate(raw);
   }
@@ -144,8 +145,9 @@ export class SearchService {
       district: hasCoords ? undefined : (filters.district ?? undefined),
       center: hasCoords ? `${dto.lat},${dto.lng}` : undefined,
       radiusKm: hasCoords ? NEAR_ME_RADIUS_KM : undefined,
-      priceMax: filters.cheap ? CHEAP_PRICE_MAX : undefined,
-      sort: hasCoords ? 'distance' : 'rating',
+      // "Cheap" is a ranking, not a ceiling: prices are stored in whole EGP, so the
+      // old 200_000 cap (written as piasters) never excluded anything.
+      sort: hasCoords ? 'distance' : filters.cheap ? 'price' : 'rating',
       pageSize: 3,
       include: 'cards,count',
     } as SearchVenuesDto;

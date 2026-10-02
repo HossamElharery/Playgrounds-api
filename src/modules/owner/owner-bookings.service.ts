@@ -378,6 +378,49 @@ export class OwnerBookingsService {
     return this.toOwnerBookingDto(updated, user);
   }
 
+  /**
+   * Takes back one payment the assistant just recorded (its Undo). Only a manual
+   * booking's own `paid` row can go, and the booking's status is re-derived from
+   * what is left, exactly as `addManualPayment` derived it on the way in.
+   */
+  async voidManualPayment(user: AuthenticatedUser, bookingId: string, paymentId: string) {
+    const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
+    if (booking.source === 'platform') {
+      throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
+    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        const payment = await tx.payment.findFirst({
+          where: { id: paymentId, bookingId, status: 'paid' },
+        });
+        if (!payment) throw new NotFoundException('Payment not found');
+        await tx.payment.delete({ where: { id: paymentId } });
+        const left = await tx.payment.aggregate({
+          where: { bookingId, status: 'paid' },
+          _sum: { amount: true },
+        });
+        const paid = left._sum.amount ?? 0;
+        const paymentStatus: PaymentStatus =
+          paid >= booking.totalAmount ? 'paid' : paid > 0 ? 'partial' : 'pending';
+        await tx.booking.update({ where: { id: bookingId }, data: { paymentStatus } });
+        await tx.auditLogEntry.create({
+          data: {
+            actorUserId: user.id,
+            action: 'owner.booking.payment_voided',
+            targetType: 'booking',
+            targetId: bookingId,
+            metadata: { bookingId, venueId: booking.venueId, paymentId, amount: payment.amount } as Prisma.InputJsonValue,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return this.toOwnerBookingDto(
+      await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
+      user,
+    );
+  }
+
   async deleteManualBooking(user: AuthenticatedUser, bookingId: string) {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {

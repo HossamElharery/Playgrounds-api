@@ -68,9 +68,11 @@ import {
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
+import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
 import {
   AssistantAskDto,
   AssistantExecuteDto,
+  UndoAssistantActionsDto,
 } from './assistant/owner-assistant.dto';
 import type { AssistantAction } from './assistant/assistant.types';
 
@@ -93,6 +95,7 @@ export class OwnerController {
     private readonly platformRequests: PlatformRequestsService,
     private readonly quickstart: QuickstartService,
     private readonly assistant: OwnerAssistantService,
+    private readonly assistantExecutor: OwnerAssistantExecutorService,
   ) {}
 
   @AnyStaff()
@@ -190,11 +193,30 @@ export class OwnerController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: AssistantExecuteDto,
   ) {
-    return this.assistant.execute(
+    return this.assistantExecutor.execute(
       user,
       dto.venueId,
       dto.actions as unknown as AssistantAction[],
     );
+  }
+
+  /**
+   * Takes back what one confirmed plan wrote (a booking, a payment, an expense,
+   * a cancellation, an edit). The inverse is held server-side and is single-use
+   * and short-lived; the permission to reverse each step is re-checked.
+   */
+  @RequireAnyPermission(
+    'bookings.create',
+    'payments.record',
+    'bookings.edit',
+    'expenses.manage',
+  )
+  @Post('assistant/undo-actions')
+  undoAssistantActions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UndoAssistantActionsDto,
+  ) {
+    return this.assistantExecutor.undo(user, dto.venueId, dto.undoId);
   }
 
   // The assistant is no longer schedule-only: its chat log is the record of

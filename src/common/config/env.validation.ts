@@ -99,11 +99,35 @@ export const envValidationSchema = Joi.object({
   /** Diagnostics: exactly `true` forces every client through TURN (relay-only). Leave unset normally. */
   TURN_FORCE_RELAY: Joi.string().allow('').optional(),
 
+  // Direct Google key: optional extra route behind OpenRouter (the free tier allows ~20 requests/day).
   GEMINI_API_KEY: Joi.string().allow('').optional(),
-  GEMINI_MODEL: Joi.string().default('gemini-3.6-flash'),
+  GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
 
-  // --- OpenRouter (free-tier fallback for the AI provider layer) ---
+  // --- OpenRouter: the main route for every AI call (see modules/ai/ai-provider.service.ts) ---
   OPENROUTER_API_KEY: Joi.string().allow('').optional(),
+  /** Comma-separated OpenRouter model ids, best first. Defaults live in ai-provider.service.ts. */
+  AI_OWNER_MODELS: Joi.string().allow('').optional(),
+  AI_PUBLIC_MODELS: Joi.string().allow('').optional(),
+  /** minimal | low | medium | high — how long the model may think (billed as output). */
+  AI_OWNER_REASONING: Joi.string().allow('').optional(),
+  AI_PUBLIC_REASONING: Joi.string().allow('').optional(),
+  /** Daily spend ceilings in USD; past them the assistants fall back to keyword matching until midnight UTC. */
+  AI_OWNER_DAILY_BUDGET_USD: Joi.string().allow('').optional(),
+  AI_PUBLIC_DAILY_BUDGET_USD: Joi.string().allow('').optional(),
+  /** Captain message allowances (visitors / signed-in players). */
+  CAPTAIN_GUEST_PER_DAY: Joi.string().allow('').optional(),
+  CAPTAIN_GUEST_PER_MINUTE: Joi.string().allow('').optional(),
+  CAPTAIN_GUEST_IP_PER_DAY: Joi.string().allow('').optional(),
+  CAPTAIN_GUEST_IP_PER_MINUTE: Joi.string().allow('').optional(),
+  CAPTAIN_USER_PER_DAY: Joi.string().allow('').optional(),
+  CAPTAIN_USER_PER_MINUTE: Joi.string().allow('').optional(),
+  /**
+   * The limits and budgets above can also be changed live from the admin AI tab; a value set there beats these.
+   * Salt for the one-way hashes kept instead of addresses and device ids (defaults to the access-token secret).
+   */
+  AI_HASH_SALT: Joi.string().allow('').optional(),
+  /** Cloudflare Turnstile secret. Unset = the check is dormant and nobody is ever challenged. */
+  TURNSTILE_SECRET_KEY: Joi.string().allow('').optional(),
 
   // TEST ONLY — simulates a Gemini failure to exercise the OpenRouter fallback
   // path without waiting for a real outage. Must be unset in production.

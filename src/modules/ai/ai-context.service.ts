@@ -62,6 +62,11 @@ export class AiContextService {
     return value;
   }
 
+  /** Real sport + district names with their slugs, for callers that answer in the player's own words. */
+  async listCatalog(): Promise<Catalog> {
+    return this.loadCatalog();
+  }
+
   /** Real sport + district names, formatted for the system prompt. */
   async buildPlatformContext(): Promise<string> {
     const { sports, districts } = await this.loadCatalog();

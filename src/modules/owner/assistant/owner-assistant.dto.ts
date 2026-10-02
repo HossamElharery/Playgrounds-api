@@ -217,3 +217,13 @@ export class AssistantExecuteDto {
   @Type(() => AssistantActionDto)
   actions!: AssistantActionDto[];
 }
+
+export class UndoAssistantActionsDto {
+  @ApiProperty()
+  @IsUUID()
+  venueId!: string;
+
+  @ApiProperty({ description: 'The `undoId` returned by assistant/execute.' })
+  @IsUUID()
+  undoId!: string;
+}

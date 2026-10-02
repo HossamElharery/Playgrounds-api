@@ -105,4 +105,17 @@ describe('assistant guards', () => {
     expect(plan.issues.map((i) => i.code)).toContain('DUPLICATE_CUSTOMER');
     expect(plan.needsConfirm).toBe(true);
   });
+
+  it('asks instead of proposing a money write the model is only half sure of', async () => {
+    const { service } = build(null, reading({ confidence: 0.45 }));
+    const plan = await service.ask(user, 'v1', 'أحمد هيحجز بكرة 2');
+    expect(plan.needsConfirm).toBe(false);
+    expect(plan.actions).toEqual([]);
+  });
+
+  it('still answers a read-only question at the lower confidence bar', async () => {
+    const { service } = build(null, reading({ intent: 'help', confidence: 0.4 }));
+    const plan = await service.ask(user, 'v1', 'ازاي');
+    expect(plan.intent).toBe('help');
+  });
 });

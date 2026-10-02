@@ -1,22 +1,34 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AiQuotaService } from '../../ai/ai-quota.service';
+import { AiSettingsService } from '../../ai/ai-settings.service';
+import { AiLogService } from '../../ai/ai-log.service';
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { OwnerSummaryService } from '../owner-summary.service';
 import { ExpensesService } from '../expenses/expenses.service';
-import { EXPENSE_CATEGORIES } from '../expenses/expenses.dto';
 import {
   AssistantNluService,
   type NluCourtRef,
   type NluKnownBooking,
   type NluTurn,
 } from './assistant-nlu.service';
-import { resolveCourtFromText } from './assistant-courts';
+import {
+  completeReading,
+  hhmm,
+  isAffirmative,
+  joinBi,
+  nextDay,
+  normalizeName,
+  sanitizeDraft,
+  todayIn,
+  courtDetails,
+} from './assistant-reading';
 import { findOwed } from './assistant-attention';
 import {
   bi,
@@ -43,210 +55,25 @@ import {
   zonedDayBounds,
 } from '../../../common/utils/timezone.util';
 
-/** Below this the model is guessing, and a guess here writes money into the books. */
+/** Below this the model is guessing; a question is cheap, so questions are answered at this bar. */
 const MIN_CONFIDENCE = 0.35;
-/** One sentence never legitimately asks for more than this. */
-const MAX_ACTIONS = 4;
-
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function hhmm(mins: number): string {
-  return `${pad(Math.floor(mins / 60) % 24)}:${pad(mins % 60)}`;
-}
-
-function joinBi(parts: Bi[], sep = ' '): Bi {
-  return bi(parts.map((p) => p.ar).join(sep), parts.map((p) => p.en).join(sep));
-}
-
-/** Arabic spellings vary more than the owner does — compare on a flattened form. */
-function normalizeName(value: string): string {
-  return value
-    .replace(/\u0640/g, '')
-    .replace(/[\u064B-\u0652]/gu, '')
-    .replace(/[إأآٱ]/g, 'ا')
-    .replace(/ى/g, 'ي')
-    .replace(/ة/g, 'ه')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function todayIn(tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
-}
-
-/** YYYY-MM-DD + 1 calendar day (no timezone maths: it is a date, not an instant). */
-export function nextDay(date: string): string {
-  const [y, m, d] = date.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
-}
-
-/** "أيوه" / "yes" to a proposal the assistant just made. */
-export function isAffirmative(text: string): boolean {
-  return /^\s*(ا?ي?وه|اه|أه|آه|ايوا|أيوا|اكيد|أكيد|تمام|ماشي|ok|okay|yes|yep|yeah|sure|اة|اي)\s*[.!،]*\s*$/i.test(
-    text.replace(/[\u064B-\u0652]/g, ''),
-  );
-}
-
-/** Console type, room tier, sport and format — the words an owner uses instead of the court's name. */
-function courtDetails(c: {
-  format: string | null;
-  gamingConfig: unknown;
-  tableConfig: unknown;
-  sport: { nameEn: string; nameAr: string } | null;
-}): string {
-  const g = (c.gamingConfig ?? {}) as Record<string, unknown>;
-  const t = (c.tableConfig ?? {}) as Record<string, unknown>;
-  return [
-    c.sport?.nameEn,
-    c.sport?.nameAr,
-    g['consoleType'],
-    g['roomTier'],
-    g['seats'] ? `${g['seats']} seats` : null,
-    t['tableType'],
-    c.format,
-  ]
-    .filter((x): x is string => typeof x === 'string' && x.length > 0)
-    .join(' ');
-}
-
-/** The client echoes the draft back, so it is treated like any other untrusted input. */
-function sanitizeDraft(
-  raw: Record<string, unknown> | undefined,
-  courts: NluCourtRef[],
-): AssistantReading | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const intents: AssistantReading['intent'][] = [
-    'block', 'unblock', 'book', 'pay', 'cancel', 'move', 'expense',
-  ];
-  const intent = raw['intent'] as AssistantReading['intent'];
-  if (!intents.includes(intent)) return null;
-  const valid = new Set(courts.map((c) => c.id));
-  const num = (v: unknown, min: number, max: number): number | null => {
-    const n = Number(v);
-    return v !== null && v !== '' && Number.isFinite(n) && n >= min && n <= max
-      ? n
-      : null;
-  };
-  const str = (v: unknown, max: number) =>
-    typeof v === 'string' ? v.replace(/[<>;`$\\]/g, '').slice(0, max).trim() : '';
-  const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | null =>
-    allowed.includes(v as T) ? (v as T) : null;
-  const ids = Array.isArray(raw['courtIds'])
-    ? (raw['courtIds'] as unknown[]).filter(
-        (id): id is string => typeof id === 'string' && valid.has(id),
-      )
-    : [];
-  return {
-    intent,
-    courtIds: ids,
-    allCourts: raw['allCourts'] === true && ids.length === 0,
-    date: /^\d{4}-\d{2}-\d{2}$/.test(String(raw['date']))
-      ? String(raw['date'])
-      : '',
-    fromMins: num(raw['fromMins'], 0, 1440),
-    toMins: num(raw['toMins'], 0, 1440),
-    durationMinutes: num(raw['durationMinutes'], 15, 720),
-    customerName: str(raw['customerName'], 80),
-    customerPhone: str(raw['customerPhone'], 32).replace(/[^\d+]/g, ''),
-    totalAmount: num(raw['totalAmount'], 0, 1_000_000),
-    paidAmount: num(raw['paidAmount'], 0, 1_000_000),
-    remainingAmount: num(raw['remainingAmount'], 0, 1_000_000),
-    paymentMethod: oneOf(raw['paymentMethod'], ['cash', 'instapay', 'wallet', 'card', 'other'] as const),
-    sourceKey: oneOf(raw['sourceKey'], ['walk_in', 'phone', 'whatsapp', 'other_platform'] as const),
-    expenseCategory: str(raw['expenseCategory'], 30) || null,
-    rangeKey: null,
-    reason: str(raw['reason'], 120),
-    confidence: 0.6,
-    newDate: /^\d{4}-\d{2}-\d{2}$/.test(String(raw['newDate']))
-      ? String(raw['newDate'])
-      : null,
-    newFromMins: num(raw['newFromMins'], 0, 1440),
-    newCourtId:
-      typeof raw['newCourtId'] === 'string' && valid.has(raw['newCourtId'])
-        ? raw['newCourtId']
-        : null,
-    question: '',
-  };
-}
-
-const NEEDS_COURT: ReadonlySet<AssistantReading['intent']> = new Set([
+/**
+ * Anything that writes money or edits a booking needs a firmer read. Under it
+ * the assistant asks instead of proposing — the owner's confirm tap is the
+ * second guard, not the first, and a half-heard "محمد دفع ٢٠٠" should not reach
+ * a confirm card at all.
+ */
+const MIN_CONFIDENCE_WRITE = 0.6;
+const WRITES_MONEY: ReadonlySet<AssistantReading['intent']> = new Set([
   'book',
-  'block',
-  'unblock',
-  'free',
-  'agenda',
+  'pay',
+  'cancel',
+  'move',
+  'expense',
 ]);
 
-/**
- * Joins the model's reading with what the assistant was already waiting for,
- * then fills in what plain string matching can do better than a model: an
- * answer like "PS5 Room 1" to "which court?" must never be lost.
- */
-export function completeReading(
-  reading: AssistantReading,
-  draft: AssistantReading | null,
-  text: string,
-  courts: NluCourtRef[],
-): AssistantReading {
-  let r = { ...reading };
-  const resolved = () =>
-    resolveCourtFromText(
-      text,
-      courts.map((c) => ({ id: c.id, name: c.name, hints: c.details })),
-    );
-
-  if (draft && r.intent === 'unknown' && isAffirmative(text)) {
-    // "أيوه" to "تقصد بكرة؟": the draft already holds the proposal.
-    r = { ...draft, confidence: Math.max(r.confidence, 0.8), question: '' };
-  } else if (draft && r.intent === 'unknown') {
-    // The model lost the thread. If the sentence at least names a court, it is
-    // the answer to the pending question.
-    const court = draft.courtIds.length ? null : resolved();
-    if (court) {
-      r = {
-        ...draft,
-        courtIds: [court],
-        date: draft.date || r.date,
-        confidence: Math.max(r.confidence, 0.6),
-        question: '',
-      };
-    }
-  } else if (draft && r.intent === draft.intent) {
-    r = {
-      ...r,
-      courtIds: r.courtIds.length ? r.courtIds : draft.courtIds,
-      allCourts: r.allCourts || (draft.allCourts && !r.courtIds.length),
-      fromMins: r.fromMins ?? draft.fromMins,
-      toMins: r.toMins ?? draft.toMins,
-      durationMinutes: r.durationMinutes ?? draft.durationMinutes,
-      customerName: r.customerName || draft.customerName,
-      customerPhone: r.customerPhone || draft.customerPhone,
-      totalAmount: r.totalAmount ?? draft.totalAmount,
-      paidAmount: r.paidAmount ?? draft.paidAmount,
-      remainingAmount: r.remainingAmount ?? draft.remainingAmount,
-      paymentMethod: r.paymentMethod ?? draft.paymentMethod,
-      sourceKey: r.sourceKey ?? draft.sourceKey,
-      reason: r.reason || draft.reason,
-      newDate: r.newDate ?? draft.newDate,
-      newFromMins: r.newFromMins ?? draft.newFromMins,
-      newCourtId: r.newCourtId ?? draft.newCourtId,
-    };
-  }
-
-  if (NEEDS_COURT.has(r.intent) && !r.courtIds.length && !r.allCourts) {
-    const court = resolved();
-    if (court) r.courtIds = [court];
-  }
-  if (r.intent === 'move' && !r.newCourtId && !r.courtIds.length) {
-    // "انقل حجز محمد للـ VIP" — the court in the sentence is the destination.
-    const court = resolved();
-    if (court) r.newCourtId = court;
-  }
-  return r;
-}
+// Kept for the callers and specs that always imported them from here.
+export { completeReading, isAffirmative, nextDay };
 
 /**
  * The owner's assistant. The NLU proposes a reading of the sentence; this
@@ -273,6 +100,9 @@ export class OwnerAssistantService {
     private readonly bookings: OwnerBookingsService,
     private readonly summary: OwnerSummaryService,
     private readonly expenses: ExpensesService,
+    @Optional() private readonly quota?: AiQuotaService,
+    @Optional() private readonly settings?: AiSettingsService,
+    @Optional() private readonly logs?: AiLogService,
   ) {}
 
   get enabled(): boolean {
@@ -281,11 +111,49 @@ export class OwnerAssistantService {
 
   // ---------------------------------------------------------------- ask ----
 
+  /**
+   * Reads one sentence and plans what it asks for. Besides the plan it leaves a
+   * trace for the admin — intent, outcome, model, time, cost — and deliberately
+   * nothing the owner typed: those sentences carry customers' names and amounts.
+   */
   async ask(
     user: AuthenticatedUser,
     venueId: string,
     text: string,
     extra: { history?: NluTurn[]; draft?: Record<string, unknown> } = {},
+  ): Promise<AssistantPlan> {
+    const trace: { limited?: boolean; meta?: AssistantReading['meta'] } = {};
+    const plan = await this.plan(user, venueId, text, extra, trace);
+    const blocking = plan.issues.find((i) => i.blocking);
+    this.logs?.logOwnerEvent({
+      venueId,
+      userId: user.id,
+      event: 'ask',
+      intent: plan.intent,
+      outcome: trace.limited
+        ? 'limited'
+        : !plan.available
+          ? 'unavailable'
+          : blocking?.code === 'NO_PERMISSION'
+            ? 'denied'
+            : plan.intent === 'unknown'
+              ? 'clarify'
+              : 'planned',
+      detail: blocking?.code,
+      confidence: plan.confidence,
+      model: trace.meta?.model ?? null,
+      ms: trace.meta?.ms,
+      costUsd: trace.meta?.costUsd,
+    });
+    return plan;
+  }
+
+  private async plan(
+    user: AuthenticatedUser,
+    venueId: string,
+    text: string,
+    extra: { history?: NluTurn[]; draft?: Record<string, unknown> },
+    trace: { limited?: boolean; meta?: AssistantReading['meta'] },
   ): Promise<AssistantPlan> {
     const venue = await assertVenueAccess(this.prisma, user, venueId, {
       write: false,
@@ -296,6 +164,32 @@ export class OwnerAssistantService {
     }
     if (!this.nlu.enabled)
       return this.blank('unknown', bi('', ''), { available: false });
+
+    // A generous allowance per person: enough for a busy day at the venue, tight
+    // enough that a stuck script cannot spend the day's AI budget on one account.
+    const verdict = await this.quota?.take('owner', [
+      {
+        key: `user:${user.id}`,
+        perMinute: this.settings?.number('ownerPerMinute') ?? 20,
+        perDay: this.settings?.number('ownerPerDay') ?? 600,
+      },
+    ]);
+    if (verdict && !verdict.ok) {
+      trace.limited = true;
+      this.logger.warn(`[assistant-limit] ${verdict.reason} for user ${user.id}`);
+      return this.blank(
+        'unknown',
+        verdict.reason === 'minute'
+          ? bi(
+              `بالراحة شوية، استنى ${Math.min(verdict.retryAfterSec, 60)} ثانية وابعت تاني.`,
+              `Easy: wait ${Math.min(verdict.retryAfterSec, 60)} seconds and send again.`,
+            )
+          : bi(
+              'وصلت للحد اليومي للمساعد. تقدر تكمّل من لوحة المواعيد والأزرار، والمساعد يرجع بكرة.',
+              'You have reached the assistant’s daily limit. You can carry on from the day board and its buttons, and the assistant is back tomorrow.',
+            ),
+      );
+    }
 
     const tz = await this.venueTz(venueId);
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
@@ -337,9 +231,13 @@ export class OwnerAssistantService {
       draft,
     });
     if (!raw) return this.blank('unknown', bi('', ''), { available: false });
+    trace.meta = raw.meta;
     const reading = completeReading(raw, draft, clean, courts);
 
-    if (reading.confidence < MIN_CONFIDENCE || reading.intent === 'unknown') {
+    const bar = WRITES_MONEY.has(reading.intent)
+      ? MIN_CONFIDENCE_WRITE
+      : MIN_CONFIDENCE;
+    if (reading.confidence < bar || reading.intent === 'unknown') {
       // A question about what they meant beats a canned menu — and an
       // unfinished request stays alive across a stray "شكرًا".
       return this.blank('unknown', this.clarify(reading), {
@@ -1336,235 +1234,6 @@ export class OwnerAssistantService {
    * conflicts and the ledger behave identically — the assistant is a faster
    * way to press the buttons, never a way around them.
    */
-  async execute(
-    user: AuthenticatedUser,
-    venueId: string,
-    actions: AssistantAction[],
-  ): Promise<{ ok: boolean; reply: Bi; done: string[] }> {
-    const venue = await assertVenueAccess(this.prisma, user, venueId, {
-      write: true,
-    });
-    if (!actions.length || actions.length > MAX_ACTIONS) {
-      throw new BadRequestException(
-        `actions must contain 1-${MAX_ACTIONS} items`,
-      );
-    }
-    const currency = venue.priceFromCurrency ?? 'EGP';
-    const done: string[] = [];
-    const lines: Bi[] = [];
-
-    // The granular permission lives on the dashboard's own routes, so calling
-    // the services straight from here would hand a limited staff account the
-    // keys it was never given. Re-check per action, by the same catalogue.
-    const needed: Record<AssistantAction['kind'], PermissionKey> = {
-      create_booking: 'bookings.create',
-      record_payment: 'payments.record',
-      cancel_booking: 'bookings.edit',
-      add_expense: 'expenses.manage',
-      update_booking: 'bookings.edit',
-    };
-    for (const action of actions) {
-      if (!(await this.can(user, venueId, needed[action.kind]))) {
-        throw new ForbiddenException(
-          `Missing permission: ${needed[action.kind]}`,
-        );
-      }
-      // The action DTO cannot express "these fields are required for this
-      // kind", and a half-filled action reaches Prisma as an undefined id or a
-      // NaN amount. Check the shape once, here, before anything is written.
-      this.assertActionShape(action);
-    }
-
-    for (const action of actions) {
-      switch (action.kind) {
-        case 'create_booking': {
-          let restore: (() => Promise<void>) | undefined;
-          if (action.overrideBlocks) {
-            if (!(await this.can(user, venueId, 'schedule.manage'))) {
-              throw new ForbiddenException('Missing permission: schedule.manage');
-            }
-            const from = new Date(action.startsAt);
-            restore = await this.carveBlocks(
-              venueId,
-              action.courtId,
-              from,
-              new Date(from.getTime() + action.durationMinutes * 60_000),
-            );
-          }
-          let booking;
-          try {
-            booking = await this.bookings.createManualBooking(user, {
-              venueId,
-              courtId: action.courtId,
-              startsAt: action.startsAt,
-              durationMinutes: action.durationMinutes,
-              priceAmount: action.priceAmount,
-              paymentStatus: action.paymentStatus,
-              paidAmount: action.paidAmount,
-              paymentMethod: action.paymentMethod,
-              customerName: action.customerName,
-              customerPhone: action.customerPhone,
-              sourceKey: action.sourceKey,
-              notes: action.notes,
-            });
-          } catch (err) {
-            // The block was opened for this booking only; if it fell through,
-            // the window goes back to exactly how the owner left it.
-            await restore?.();
-            throw err;
-          }
-          done.push(booking.id);
-          lines.push(
-            bi(
-              `اتسجل الحجز ✅ (${booking.code})`,
-              `Booking recorded ✅ (${booking.code})`,
-            ),
-          );
-          break;
-        }
-        case 'record_payment': {
-          const booking = await this.bookings.addManualPayment(
-            user,
-            action.bookingId,
-            action.amount,
-            action.method,
-          );
-          done.push(booking.id);
-          const left = booking.money?.outstanding ?? 0;
-          lines.push(
-            left > 0
-              ? bi(
-                  `اتسجل الدفع ✅ باقي ${fmt(left, currency).ar}.`,
-                  `Payment recorded ✅ ${fmt(left, currency).en} still outstanding.`,
-                )
-              : bi(
-                  'اتسجل الدفع والحجز خالص ✅',
-                  'Payment recorded — fully settled ✅',
-                ),
-          );
-          break;
-        }
-        case 'cancel_booking': {
-          const booking = await this.bookings.deleteManualBooking(
-            user,
-            action.bookingId,
-          );
-          done.push(booking.id);
-          lines.push(bi('اتلغى الحجز ✅', 'Booking cancelled ✅'));
-          break;
-        }
-        case 'update_booking': {
-          const booking = await this.bookings.updateManualBooking(
-            user,
-            action.bookingId,
-            {
-              courtId: action.courtId,
-              startsAt: action.startsAt,
-              durationMinutes: action.durationMinutes,
-              priceAmount: action.priceAmount,
-            },
-          );
-          done.push(booking.id);
-          lines.push(bi('اتعدّل الحجز ✅', 'Booking updated ✅'));
-          break;
-        }
-        case 'add_expense': {
-          const expense = await this.expenses.create(user, {
-            venueId,
-            category: action.category as never,
-            categoryLabel:
-              action.category === 'other'
-                ? action.note?.slice(0, 60) || 'مصروف'
-                : undefined,
-            amount: action.amount,
-            incurredOn: action.incurredOn,
-            note: action.note,
-          });
-          done.push(expense.id);
-          lines.push(bi('اتسجل المصروف ✅', 'Expense recorded ✅'));
-          break;
-        }
-        default:
-          throw new BadRequestException('Unsupported action');
-      }
-    }
-    return { ok: true, reply: joinBi(lines, '\n'), done };
-  }
-
-  private assertActionShape(action: AssistantAction): void {
-    const need = (ok: unknown, field: string) => {
-      if (!ok)
-        throw new BadRequestException(`${action.kind} requires ${field}`);
-    };
-    switch (action.kind) {
-      case 'create_booking':
-        need(action.courtId, 'courtId');
-        need(
-          action.startsAt && !Number.isNaN(Date.parse(action.startsAt)),
-          'startsAt',
-        );
-        need(
-          Number.isInteger(action.durationMinutes) &&
-            action.durationMinutes > 0,
-          'durationMinutes',
-        );
-        need(
-          Number.isInteger(action.priceAmount) && action.priceAmount >= 0,
-          'priceAmount',
-        );
-        need(
-          ['paid', 'unpaid', 'partial'].includes(action.paymentStatus),
-          'paymentStatus',
-        );
-        if (action.paymentStatus === 'partial') {
-          need(
-            Number.isInteger(action.paidAmount) &&
-              (action.paidAmount as number) > 0 &&
-              (action.paidAmount as number) < action.priceAmount,
-            'paidAmount between 0 and priceAmount',
-          );
-        }
-        break;
-      case 'record_payment':
-        need(action.bookingId, 'bookingId');
-        need(
-          Number.isInteger(action.amount) && action.amount > 0,
-          'a positive amount',
-        );
-        break;
-      case 'cancel_booking':
-        need(action.bookingId, 'bookingId');
-        break;
-      case 'update_booking':
-        need(action.bookingId, 'bookingId');
-        need(
-          action.courtId ||
-            action.startsAt ||
-            action.durationMinutes ||
-            action.priceAmount !== undefined,
-          'at least one change',
-        );
-        if (action.startsAt)
-          need(!Number.isNaN(Date.parse(action.startsAt)), 'startsAt');
-        break;
-      case 'add_expense':
-        need(
-          EXPENSE_CATEGORIES.includes(
-            action.category as (typeof EXPENSE_CATEGORIES)[number],
-          ),
-          'a known category',
-        );
-        need(
-          Number.isInteger(action.amount) && action.amount > 0,
-          'a positive amount',
-        );
-        need(
-          /^\d{4}-\d{2}-\d{2}$/.test(action.incurredOn),
-          'incurredOn as YYYY-MM-DD',
-        );
-        break;
-    }
-  }
 
   // ---------------------------------------------------------- attention ----
 
@@ -1733,61 +1402,6 @@ export class OwnerAssistantService {
    * whatever is left of the block on either side (and, for a venue-wide block,
    * on every other court). Returns a function that puts everything back.
    */
-  private async carveBlocks(
-    venueId: string,
-    courtId: string,
-    start: Date,
-    end: Date,
-  ): Promise<() => Promise<void>> {
-    const blocks = await this.prisma.calendarBlock.findMany({
-      where: {
-        venueId,
-        OR: [{ courtId }, { courtId: null }],
-        startsAt: { lt: end },
-        endsAt: { gt: start },
-      },
-    });
-    if (!blocks.length) return async () => undefined;
-    const others = await this.prisma.court.findMany({
-      where: { venueId, id: { not: courtId } },
-      select: { id: true },
-    });
-    const created: string[] = [];
-    await this.prisma.$transaction(async (tx) => {
-      for (const b of blocks) {
-        await tx.calendarBlock.delete({ where: { id: b.id } });
-        const make = async (cid: string | null, from: Date, to: Date) => {
-          if (to.getTime() <= from.getTime()) return;
-          const row = await tx.calendarBlock.create({
-            data: {
-              venueId,
-              courtId: cid,
-              kind: b.kind,
-              startsAt: from,
-              endsAt: to,
-              note: b.note,
-              createdById: b.createdById,
-            },
-          });
-          created.push(row.id);
-        };
-        await make(b.courtId, b.startsAt, new Date(Math.min(start.getTime(), b.endsAt.getTime())));
-        await make(b.courtId, new Date(Math.max(end.getTime(), b.startsAt.getTime())), b.endsAt);
-        if (b.courtId === null) {
-          const from = new Date(Math.max(start.getTime(), b.startsAt.getTime()));
-          const to = new Date(Math.min(end.getTime(), b.endsAt.getTime()));
-          for (const o of others) await make(o.id, from, to);
-        }
-      }
-    });
-    return async () => {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.calendarBlock.deleteMany({ where: { id: { in: created } } });
-        await tx.calendarBlock.createMany({ data: blocks });
-      });
-    };
-  }
-
   // ------------------------------------------------------------ helpers ----
 
   /** Manual bookings with money still on them, for the day asked about and the week after it. */
