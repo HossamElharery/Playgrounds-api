@@ -40,6 +40,7 @@ import { BundlesModule } from '../bundles/bundles.module';
 import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
+import { AiAdminModule } from '../ai/admin/ai-admin.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 import { PostsModule } from '../posts/posts.module';
 import { FinanceModule } from '../finance/finance.module';
@@ -77,6 +78,7 @@ import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
     GeoModule,
     VenuesModule,
     SearchModule,
+    AiAdminModule,
     PaymentsModule,
     BookingsModule,
     ReviewsModule,
