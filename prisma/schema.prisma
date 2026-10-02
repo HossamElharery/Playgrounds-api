@@ -2702,9 +2702,9 @@ model AiCounterDaily {
   @@index([day, scope, count])
 }
 
-/// What players and visitors asked Captain. Text is stored redacted (long digit
-/// runs and emails removed), visible to admins only, and purged after the
-/// retention window. Owner-assistant messages are never stored here.
+/// What players and visitors asked Captain, exactly as typed (column `textRedacted` keeps its
+/// original name). Visible to admins only and purged after the retention window.
+/// Owner-assistant messages are never stored here.
 model AiQuestionLog {
   id                  String            @id @default(uuid())
   createdAt           DateTime          @default(now())

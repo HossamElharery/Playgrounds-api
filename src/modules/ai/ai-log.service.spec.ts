@@ -24,11 +24,11 @@ function build() {
 
 describe('AiLogService', () => {
   describe('player questions', () => {
-    it('stores the sentence redacted, and an asker reference instead of an address or device id', () => {
+    it('stores the sentence exactly as the player typed it, and an asker reference instead of an address or device id', () => {
       const { logs, prisma } = build();
       const id = logs.logQuestion({
         userKind: 'guest',
-        text: 'كلمني 01012345678 او ابعتلي على a.b@mail.com',
+        text: 'كلمني 01012345678  او ابعتلي على a.b@mail.com',
         outcome: 'answered_fact',
         factIds: ['support_contact'],
         model: 'google/gemini-3.8-flash',
@@ -39,11 +39,10 @@ describe('AiLogService', () => {
       expect(id).toMatch(/^[0-9a-f-]{36}$/);
       const data = prisma.aiQuestionLog.create.mock.calls[0][0].data;
       expect(data.id).toBe(id);
-      expect(data.textRedacted).toBe('كلمني [number] او ابعتلي على [email]');
+      expect(data.textRedacted).toBe('كلمني 01012345678 او ابعتلي على a.b@mail.com');
       expect(data.askerRef).toMatch(/^[0-9a-f]{12}$/);
       expect(data.costMicros).toBe(1500);
       expect(JSON.stringify(data)).not.toContain('41.130.9.77');
-      expect(JSON.stringify(data)).not.toContain('01012345678');
     });
 
     it('stores a free-text reason as a harmless code, never as words', () => {

@@ -7,12 +7,11 @@ import { AiQuotaService } from './ai-quota.service';
 import { AiSettingsService } from './ai-settings.service';
 import { AiUsageService } from './ai-usage.service';
 import { addDays, dayDate, toMicros, utcDayString } from './ai-day';
-import { redactText } from './ai-redact';
 
 export interface QuestionLogInput {
   surface?: AiSurface;
   userKind: AiAskerKind;
-  /** The player's sentence as typed; it is redacted here, once, before it goes anywhere. */
+  /** The player's sentence exactly as typed (trimmed and capped); only admins can read it. */
   text: string;
   lang?: 'ar' | 'en';
   intent?: string;
@@ -56,8 +55,8 @@ function code(value: string | undefined, max: number): string | null {
 }
 
 /**
- * Writes the two logs the admin reads: what players asked Captain (redacted
- * text, kept for a fixed window) and what happened to the owner assistant's
+ * Writes the two logs the admin reads: what players asked Captain (the
+ * sentence as typed, admin-only, kept for a fixed window) and what happened to the owner assistant's
  * requests (no text at all). A log write is best effort — it never delays or
  * fails the answer, and a flood of refused messages is counted, not stored row by row.
  */
@@ -97,7 +96,8 @@ export class AiLogService {
           id,
           surface: input.surface ?? 'captain',
           userKind: input.userKind,
-          textRedacted: redactText(input.text, 300) || '—',
+          // The column keeps its old name; the admin asked to see every message exactly as the player wrote it.
+          textRedacted: input.text.replace(/\s+/g, ' ').trim().slice(0, 300) || '—',
           lang: input.lang ?? null,
           intent: code(input.intent, 40),
           outcome: input.outcome,
