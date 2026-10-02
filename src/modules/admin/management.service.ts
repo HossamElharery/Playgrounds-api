@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { loadBookingBlockers } from '../../common/utils/venue-readiness.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
@@ -328,7 +329,7 @@ export class ManagementService {
     return v;
   }
   async updateVenue(actor: string, id: string, dto: AdminVenueDto) {
-    const { reason: rawReason, sportIds, amenityKeys, weeklyHours, ...data } = dto;
+    const { reason: rawReason, sportIds, amenityKeys, weeklyHours, force, ...data } = dto;
     const reason = rawReason?.trim() || 'Admin edit';
     if (weeklyHours) {
       const errors = validateWeeklyHours(weeklyHours);
@@ -337,6 +338,16 @@ export class ManagementService {
     return this.db.$transaction(async (tx) => {
       const before = await tx.venue.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('Venue not found');
+      if (data.status === 'active' && before.status !== 'active' && !force) {
+        const missing = await loadBookingBlockers(tx as never, id);
+        if (missing.length) {
+          throw new ConflictException({
+            code: 'VENUE_NOT_READY',
+            message: `Venue cannot be published yet: missing ${missing.join(', ')}`,
+            missing,
+          });
+        }
+      }
       const countryCode = data.countryCode ?? before.countryCode;
       const governorateId = data.governorateId ?? before.governorateId;
       const districtId = data.districtId ?? before.districtId;

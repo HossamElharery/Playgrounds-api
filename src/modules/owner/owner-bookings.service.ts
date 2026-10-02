@@ -1,4 +1,5 @@
 import { isSafeReceiptUrl } from '../../common/utils/receipt-url.util';
+import { hasOpeningHours } from '../../common/utils/venue-readiness.util';
 import {
   BadRequestException,
   ConflictException,
@@ -90,6 +91,14 @@ export class OwnerBookingsService {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, {
       write: true,
     });
+    // A schedule with no opening hours is not a schedule: refuse instead of offering 03:00.
+    if (!hasOpeningHours(venue.weeklyHours)) {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'VENUE_HOURS_REQUIRED',
+        'Set the venue opening hours before adding bookings',
+      );
+    }
     if (dto.durationMinutes % 15 !== 0) {
       throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
     }

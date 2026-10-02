@@ -36,7 +36,7 @@ function setup(opts: { tz?: string; rules?: any[] } = {}) {
     { id: 'r', courtId: 'c1', label: 'base', daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 40000, currency: 'EGP', priority: 0, kind: 'base', validFrom: null, validUntil: null },
   ];
   const db: any = {
-    venue: { findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', weeklyHours: null, country: { timezone: tz } })) },
+    venue: { findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:45' }])), country: { timezone: tz } })) },
     court: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'c1' || where.id === 'c2' ? { id: where.id, venueId: 'v1', pricingRules: rules } : null)) },
     calendarBlock: { findFirst: jest.fn(async ({ where }: any) => blocks.find((b) => b.startsAt < where.startsAt.lt && b.endsAt > where.endsAt.gt) ?? null) },
     booking: {

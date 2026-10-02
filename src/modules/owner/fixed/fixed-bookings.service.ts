@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { hasOpeningHours } from '../../../common/utils/venue-readiness.util';
 import { Cron } from '@nestjs/schedule';
 import { Prisma, RecurringBookingSeries } from '@prisma/client';
 import { withJobLock } from '../../../common/utils/job-lock.util';
@@ -86,7 +87,10 @@ export class FixedBookingsService {
   }
 
   async create(user: AuthenticatedUser, dto: CreateFixedSeriesDto) {
-    await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
+    const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
+    if (!hasOpeningHours(venue.weeklyHours)) {
+      throw new ApiException(HttpStatus.CONFLICT, 'VENUE_HOURS_REQUIRED', 'Set the venue opening hours before adding bookings');
+    }
     const plan = dto.paymentPlan ?? 'per_session';
     if (plan === 'prepaid' && !dto.prepaidAmount) {
       throw new BadRequestException('prepaidAmount is required for a prepaid plan');

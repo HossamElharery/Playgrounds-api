@@ -64,6 +64,8 @@ export class CoinAdjustmentDto extends ReasonDto {
 export class AdminVenueDto extends UpdateVenueDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
   @IsOptional() @IsIn(['pending', 'active', 'suspended']) status?: VenueStatus;
+  /** Publish even though hours / courts / prices / location are missing. */
+  @IsOptional() @IsBoolean() force?: boolean;
   @IsOptional() @IsBoolean() featured?: boolean;
   @IsOptional() @IsString() ownerId?: string;
   @IsOptional()

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -20,6 +21,7 @@ import {
   toSearchBoundary,
 } from '../../common/utils/geo.util';
 import { assertVenueCurrency } from '../../common/money/venue-currency';
+import { loadBookingBlockers } from '../../common/utils/venue-readiness.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
 import { zonedWallTimeToUtc } from '../../common/utils/timezone.util';
 import { buildPagination } from '../../common/dto/page-query.dto';
@@ -183,8 +185,23 @@ export class VenuesService {
     });
   }
 
-  async approve(adminId: string, venueId: string) {
+  /**
+   * Publishing a venue that players cannot actually book is the owner's worst first
+   * impression, so approval refuses until hours, courts, prices and a location exist.
+   * The admin can still force it (the admin is never locked out by a rule).
+   */
+  async approve(adminId: string, venueId: string, force = false) {
     await this.getById(venueId);
+    if (!force) {
+      const missing = await loadBookingBlockers(this.prisma as never, venueId);
+      if (missing.length) {
+        throw new ConflictException({
+          code: 'VENUE_NOT_READY',
+          message: `Venue cannot be published yet: missing ${missing.join(', ')}`,
+          missing,
+        });
+      }
+    }
     return this.prisma.venue.update({
       where: { id: venueId },
       data: { status: 'active', approvedById: adminId, approvedAt: new Date() },
@@ -393,6 +410,8 @@ export class VenuesService {
 
     const where: Prisma.VenueWhereInput = {
       status: 'active',
+      // A venue with no opening hours cannot be booked, so it is not listed as bookable.
+      NOT: { weeklyHours: { equals: Prisma.DbNull } },
       ...(resolvedCountry ? { countryCode: resolvedCountry } : {}),
       ...(sport ? { sports: { some: { sportId: sport.id } } } : {}),
       ...(district ? { districtId: district.id } : {}),

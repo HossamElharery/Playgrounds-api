@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { assertVenueAccess } from '../../../common/access/owner-access';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
+import { bookingBlockers, type BookingBlocker } from '../../../common/utils/venue-readiness.util';
 
 export type QuickstartKey = 'hours' | 'courts' | 'prices' | 'team' | 'firstBooking' | 'import';
 
@@ -82,6 +83,18 @@ export class QuickstartService {
       score: Math.round((weights.reduce((a, b) => a + b, 0) / readinessItems.length) * 100),
       complete: readinessItems.every((i) => i.done) && photos >= (photoItem.want ?? 3),
     };
-    return { steps, complete: steps.filter((s) => !s.optional).every((s) => s.done), readiness };
+    // What players need before they can book at all — the same rule the approval and the booking paths enforce.
+    const missing: BookingBlocker[] = venue
+      ? bookingBlockers(
+          { weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
+          courts.map((c) => ({ pricingRules: c._count.pricingRules })),
+        )
+      : ['hours', 'courts', 'prices', 'location'];
+    return {
+      steps,
+      complete: steps.filter((s) => !s.optional).every((s) => s.done),
+      readiness,
+      bookable: { ready: missing.length === 0, missing, route: venuePage },
+    };
   }
 }

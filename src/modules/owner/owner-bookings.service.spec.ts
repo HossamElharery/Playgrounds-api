@@ -15,7 +15,7 @@ const owner: AuthenticatedUser = {
 const venue = {
   id: 'v1',
   ownerId: 'owner-1',
-  weeklyHours: null,
+  weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:45' }])),
   currency: 'EGP',
   paymentMode: 'at_venue',
 };
@@ -173,6 +173,14 @@ describe('OwnerBookingsService', () => {
     tx.venue.findUnique.mockResolvedValue({ currency: 'AED' });
     await service(prisma).createManualBooking(owner, { ...dto, paymentStatus: 'paid' });
     expect(tx.booking.create.mock.calls[0][0].data.currency).toBe('AED');
+  });
+
+  it('refuses to book on a venue that has not set its opening hours', async () => {
+    const { prisma } = makePrisma();
+    prisma.venue.findUnique.mockResolvedValue({ ...venue, weeklyHours: null });
+    await expect(service(prisma).createManualBooking(owner, dto)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'VENUE_HOURS_REQUIRED' }),
+    });
   });
 
   it('rejects overlapping slots', async () => {

@@ -308,8 +308,12 @@ export class VenuesController {
   @UseGuards(AuthGuard)
   @Roles('admin')
   @Post('admin/venues/:id/approve')
-  approve(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.venues.approve(user.id, id);
+  approve(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Query('force') force?: string,
+  ) {
+    return this.venues.approve(user.id, id, force === 'true');
   }
 
   @ApiBearerAuth()

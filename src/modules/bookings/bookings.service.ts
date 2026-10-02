@@ -7,6 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { hasOpeningHours } from '../../common/utils/venue-readiness.util';
 import { ConfigService } from '@nestjs/config';
 import { Booking, BookingStatus, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
@@ -101,6 +102,9 @@ export class BookingsService {
     });
     if (!court) throw new NotFoundException('Court not found');
 
+    // No opening hours means "not set up yet", never "open all day".
+    if (!hasOpeningHours(court.venue.weeklyHours)) return [];
+
     const timeZone = court.venue.country.timezone;
     const {
       start: dayStart,
@@ -181,6 +185,12 @@ export class BookingsService {
       include: { pricingRules: true, venue: { include: { country: true } } },
     });
     if (!court) throw new NotFoundException('Court not found');
+    if (!hasOpeningHours(court.venue.weeklyHours)) {
+      throw new ConflictException({
+        code: 'VENUE_NOT_READY',
+        message: 'This venue has not set its opening hours yet',
+      });
+    }
 
     const slotStart = new Date(dto.slotStart);
     if (slotStart < new Date())

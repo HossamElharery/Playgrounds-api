@@ -386,6 +386,7 @@ async function main() {
       where: { slug },
       update: {
         countryCode: v.country,
+        currency: v.currency,
         priceFromAmount: 12000,
         priceFromCurrency: v.currency,
       },
@@ -393,6 +394,11 @@ async function main() {
         slug,
         ownerId: owner.id,
         countryCode: v.country,
+        currency: v.currency,
+        // A venue is only bookable with opening hours, a place and a cancellation rule.
+        weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { open: '08:00', close: '24:00' }])),
+        address: `${v.nameEn}, ${v.district.replace('dist-', '')}`,
+        cancellationPolicy: 'Free cancellation up to 24 hours before the slot.',
         nameEn: v.nameEn,
         nameAr: v.nameAr,
         districtId: v.district,
@@ -435,7 +441,7 @@ async function main() {
     const gamingSlug = venueSlug('EG', 'Neon Arena Gaming Lounge');
     const gamingVenue = await prisma.venue.upsert({
       where: { slug: gamingSlug },
-      update: { countryCode: 'EG', priceFromAmount: 15000, priceFromCurrency: 'EGP' },
+      update: { countryCode: 'EG', currency: 'EGP', priceFromAmount: 15000, priceFromCurrency: 'EGP' },
       create: {
         slug: gamingSlug,
         ownerId: owner.id,
@@ -501,7 +507,7 @@ async function main() {
     const tableSlug = venueSlug('EG', 'Downtown Billiards And Ping Pong Club');
     const tableVenue = await prisma.venue.upsert({
       where: { slug: tableSlug },
-      update: { countryCode: 'EG', priceFromAmount: 8000, priceFromCurrency: 'EGP' },
+      update: { countryCode: 'EG', currency: 'EGP', priceFromAmount: 8000, priceFromCurrency: 'EGP' },
       create: {
         slug: tableSlug,
         ownerId: owner.id,
