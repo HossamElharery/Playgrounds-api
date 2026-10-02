@@ -25,6 +25,7 @@ function build() {
     venue: {
       findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', currency: 'EGP', country: { timezone: 'Africa/Cairo' } })),
     },
+    auditLogEntry: { create: jest.fn(async () => ({})) },
     venueExpense: {
       create: jest.fn(async ({ data }: any) => { const r = { id: `e${++n}`, recurringParentId: null, recurringUntil: null, categoryLabel: null, note: null, createdAt: new Date(), ...data }; rows.push(r); return r; }),
       findMany: jest.fn(async ({ where }: any) => rows.filter((r) => (!where.recurringMonthly || r.recurringMonthly) && (where.recurringParentId === undefined || r.recurringParentId === where.recurringParentId) && (!where.incurredOn?.lt || r.incurredOn < where.incurredOn.lt) && (!where.venueId || r.venueId === where.venueId))),
@@ -43,10 +44,22 @@ function build() {
       }),
     },
   };
-  return { svc: new ExpensesService(prisma), rows };
+  return { svc: new ExpensesService(prisma), rows, prisma };
 }
 
 describe('ExpensesService', () => {
+  it('writes down who recorded an expense, how much, and from the drawer or not', async () => {
+    const { svc, prisma } = build();
+    await svc.create({ id: 'o1', roles: ['owner'] } as any, { venueId: 'v1', category: 'electricity', amount: 25_000, incurredOn: '2026-10-03', fromDrawer: true } as any);
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorUserId: 'o1',
+        action: 'owner.expense.recorded',
+        metadata: expect.objectContaining({ venueId: 'v1', amount: 25_000, currency: 'EGP', category: 'electricity', fromDrawer: true }),
+      }),
+    });
+  });
+
   it('generates each missing month once, however often it is read', async () => {
     const { svc, rows } = build();
     jest.useFakeTimers().setSystemTime(new Date('2026-04-20T10:00:00Z'));
