@@ -61,7 +61,7 @@ import { ImportService } from './import/import.service';
 import { ImportBodyDto } from './import/import.dto';
 import { CustomerNoteDto } from './customers/customers.dto';
 import { MAX_IMPORT_BYTES } from './import/spreadsheet.util';
-import { CashDrawerQueryDto, CloseShiftDto, ReviewShiftDto, ShiftListQueryDto } from './cash/cash.dto';
+import { CashDrawerQueryDto, CloseShiftDto, OpenShiftDto, ReviewShiftDto, ShiftListQueryDto } from './cash/cash.dto';
 import { CreateExpenseDto, UpdateExpenseDto } from './expenses/expenses.dto';
 import { InsightsService } from './insights/insights.service';
 import {
@@ -481,6 +481,16 @@ export class OwnerController {
     @Query() q: CashDrawerQueryDto,
   ) {
     return this.cash.drawer(user, q.venueId);
+  }
+
+  @RequirePermission('payments.record')
+  @Post('cash/handovers')
+  @ApiOperation({
+    summary:
+      'Take a cash drawer over at the start of a shift: count it, compare with what the last close left, write the difference down',
+  })
+  openShift(@CurrentUser() user: AuthenticatedUser, @Body() dto: OpenShiftDto) {
+    return this.cash.openShift(user, dto);
   }
 
   @RequirePermission('payments.record')

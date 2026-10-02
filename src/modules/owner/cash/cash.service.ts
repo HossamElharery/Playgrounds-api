@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
-import { CashShift, Prisma } from '@prisma/client';
+import { CashHandover, CashShift, Prisma } from '@prisma/client';
 import { assertVenueAccess } from '../../../common/access/owner-access';
 import { loadStaffScope, scopeCan } from '../../../common/access/staff-scope';
 import { ApiException } from '../../../common/errors/api-exception';
@@ -7,7 +7,8 @@ import type { AuthenticatedUser } from '../../../common/types/authenticated-user
 import { resolveOwnerRange } from '../../../common/utils/owner-range.util';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CloseShiftDto, ShiftListQueryDto } from './cash.dto';
+import { currencyLabel } from '../../../common/money/currency-label';
+import { CloseShiftDto, OpenShiftDto, ShiftListQueryDto } from './cash.dto';
 import { COUNTED_PAYMENT_STATUSES } from './payment-trail';
 
 type Db = PrismaService | Prisma.TransactionClient;
@@ -182,12 +183,19 @@ export class CashService {
 
     const mine = await this.movements(this.prisma, venueId, [user.id]);
     const myFloat = await this.suggestedFloat(this.prisma, venueId, user.id);
+    const myHandover = await this.openHandover(this.prisma, venueId, user.id);
     const result: Record<string, unknown> = {
       venueId,
       currency,
       me: { userId: user.id, name: user.name ?? null },
       canReview: reviewer,
-      mine: { ...this.toTallyDto(tally(mine.payments, mine.expenses), myFloat.float), lastClosedAt: myFloat.lastClosedAt?.toISOString() ?? null },
+      mine: {
+        ...this.toTallyDto(tally(mine.payments, mine.expenses), myHandover?.countedFloat ?? myFloat.float),
+        lastClosedAt: myFloat.lastClosedAt?.toISOString() ?? null,
+        /** What the last close left — the number a taking-over count is compared with. */
+        suggestedFloat: myFloat.float,
+        handover: myHandover ? this.handoverDto(myHandover, new Map([[user.id, user.name ?? null]])) : null,
+      },
       people: [] as unknown[],
       shared: null as unknown,
       mixedCurrencyCount: 0,
@@ -204,49 +212,152 @@ export class CashService {
       for (const e of all.expenses) if (e.createdById) slot(e.createdById).expenses.push(e);
       const ids = [...byPerson.keys()];
       const names = await this.names(ids);
-      const people: Array<{ userId: string; name: string | null; isMe: boolean } & ReturnType<CashService['toTallyDto']>> = [];
+      const people: Array<{ userId: string; name: string | null; isMe: boolean; handover: ReturnType<CashService['handoverDto']> | null } & ReturnType<CashService['toTallyDto']>> = [];
       for (const id of ids) {
         const bucket = byPerson.get(id)!;
         const f = await this.suggestedFloat(this.prisma, venueId, id);
+        const h = await this.openHandover(this.prisma, venueId, id);
         people.push({
           userId: id,
           name: names.get(id) ?? null,
           isMe: id === user.id,
-          ...this.toTallyDto(tally(bucket.payments, bucket.expenses), f.float),
+          ...this.toTallyDto(tally(bucket.payments, bucket.expenses), h?.countedFloat ?? f.float),
+          handover: h ? this.handoverDto(h, new Map([[h.openedByUserId, names.get(h.openedByUserId) ?? null]])) : null,
         });
       }
       people.sort((a, b) => b.cash.net - a.cash.net);
       result.people = people;
       const sharedFloat = await this.suggestedFloat(this.prisma, venueId, null);
-      result.shared = { ...this.toTallyDto(tally(all.payments, all.expenses), sharedFloat.float), lastClosedAt: sharedFloat.lastClosedAt?.toISOString() ?? null };
+      const sharedHandover = await this.openHandover(this.prisma, venueId, null);
+      result.shared = {
+        ...this.toTallyDto(tally(all.payments, all.expenses), sharedHandover?.countedFloat ?? sharedFloat.float),
+        lastClosedAt: sharedFloat.lastClosedAt?.toISOString() ?? null,
+        suggestedFloat: sharedFloat.float,
+        handover: sharedHandover
+          ? this.handoverDto(sharedHandover, new Map([[sharedHandover.openedByUserId, names.get(sharedHandover.openedByUserId) ?? null]]))
+          : null,
+      };
     }
 
     result.recent = (await this.list(user, { venueId })).items.slice(0, 5);
     return result;
   }
 
+  // ---- opening (documented handover) ---------------------------------------------------------
+
+  /** Whose drawer a request is about, with the same permission rules for opening and closing. */
+  private async resolveDrawer(
+    user: AuthenticatedUser,
+    dto: { scope: 'mine' | 'user' | 'shared'; targetUserId?: string },
+    verb: 'open' | 'close',
+  ): Promise<{ drawerUserId: string | null; userIds: string[] | null }> {
+    const reviewer = await this.canReview(user);
+    if (dto.scope === 'mine') return { drawerUserId: user.id, userIds: [user.id] };
+    if (dto.scope === 'user') {
+      if (!dto.targetUserId) {
+        throw new ApiException(HttpStatus.BAD_REQUEST, 'TARGET_REQUIRED', `Say whose drawer you are ${verb === 'open' ? 'taking over' : 'closing'}`);
+      }
+      if (dto.targetUserId !== user.id && !reviewer) throw new ForbiddenException(`You can only ${verb} your own drawer`);
+      return { drawerUserId: dto.targetUserId, userIds: [dto.targetUserId] };
+    }
+    if (!reviewer) throw new ForbiddenException(`Only the owner or a reviewer can ${verb} the shared drawer`);
+    return { drawerUserId: null, userIds: null };
+  }
+
+  private openHandover(db: Db, venueId: string, drawerUserId: string | null) {
+    return db.cashHandover.findFirst({ where: { venueId, drawerUserId, shiftId: null }, orderBy: { openedAt: 'desc' } });
+  }
+
+  /**
+   * Taking a drawer over: the incoming person counts what is there, the system compares it with what
+   * the last close said it left, and the difference is written down and sent to the owner. The shift
+   * that follows starts from this counted float. Optional — a venue that never opens shifts still works.
+   */
+  async openShift(user: AuthenticatedUser, dto: OpenShiftDto) {
+    const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
+    const { drawerUserId } = await this.resolveDrawer(user, dto, 'open');
+    const handover = await this.prisma.$transaction(
+      async (tx) => {
+        if (await this.openHandover(tx, dto.venueId, drawerUserId)) {
+          throw new ApiException(HttpStatus.CONFLICT, 'SHIFT_ALREADY_OPEN', 'This drawer was already taken over and has not been closed yet');
+        }
+        const suggested = await this.suggestedFloat(tx, dto.venueId, drawerUserId);
+        const created = await tx.cashHandover.create({
+          data: {
+            venueId: dto.venueId,
+            drawerUserId,
+            openedByUserId: user.id,
+            expectedFloat: suggested.float,
+            countedFloat: dto.countedFloat,
+            difference: dto.countedFloat - suggested.float,
+            currency: venue.currency,
+            note: dto.note?.trim() || null,
+          },
+        });
+        await tx.auditLogEntry.create({
+          data: {
+            actorUserId: user.id,
+            action: 'owner.shift.opened',
+            targetType: 'cash_handover',
+            targetId: created.id,
+            metadata: {
+              venueId: dto.venueId,
+              drawerUserId,
+              expectedFloat: suggested.float,
+              countedFloat: dto.countedFloat,
+              difference: created.difference,
+            } as Prisma.InputJsonValue,
+          },
+        });
+        return created;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    await this.notifyOwnerOfHandoverDifference(venue.ownerId, venue.nameAr, venue.nameEn, user, handover).catch(() => undefined);
+    return this.handoverDto(handover, new Map([[user.id, user.name ?? null]]));
+  }
+
+  private handoverDto(h: CashHandover, names: Map<string, string | null>) {
+    return {
+      id: h.id,
+      openedAt: h.openedAt.toISOString(),
+      openedByUserId: h.openedByUserId,
+      openedByName: names.get(h.openedByUserId) ?? null,
+      expectedFloat: h.expectedFloat,
+      countedFloat: h.countedFloat,
+      difference: h.difference,
+      note: h.note,
+    };
+  }
+
+  private async notifyOwnerOfHandoverDifference(
+    ownerId: string,
+    venueAr: string,
+    venueEn: string,
+    opener: AuthenticatedUser,
+    handover: CashHandover,
+  ) {
+    if (!this.notifications || handover.difference === 0 || opener.id === ownerId) return;
+    const less = handover.difference < 0;
+    const amount = Math.abs(handover.difference);
+    const who = opener.name ?? '—';
+    await this.notifications.create({
+      userId: ownerId,
+      category: 'system',
+      titleEn: `${venueEn}: handover found ${amount} ${currencyLabel(handover.currency, 'en')} ${less ? 'less' : 'more'} than the last shift left`,
+      titleAr: `${venueAr}: استلام الخزنة لقى ${amount} ${currencyLabel(handover.currency, 'ar')} ${less ? 'أقل' : 'أكتر'} من اللي سابته الوردية اللي قبلها`,
+      bodyEn: `${who} took the drawer over and counted differently. Review it in Earnings → Cash & shifts.`,
+      bodyAr: `${who} استلم الخزنة وعدّها بشكل مختلف. راجعها من الأرباح ← الخزنة والورديات.`,
+      deepLink: '/owner/earnings?section=shifts',
+      payload: { venueId: handover.venueId, handoverId: handover.id },
+    });
+  }
+
   // ---- closing ---------------------------------------------------------------------------------
 
   async closeShift(user: AuthenticatedUser, dto: CloseShiftDto) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
-    const reviewer = await this.canReview(user);
-    let drawerUserId: string | null;
-    let userIds: string[] | null;
-    if (dto.scope === 'mine') {
-      drawerUserId = user.id;
-      userIds = [user.id];
-    } else if (dto.scope === 'user') {
-      if (!dto.targetUserId) {
-        throw new ApiException(HttpStatus.BAD_REQUEST, 'TARGET_REQUIRED', 'Say whose drawer you are closing');
-      }
-      if (dto.targetUserId !== user.id && !reviewer) throw new ForbiddenException('You can only close your own drawer');
-      drawerUserId = dto.targetUserId;
-      userIds = [dto.targetUserId];
-    } else {
-      if (!reviewer) throw new ForbiddenException('Only the owner or a reviewer can close the shared drawer');
-      drawerUserId = null;
-      userIds = null;
-    }
+    const { drawerUserId, userIds } = await this.resolveDrawer(user, dto, 'close');
     const currency = venue.currency;
 
     const shift = await this.prisma.$transaction(
@@ -261,11 +372,14 @@ export class CashService {
           );
         }
         const t = tally(payments, expenses);
-        if (t.count === 0) {
+        const handover = await this.openHandover(tx, dto.venueId, drawerUserId);
+        // A drawer that was taken over can be closed even if nothing moved: the handover itself is the record.
+        if (t.count === 0 && !handover) {
           throw new ApiException(HttpStatus.CONFLICT, 'NOTHING_TO_CLOSE', 'There is nothing in this drawer to close');
         }
         const suggested = await this.suggestedFloat(tx, dto.venueId, drawerUserId);
-        const openingFloat = dto.openingFloat ?? suggested.float;
+        // The float the incoming person actually counted beats a guessed one.
+        const openingFloat = dto.openingFloat ?? handover?.countedFloat ?? suggested.float;
         const carryOver = dto.carryOver ?? 0;
         if (carryOver > dto.countedCash) {
           throw new ApiException(HttpStatus.BAD_REQUEST, 'CARRY_OVER_TOO_HIGH', 'You cannot leave more in the drawer than you counted');
@@ -276,7 +390,7 @@ export class CashService {
             venueId: dto.venueId,
             drawerUserId,
             closedByUserId: user.id,
-            periodStart: t.since ?? new Date(),
+            periodStart: handover?.openedAt ?? t.since ?? new Date(),
             openingFloat,
             cashIn: t.cashIn,
             cashRefunds: t.cashRefunds,
@@ -301,6 +415,9 @@ export class CashService {
         });
         if (stamped.count !== t.paymentIds.length || stampedExpenses.count !== t.expenseIds.length) {
           throw new ConflictException({ code: 'DRAWER_CHANGED', message: 'The drawer changed while you were closing it. Try again.' });
+        }
+        if (handover) {
+          await tx.cashHandover.update({ where: { id: handover.id }, data: { shiftId: created.id } });
         }
         await tx.auditLogEntry.create({
           data: {
@@ -440,8 +557,13 @@ export class CashService {
   }
 
   private async dtos(rows: CashShift[]) {
-    const names = await this.names(rows.flatMap((r) => [r.drawerUserId, r.closedByUserId, r.reviewedById]).filter((x): x is string => !!x));
+    const handovers = await this.prisma.cashHandover.findMany({ where: { shiftId: { in: rows.map((r) => r.id) } } });
+    const byShift = new Map(handovers.map((h) => [h.shiftId, h]));
+    const names = await this.names(
+      [...rows.flatMap((r) => [r.drawerUserId, r.closedByUserId, r.reviewedById]), ...handovers.map((h) => h.openedByUserId)].filter((x): x is string => !!x),
+    );
     return rows.map((r) => ({
+      handover: byShift.get(r.id) ? this.handoverDto(byShift.get(r.id)!, names) : null,
       id: r.id,
       venueId: r.venueId,
       scope: r.drawerUserId == null ? ('shared' as const) : ('person' as const),

@@ -352,6 +352,7 @@ export class OwnerSummaryService {
     // Real profit = money kept after Matchena's commission − what the owner spent, same period.
     const spent = this.expenses ? await this.expenses.totals(venueId, range.from, range.to) : { total: 0, byCategory: [] };
     const cashbook = await this.cashbook(venueId, range.start, range.end);
+    const retained = await this.retainedFromCancelled(venueId, range.start, range.end);
 
     return {
       range: { from: range.from, to: range.to, timezone: tz, key: range.range },
@@ -364,7 +365,10 @@ export class OwnerSummaryService {
         commission: totalsRow.commission,
         takeHome: collectedRevenue - totalsRow.commission,
         expenses: spent.total,
-        netProfit: collectedRevenue - totalsRow.commission - spent.total,
+        /** Deposits the venue kept from bookings that were then cancelled — income, shown on its own line. */
+        retainedFromCancelled: retained,
+        /** Games earned + deposits kept − Matchena commission − expenses (all by play date). */
+        netProfit: collectedRevenue + retained - totalsRow.commission - spent.total,
         outstanding,
         expected,
         cashCollected: totalsRow.cash,
@@ -459,6 +463,31 @@ export class OwnerSummaryService {
       fromCancelled: buckets.cancelled,
       refunds,
     };
+  }
+
+  /**
+   * What the venue kept from bookings of this period that were cancelled (a forfeited deposit):
+   * payments received minus refunds, per booking, never below zero. Only money the venue handled
+   * itself counts, like the cashbook — its own bookings and Matchena bookings paid at the venue.
+   * This is income, so it is part of net profit; it is NOT part of "games earned".
+   */
+  async retainedFromCancelled(venueId: string, start: Date, end: Date): Promise<number> {
+    const [row] = await this.prisma.$queryRaw<{ retained: number }[]>(Prisma.sql`
+      SELECT COALESCE(SUM(GREATEST(net, 0)), 0)::int AS retained
+      FROM (
+        SELECT b."id", SUM(p."amount") AS net
+        FROM "Booking" b
+        JOIN "Payment" p ON p."bookingId" = b."id"
+        WHERE b."venueId" = ${venueId}
+          AND b."status" = 'cancelled'
+          AND b."slotStart" >= (${start}::timestamptz AT TIME ZONE 'UTC')
+          AND b."slotStart" <  (${end}::timestamptz AT TIME ZONE 'UTC')
+          AND p."status" IN ('paid', 'refunded')
+          AND (b."source" = 'manual' OR p."recordedByUserId" IS NOT NULL)
+        GROUP BY b."id"
+      ) t
+    `);
+    return row?.retained ?? 0;
   }
 
   /**

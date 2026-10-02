@@ -59,6 +59,34 @@ export class CloseShiftDto {
   note?: string;
 }
 
+export class OpenShiftDto {
+  @ApiProperty()
+  @IsUUID()
+  venueId!: string;
+
+  @ApiProperty({ enum: SHIFT_SCOPES, description: 'Same meaning as when closing: whose drawer is being taken over.' })
+  @IsIn(SHIFT_SCOPES as unknown as string[])
+  scope!: ShiftScope;
+
+  @ApiPropertyOptional({ description: 'Required when scope = user.' })
+  @IsOptional()
+  @IsUUID()
+  targetUserId?: string;
+
+  @ApiProperty({ description: 'Cash the incoming person counted in the drawer, minor units.' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000_000)
+  countedFloat!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+}
+
 export class ShiftListQueryDto {
   @ApiProperty()
   @IsUUID()

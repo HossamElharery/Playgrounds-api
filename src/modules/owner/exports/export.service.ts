@@ -36,7 +36,8 @@ const T = {
   period: ['الفترة', 'Period'],
   currency: ['العملة', 'Currency'],
   bookingsCount: ['عدد الحجوزات', 'Bookings'],
-  collected: ['الإيراد المحصّل (على ألعاب الفترة)', 'Collected revenue (games played in the period)'],
+  collected: ['إيراد الألعاب (ألعاب الفترة)', 'Games revenue (games played in the period)'],
+  retained: ['محتفظ به من حجوزات ملغية (عربون)', 'Kept from cancelled bookings (deposits)'],
   basisPlay: ['الأساس: تاريخ اللعب', 'Basis: the day the game is played'],
   basisReceived: ['الأساس: تاريخ القبض', 'Basis: the day the money was received'],
   received: ['المقبوض (حسب تاريخ القبض)', 'Money received (by day received)'],
@@ -78,7 +79,7 @@ const T = {
   commission: ['عمولة ماتشنا', 'Matchena commission'],
   takeHome: ['الصافي بعد العمولة', 'Take-home after commission'],
   expensesTotal: ['المصروفات', 'Expenses'],
-  netProfit: ['الربح الفعلي', 'Real profit'],
+  netProfit: ['صافي الربح (إيراد الألعاب + المحتفظ به − العمولة − المصروفات)', 'Net profit (games + kept deposits − commission − expenses)'],
   outstanding: ['المتبقي غير المحصّل', 'Outstanding'],
   cash: ['محصّل كاش', 'Collected as cash'],
   online: ['محصّل أونلاين', 'Collected online'],
@@ -176,7 +177,7 @@ export class ExportService {
     const s = await this.summary.getSummary(user, venueId, 'custom', from, to);
     const tz = s.range.timezone;
     const range = resolveOwnerRange('custom', tz, from, to);
-    const totals = s.totals as typeof s.totals & { expenses?: number; netProfit?: number };
+    const totals = s.totals as typeof s.totals & { expenses?: number; netProfit?: number; retainedFromCancelled?: number };
 
     const summarySheet: ExportSheet = {
       name: t('summary'),
@@ -191,6 +192,7 @@ export class ExportService {
         [t('ownRevenue'), major(totals.ownRevenue)],
         [t('commission'), major(totals.commission)],
         [t('takeHome'), major(totals.takeHome)],
+        [t('retained'), major(totals.retainedFromCancelled ?? 0)],
         [t('expensesTotal'), major(totals.expenses ?? 0)],
         [t('netProfit'), major(totals.netProfit ?? totals.takeHome)],
         [t('outstanding'), major(totals.outstanding)],

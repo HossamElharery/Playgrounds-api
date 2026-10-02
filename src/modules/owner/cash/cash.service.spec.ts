@@ -38,7 +38,7 @@ describe('tally / reconcile (pure)', () => {
   });
 });
 
-function setup(opts: { payments?: ReturnType<typeof pay>[]; expenses?: unknown[]; lastCarry?: number; staffPerms?: string[]; stampedPayments?: number } = {}) {
+function setup(opts: { payments?: ReturnType<typeof pay>[]; expenses?: unknown[]; lastCarry?: number; staffPerms?: string[]; stampedPayments?: number; openHandover?: Record<string, unknown> | null } = {}) {
   const payments = opts.payments ?? [pay('p1', 300), pay('p2', 150)];
   const expenses = opts.expenses ?? [];
   const tx = {
@@ -61,9 +61,16 @@ function setup(opts: { payments?: ReturnType<typeof pay>[]; expenses?: unknown[]
         ...data,
       })),
     },
+    cashHandover: {
+      findFirst: jest.fn().mockResolvedValue(opts.openHandover ?? null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'h-1', openedAt: at(8), shiftId: null, note: null, ...data })),
+      update: jest.fn().mockResolvedValue({}),
+    },
     auditLogEntry: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
+    cashHandover: tx.cashHandover,
     venue: { findUnique: jest.fn().mockResolvedValue(venue) },
     staffMember: {
       findUnique: jest.fn().mockResolvedValue({ id: 'st', ownerId: 'owner-1', permissions: opts.staffPerms ?? ['bookings.view', 'payments.record'], venueIds: ['v1'], title: null }),
@@ -174,5 +181,52 @@ describe('CashService.closeShift', () => {
     const own = setup();
     await own.service.closeShift(owner, { venueId: 'v1', scope: 'mine', countedCash: 100 });
     expect(own.notifications.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('CashService.openShift — a documented handover', () => {
+  it('records what the incoming person counted against what the last close left, and tells the owner of a gap', async () => {
+    const { service, tx, notifications } = setup({ lastCarry: 200 });
+    const out = await service.openShift(staff, { venueId: 'v1', scope: 'mine', countedFloat: 150 });
+    expect(tx.cashHandover.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ drawerUserId: 'staff-1', openedByUserId: 'staff-1', expectedFloat: 200, countedFloat: 150, difference: -50, currency: 'EGP' }),
+    });
+    expect(out).toMatchObject({ expectedFloat: 200, countedFloat: 150, difference: -50 });
+    expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', deepLink: '/owner/earnings?section=shifts' }));
+  });
+
+  it('stays quiet when the count matches the last close', async () => {
+    const { service, notifications } = setup({ lastCarry: 200 });
+    await service.openShift(staff, { venueId: 'v1', scope: 'mine', countedFloat: 200 });
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to open a drawer that is already open', async () => {
+    const { service } = setup({ openHandover: { id: 'h0', countedFloat: 100, openedAt: at(8), shiftId: null } });
+    await expect(service.openShift(staff, { venueId: 'v1', scope: 'mine', countedFloat: 100 })).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'SHIFT_ALREADY_OPEN' }),
+    });
+  });
+
+  it('reception cannot take over a colleague\'s drawer', async () => {
+    const { service } = setup();
+    await expect(service.openShift(staff, { venueId: 'v1', scope: 'user', targetUserId: 'someone-else', countedFloat: 0 })).rejects.toThrow('only open your own');
+  });
+
+  it('the closing shift starts from the counted float, begins at the handover and links it', async () => {
+    const { service, tx } = setup({ lastCarry: 200, openHandover: { id: 'h0', countedFloat: 150, openedAt: at(8), shiftId: null } });
+    const shift = await service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 600 });
+    // 150 counted at takeover + 450 cash in = 600 expected → balanced, though the last close said 200.
+    expect(shift.openingFloat).toBe(150);
+    expect(shift.expectedCash).toBe(600);
+    expect(shift.difference).toBe(0);
+    expect(tx.cashShift.create.mock.calls[0][0].data.periodStart).toEqual(at(8));
+    expect(tx.cashHandover.update).toHaveBeenCalledWith({ where: { id: 'h0' }, data: { shiftId: 'shift-1' } });
+  });
+
+  it('an opened drawer with no movements can still be closed — the handover is the record', async () => {
+    const { service } = setup({ payments: [], openHandover: { id: 'h0', countedFloat: 100, openedAt: at(8), shiftId: null } });
+    const shift = await service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 100 });
+    expect(shift.difference).toBe(0);
   });
 });

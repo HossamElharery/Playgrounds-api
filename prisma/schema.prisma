@@ -574,6 +574,7 @@ model Venue {
   ledgerEntries      VenueLedgerEntry[]
   settlements        VenueSettlement[]
   cashShifts         CashShift[]
+  cashHandovers      CashHandover[]
   customerProfiles   VenueCustomer[]
   importBatches      VenueImportBatch[]
   subscription       VenueSubscription?
@@ -902,6 +903,8 @@ model CashShift {
   reviewedById   String?
   reviewNote     String?
   payments       Payment[]
+  /// The documented start of this shift (who took the drawer over and what they counted), when there was one.
+  handover       CashHandover?
 
   @@index([venueId, closedAt])
   @@index([venueId, drawerUserId, closedAt])
@@ -2964,4 +2967,31 @@ model VenueImportBatch {
   createdAt   DateTime  @default(now())
 
   @@index([venueId, createdAt])
+}
+
+/// A person taking a cash drawer over at the start of a shift: what the last close said was left,
+/// what they counted, and the difference. Optional — a venue that never opens shifts keeps working —
+/// but when it exists, the closing shift starts from this counted float, not a guessed one.
+model CashHandover {
+  id             String     @id @default(uuid())
+  venueId        String
+  venue          Venue      @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  /// Whose drawer. Null = the shared drawer.
+  drawerUserId   String?
+  openedByUserId String
+  openedAt       DateTime   @default(now())
+  /// What the previous close left in the drawer.
+  expectedFloat  Int        @default(0)
+  /// What the incoming person actually counted.
+  countedFloat   Int        @default(0)
+  /// counted − expected: negative = less than the last shift left.
+  difference     Int        @default(0)
+  currency       String     @default("EGP")
+  note           String?
+  /// Set when the shift this handover started is closed.
+  shiftId        String?    @unique
+  shift          CashShift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([venueId, drawerUserId, shiftId])
+  @@index([venueId, openedAt])
 }
