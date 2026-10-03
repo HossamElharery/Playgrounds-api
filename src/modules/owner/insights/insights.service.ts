@@ -20,6 +20,8 @@ import {
 
 const DAY_MS = 86_400_000;
 const MIN_DATA_DAYS = 21;
+/** Fewer real bookings than this in the analysis window and an "idle hour" is just a venue nobody has booked yet. */
+const MIN_BOOKINGS = 10;
 const DISMISS_DAYS = 28;
 const WEEKS_PER_MONTH = 52 / 12;
 /** How much of the empty time a discount is assumed to fill. Deliberately modest: an estimate, never a promise. */
@@ -87,7 +89,15 @@ export class InsightsService {
     const today = localDate(now, ctx.timeZone);
     const dataSince = await this.dataSince(ctx, venueId);
     const dataDays = Math.max(0, Math.floor((now.getTime() - dataSince.getTime()) / DAY_MS));
-    const hasEnoughData = dataDays >= MIN_DATA_DAYS;
+    // Time alone is not data: a venue open for months with almost no bookings has nothing to learn from.
+    const bookingsInWindow = await this.prisma.booking.count({
+      where: {
+        venueId,
+        status: { in: ['confirmed', 'completed', 'no_show'] },
+        slotStart: { gte: new Date(now.getTime() - weeks * 7 * DAY_MS), lt: now },
+      },
+    });
+    const hasEnoughData = dataDays >= MIN_DATA_DAYS && bookingsInWindow >= MIN_BOOKINGS;
 
     const startDate = [addDays(today, -weeks * 7), localDate(dataSince, ctx.timeZone)].sort().pop()!;
     const dates = startDate < today ? dateRange(startDate, addDays(today, -1)) : [];
@@ -131,6 +141,8 @@ export class InsightsService {
       dataDays,
       hasEnoughData,
       minDataDays: MIN_DATA_DAYS,
+      bookingsInWindow,
+      minBookings: MIN_BOOKINGS,
       openHours: result.openHours,
       courts,
       windows,

@@ -173,6 +173,11 @@ describe('CashService.closeShift', () => {
     const off = setup();
     await off.service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 400 });
     expect(off.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', titleAr: expect.stringContaining('ناقصة') }));
+    // 50 minor units is half a pound — written with the venue's currency label, not "50 EGP".
+    const sent = off.notifications.create.mock.calls[0][0];
+    expect(sent.titleAr).toContain('0.5 ج.م');
+    expect(sent.titleAr).not.toContain('EGP');
+    expect(sent.titleEn).toContain('0.5 EGP');
 
     const balanced = setup();
     await balanced.service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 450 });

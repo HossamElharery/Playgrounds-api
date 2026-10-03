@@ -274,7 +274,7 @@ export class OwnerSummaryService {
           select: { id: true, totalAmount: true, payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } } },
         }),
         this.prisma.booking.aggregate({
-          where: { venueId, slotStart: { gt: now }, status: 'confirmed' },
+          where: { venueId, slotStart: { gt: new Date(Math.max(now.getTime(), range.start.getTime())), lt: range.end }, status: 'confirmed' },
           _sum: { totalAmount: true, baseAmount: true, ownerFundedDiscount: true },
         }),
         this.breakdownBySource(venueId, range.start, range.end),

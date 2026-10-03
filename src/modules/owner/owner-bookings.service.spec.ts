@@ -121,6 +121,19 @@ describe('OwnerBookingsService', () => {
     } as never);
   }
 
+  it('quotes the venue currency and warns before booking outside opening hours', async () => {
+    const { prisma } = makePrisma();
+    prisma.court.findUnique.mockResolvedValue({
+      ...court, pricingRules: [],
+      venue: { ...venue, weeklyHours: { '0': { open: '08:00', close: '22:00', closed: false } }, country: { timezone: 'UTC', currency: 'AED' } },
+    } as any);
+    const quote = await service(prisma).priceQuote(owner, 'v1', 'c1', '2026-09-20T07:45:00Z', 60);
+    expect(quote.currency).toBe('AED');
+    expect(quote.warnings).toEqual(['OUTSIDE_HOURS']);
+    const inside = await service(prisma).priceQuote(owner, 'v1', 'c1', '2026-09-20T08:00:00Z', 60);
+    expect(inside.warnings).toEqual([]);
+  });
+
   // The fixtures live on 2026-09-20; pin "now" just before them.
   const NOW = new Date('2026-09-20T10:00:00.000Z').getTime();
   beforeEach(() => {
@@ -166,6 +179,13 @@ describe('OwnerBookingsService', () => {
       checkedInAt: null,
       money: { ownerNet: 360, total: 400 },
     })).toBe(0);
+  });
+
+  it('does not record received money when payment status is omitted', async () => {
+    const { prisma, tx } = makePrisma();
+    await service(prisma).createManualBooking(owner, { ...dto, paymentStatus: undefined });
+    expect(tx.booking.create.mock.calls[0][0].data.paymentStatus).toBe('pending');
+    expect(tx.payment.create).not.toHaveBeenCalled();
   });
 
   it('books and takes the first payment in the venue\'s own currency, not the column default', async () => {
@@ -519,5 +539,80 @@ describe('phone numbers need customers.view', () => {
     prisma.staffMember.findUnique.mockResolvedValue({ id: 'st', ownerId: 'owner-1', permissions: ['bookings.view', 'customers.view'], venueIds: ['v1'], title: null });
     expect((await svc.toOwnerBookingDto({ id: 'b1' } as any, staff)).customer.phone).toBe('+201111111111');
     expect((await svc.toOwnerBookingDto({ id: 'b1' } as any, owner)).customer.phone).toBe('+201111111111');
+  });
+});
+
+describe('the bookings list: what is coming first', () => {
+  const NOW = new Date('2026-10-02T21:30:00.000Z'); // 00:30 on 3 Oct in Cairo — "today" there is 3 Oct, not 2 Oct
+  function build() {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma: any = {
+      venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'owner-1', country: { timezone: 'Africa/Cairo' } }) },
+      booking: { findMany },
+      staffMember: { findUnique: jest.fn() },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    return { svc: new OwnerBookingsService(prisma, {} as any, {} as any, {} as any), findMany };
+  }
+  beforeEach(() => jest.useFakeTimers().setSystemTime(NOW));
+  afterEach(() => jest.useRealTimers());
+  const ask = (svc: OwnerBookingsService, query: Record<string, unknown>) =>
+    svc.listReportBookings(owner, { venueId: 'v1', ...query } as any);
+
+  it('"upcoming" lists what has not ended yet, nearest first, without cancelled ones', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { scope: 'upcoming' });
+    const args = findMany.mock.calls[0][0];
+    expect(args.where.slotEnd).toEqual({ gte: NOW });
+    expect(args.where.status).toEqual({ not: 'cancelled' });
+    expect(args.orderBy).toEqual([{ slotStart: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('"past" lists what is over, latest first', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { scope: 'past' });
+    const args = findMany.mock.calls[0][0];
+    expect(args.where.slotEnd).toEqual({ lt: NOW });
+    expect(args.orderBy).toEqual([{ slotStart: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('"today" is today on the VENUE\'s clock', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { scope: 'today' });
+    const range = findMany.mock.calls[0][0].where.slotStart;
+    // 3 Oct 00:00 Cairo (UTC+3 in early October) = 2 Oct 21:00 UTC
+    expect(range.gte.toISOString()).toBe('2026-10-02T21:00:00.000Z');
+    expect(range.lt.toISOString()).toBe('2026-10-03T21:00:00.000Z');
+  });
+
+  it('intersects the today scope with a date filter instead of expanding today', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { scope: 'today', from: '2026-10-01', to: '2026-10-05' });
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.AND[0].slotStart.gte.toISOString()).toBe('2026-10-02T21:00:00.000Z');
+    expect(where.AND[0].slotStart.lt.toISOString()).toBe('2026-10-03T21:00:00.000Z');
+    expect(where.slotStart.gte.toISOString()).toBe('2026-09-30T21:00:00.000Z');
+  });
+
+  it('a cancelled booking is still found by asking for cancelled ones, even under "upcoming"', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { scope: 'upcoming', status: 'cancelled' });
+    expect(findMany.mock.calls[0][0].where.status).toBe('cancelled');
+  });
+
+  it('a from/to calendar day is that day at the venue, to-day included', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { from: '2026-10-05', to: '2026-10-05' });
+    const range = findMany.mock.calls[0][0].where.slotStart;
+    expect(range.gte.toISOString()).toBe('2026-10-04T21:00:00.000Z');
+    expect(range.lt.toISOString()).toBe('2026-10-05T21:00:00.000Z');
+  });
+
+  it('with no scope the list is what it always was: everything, latest first', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, {});
+    const args = findMany.mock.calls[0][0];
+    expect(args.where.slotEnd).toBeUndefined();
+    expect(args.orderBy).toEqual([{ slotStart: 'desc' }, { id: 'desc' }]);
   });
 });

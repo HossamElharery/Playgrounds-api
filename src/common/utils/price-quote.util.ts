@@ -1,5 +1,5 @@
 import { zonedHhmm } from './timezone.util';
-import { ruleActiveAt, type PricingRuleLike } from './pricing-rule.util';
+import { bestRule, ruleActiveAt, type PricingRuleLike } from './pricing-rule.util';
 import { zonedWeekday } from './timezone.util';
 
 export interface PriceQuoteSegment {
@@ -36,10 +36,10 @@ export function quoteDurationPrice(
         r.startTime <= hhmm &&
         hhmm < r.endTime,
     );
-    if (!candidates.length) {
+    if (!candidates.some(r => r.kind !== 'discount')) {
       return { priceAmount: null, currency, breakdown: [] };
     }
-    const rule = candidates.sort((a, b) => b.priority - a.priority)[0];
+    const rule = bestRule(candidates);
     const minutes = (segEnd.getTime() - segStart.getTime()) / 60_000;
     const amount = Math.round((rule.priceAmount * minutes) / 60);
     total += amount;

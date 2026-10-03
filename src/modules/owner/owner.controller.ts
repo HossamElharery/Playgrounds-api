@@ -785,8 +785,10 @@ export class OwnerController {
     @Query('q') q?: string,
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
+    @Query('scope') scope?: string,
   ) {
     return this.ownerBookings.listReportBookings(user, {
+      scope,
       venueId,
       from,
       to,

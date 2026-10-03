@@ -23,6 +23,7 @@ import type { MulterFile } from '../../common/types/multer-file.type';
 import { VenuesService } from './venues.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
+import { OwnerVenueDto } from './dto/owner-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { SearchVenuesDto } from './dto/search-venues.dto';
 import { CreateCourtDto, UpdateCourtDto } from './dto/court.dto';
@@ -138,7 +139,7 @@ export class VenuesController {
   async update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Body() dto: UpdateVenueDto,
+    @Body() dto: OwnerVenueDto,
   ) {
     return this.venues.update(id, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, id), dto);
   }

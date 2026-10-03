@@ -62,4 +62,26 @@ describe('QuickstartService', () => {
     const out = await build({ imports: 1 }).compute('v1', 'o1', open);
     expect(out.steps.find((s) => s.key === 'import')).toMatchObject({ done: true, optional: true });
   });
+
+  it('every step opens the venue page at the section that fixes it, not the whole page', async () => {
+    const out = await build().compute('v1', 'o1', null);
+    const route = Object.fromEntries(out.steps.map((s) => [s.key, s.route]));
+    expect(route['hours']).toBe('/owner/venues/v1?section=hours');
+    expect(route['courts']).toBe('/owner/venues/v1?section=units');
+    expect(route['prices']).toBe('/owner/venues/v1?section=prices');
+    const items = Object.fromEntries(out.readiness.items.map((i) => [i.key, i.route]));
+    expect(items['address']).toBe('/owner/venues/v1?section=location');
+    expect(items['photos']).toBe('/owner/venues/v1?section=details');
+  });
+
+  it('the "not bookable" banner gets one deep link per missing piece and the hours that lack a price', async () => {
+    const svc = build({
+      courts: [{ id: 'c1', name: 'Court 1', _count: { pricingRules: 1 }, pricingRules: [{ daysOfWeek: [], startTime: '10:00', endTime: '22:00', kind: 'base' }] }],
+      venue: { descriptionAr: null, descriptionEn: null, address: null, lat: 0, lng: 0, cancellationPolicy: null, contactPhone: null },
+    });
+    const out = await svc.compute('v1', 'o1', { '0': { closed: false, open: '10:00', close: '23:00' } } as any);
+    expect(out.bookable.missing).toEqual(['location']);
+    expect(out.bookable.routes).toEqual({ location: '/owner/venues/v1?section=location' });
+    expect(out.bookable.pricingGaps).toEqual([{ courtId: 'c1', name: 'Court 1', gaps: [{ day: 0, from: '22:00', to: '23:00' }] }]);
+  });
 });

@@ -56,6 +56,8 @@ export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
 
 export interface ImportContext {
   timeZone: string;
+  /** The venue's country, so a local number is read the way people type it there. */
+  countryCode?: string;
   now: Date;
   courts: ImportCourt[];
   weeklyHours: WeeklyHours | null;
@@ -267,7 +269,7 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
   const rawPhone = cell(cells, mapping, 'phone');
   let phone: string | null = null;
   if (rawPhone) {
-    phone = normalizeGuestPhone(rawPhone);
+    phone = normalizeGuestPhone(rawPhone, ctx.countryCode);
     if (!phone) warn('PHONE_INVALID', rawPhone);
   }
   const src = parseSource(cell(cells, mapping, 'source'));
@@ -304,14 +306,14 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
 }
 
 /** A customers-only row: a name and/or phone, plus an optional note. */
-export function normalizeCustomerRow(cells: string[], mapping: ColumnMapping): {
+export function normalizeCustomerRow(cells: string[], mapping: ColumnMapping, countryCode = 'EG'): {
   customer?: { name: string | null; phone: string | null; note: string | null; key: string };
   issues: ImportIssue[];
 } {
   const issues: ImportIssue[] = [];
   const name = cell(cells, mapping, 'customerName').slice(0, 80) || null;
   const rawPhone = cell(cells, mapping, 'phone');
-  const phone = rawPhone ? normalizeGuestPhone(rawPhone) : null;
+  const phone = rawPhone ? normalizeGuestPhone(rawPhone, countryCode) : null;
   if (rawPhone && !phone) issues.push({ code: 'PHONE_INVALID', level: 'warning', detail: rawPhone });
   if (!name && !phone) {
     issues.push({ code: 'CUSTOMER_EMPTY', level: 'error' });

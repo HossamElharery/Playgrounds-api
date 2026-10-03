@@ -77,4 +77,13 @@ describe('buildBookingStatement', () => {
     expect(s.refunded).toBe(50);
     expect(s.outstanding).toBe(0);
   });
+
+  it('a cancelled booking owes nothing, whatever was or was not paid', () => {
+    const base = { source: 'manual' as const, baseAmount: 300, feeAmount: 0, discountAmount: 0, totalAmount: 300, ownerFundedDiscount: 0, commissionBps: null, commissionAmount: null, ownerNetAmount: null, currency: 'EGP' };
+    expect(buildBookingStatement({ ...base, status: 'cancelled' }, 0).outstanding).toBe(0);
+    expect(buildBookingStatement({ ...base, status: 'cancelled' }, 100).outstanding).toBe(0);
+    // ...but the deposit that was kept is still reported as received.
+    expect(buildBookingStatement({ ...base, status: 'cancelled' }, 100).received).toBe(100);
+    expect(buildBookingStatement({ ...base, status: 'confirmed' }, 100).outstanding).toBe(200);
+  });
 });

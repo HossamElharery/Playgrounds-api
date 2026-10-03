@@ -61,3 +61,60 @@ describe('VenuesService.update — weekly hours', () => {
     await expect(svc.update('v1', 'someone-else', false, { weeklyHours: validHours } as any)).rejects.toBeDefined();
   });
 });
+
+describe('VenuesService — the owner\'s venue page', () => {
+  const hours = (open: string, close: string) =>
+    Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open, close }]));
+  const rule = (startTime: string, endTime: string, over: Record<string, unknown> = {}) => ({
+    id: `r-${startTime}`, daysOfWeek: [] as number[], startTime, endTime, priceAmount: 12000, currency: 'AED', priority: 0, kind: 'base', ...over,
+  });
+  function detail(venueOver: Record<string, unknown>) {
+    const venue = {
+      id: 'v1', ownerId: 'o1', currency: 'AED', lat: 25.2, lng: 55.3, address: 'Marina Walk',
+      weeklyHours: hours('09:00', '23:45'),
+      courts: [{ id: 'c1', name: 'Court 1', pricingRules: [rule('09:00', '23:00')] }],
+      photos: [], amenities: [], sports: [],
+      ...venueOver,
+    };
+    const prisma = { venue: { findUnique: jest.fn(async () => venue) } };
+    return new VenuesService(prisma as any);
+  }
+
+  it('tells the owner which hours have no price instead of leaving them to find out from players', async () => {
+    const d: any = await detail({}).getOwnedDetail('v1', 'o1', false);
+    expect(d.readiness.missing).toEqual([]);
+    expect(d.readiness.pricingGaps).toHaveLength(1);
+    expect(d.readiness.pricingGaps[0]).toEqual(
+      expect.objectContaining({ courtId: 'c1', gaps: expect.arrayContaining([{ day: 0, from: '23:00', to: '23:45' }]) }),
+    );
+  });
+
+  it('lists what blocks booking so the page can say it at the top', async () => {
+    const d: any = await detail({ lat: 0, lng: 0, address: '', courts: [] }).getOwnedDetail('v1', 'o1', false);
+    expect(d.readiness.missing).toEqual(['courts', 'location']);
+  });
+
+  it('refuses a price window that ends before it starts', async () => {
+    const court = { id: 'c1', venueId: 'v1', venue: { id: 'v1', ownerId: 'o1', currency: 'AED', country: {} } };
+    const prisma = { court: { findUnique: jest.fn(async () => court) }, pricingRule: { create: jest.fn() } };
+    const svc = new VenuesService(prisma as any);
+    await expect(
+      svc.addPricingRule('c1', 'o1', false, { daysOfWeek: [], startTime: '22:00', endTime: '09:00', priceAmount: 100 } as any),
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'PRICE_WINDOW_INVALID' }) });
+    expect(prisma.pricingRule.create).not.toHaveBeenCalled();
+  });
+
+  it('stores the venue\'s own currency and a default label when the owner sends neither', async () => {
+    const court = { id: 'c1', venueId: 'v1', venue: { id: 'v1', ownerId: 'o1', currency: 'AED', country: {} } };
+    const prisma = {
+      court: { findUnique: jest.fn(async () => court) },
+      pricingRule: { create: jest.fn(async ({ data }: any) => data), aggregate: jest.fn(async () => ({ _min: { priceAmount: 100 } })) },
+      venue: { findUnique: jest.fn(async () => ({ currency: 'AED' })), update: jest.fn() },
+    };
+    const svc = new VenuesService(prisma as any);
+    await svc.addPricingRule('c1', 'o1', false, { daysOfWeek: [5, 6], startTime: '09:00', endTime: '24:00', priceAmount: 22000 } as any);
+    expect(prisma.pricingRule.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ currency: 'AED', label: 'base', startTime: '09:00', endTime: '24:00' }),
+    });
+  });
+});

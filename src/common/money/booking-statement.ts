@@ -8,6 +8,8 @@
  */
 
 export interface StatementBooking {
+  /** A cancelled booking owes nothing — whatever was kept is income, not a debt. */
+  status?: string;
   source: 'platform' | 'manual';
   baseAmount: number;
   feeAmount: number;
@@ -110,7 +112,7 @@ export function buildBookingStatement(
     commission,
     ownerNet,
     received,
-    outstanding: Math.max(0, customerTotal - received),
+    outstanding: b.status === 'cancelled' ? 0 : Math.max(0, customerTotal - received),
     refunded: Math.max(0, refunded),
     lines,
   };

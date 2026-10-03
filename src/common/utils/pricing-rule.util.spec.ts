@@ -50,3 +50,11 @@ describe('time-boxed pricing rules', () => {
     expect(quote.priceAmount).toBe(40000);
   });
 });
+
+describe('ranking rules that overlap', () => {
+  it('a temporary discount beats the everyday rule whatever the everyday priority is', () => {
+    const everyday = { ...base, priority: 172 };
+    expect(matchPricingRule([everyday, discount({ priority: 0 })], 0, sunday14, TZ).priceAmount).toBe(16000);
+    expect(quoteDurationPrice([everyday, discount({ priority: 0 })], sunday14, 60, TZ).priceAmount).toBe(16000);
+  });
+});

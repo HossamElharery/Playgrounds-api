@@ -803,7 +803,7 @@ export class OwnerAssistantService {
     }
     lines.push(
       bi(
-        `الصافي بعد عمولة متشينا والمصاريف: ${fmt(t.netProfit, currency).ar}.`,
+        `الصافي بعد عمولة ماتشنا والمصاريف: ${fmt(t.netProfit, currency).ar}.`,
         `Net after Matchena's commission and expenses: ${fmt(t.netProfit, currency).en}.`,
       ),
     );

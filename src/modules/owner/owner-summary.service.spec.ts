@@ -165,6 +165,8 @@ describe('CSV export', () => {
       '2026-09-20',
       '2026-09-20',
     );
+    const expectedQuery = prisma.booking.aggregate.mock.calls[0][0] as unknown as { where: { slotStart: { gt: Date; lt: Date } } };
+    expect(expectedQuery.where.slotStart.lt.toISOString()).toBe('2026-09-20T21:00:00.000Z');
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     expect(csv).toContain("\"'=CMD|cmd\"");
   });

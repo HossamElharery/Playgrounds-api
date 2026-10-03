@@ -830,7 +830,7 @@ export class AdminFinanceService {
 
   async platformKpis() {
     const monthAgo = new Date(Date.now() - 30 * 86_400_000);
-    const [gmv, feeSum, commissionSum, discountSum, balances, pending, top] = await Promise.all([
+    const [gmv, feeSum, commissionSum, discountSum, balances, pending, top, gmvByCurrencyRows, revenueByCurrencyRows] = await Promise.all([
       this.prisma.booking.aggregate({
         where: { source: 'platform', status: { not: 'cancelled' }, slotStart: { gte: monthAgo } },
         _sum: { totalAmount: true },
@@ -859,6 +859,17 @@ export class AdminFinanceService {
         orderBy: { _sum: { totalAmount: 'desc' } },
         take: 5,
       }),
+      // Money in different currencies is never added together: one figure per currency.
+      this.prisma.booking.groupBy({
+        by: ['currency'],
+        where: { source: 'platform', status: { not: 'cancelled' }, slotStart: { gte: monthAgo } },
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.booking.groupBy({
+        by: ['currency'],
+        where: { source: 'platform', status: { in: ['completed', 'confirmed'] }, paymentStatus: 'paid' },
+        _sum: { feeAmount: true, commissionAmount: true, discountAmount: true, ownerFundedDiscount: true },
+      }),
     ]);
     void commissionSum;
     void discountSum;
@@ -882,6 +893,14 @@ export class AdminFinanceService {
     const stale = await this.staleVenues();
     return {
       gmv: gmv._sum.totalAmount ?? 0,
+      gmvByCurrency: gmvByCurrencyRows.map((r) => ({ currency: r.currency, amount: r._sum.totalAmount ?? 0 })),
+      platformRevenueByCurrency: revenueByCurrencyRows.map((r) => ({
+        currency: r.currency,
+        amount:
+          (r._sum.feeAmount ?? 0) +
+          (r._sum.commissionAmount ?? 0) -
+          Math.max(0, (r._sum.discountAmount ?? 0) - (r._sum.ownerFundedDiscount ?? 0)),
+      })),
       platformRevenue,
       totalOwedToOwners: owedToOwners,
       totalOwedByOwners: owedByOwners,

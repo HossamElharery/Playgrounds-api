@@ -26,7 +26,8 @@ import {
   WeeklyHours,
 } from '../../common/utils/weekly-hours.util';
 import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
-import { matchPricingRule } from '../../common/utils/pricing-rule.util';
+import { coveringPricingRule, hasPricingCoverage } from '../../common/utils/pricing-rule.util';
+import { moneyText } from '../../common/money/money-text';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
 import { assertBookingAccess, assertVenueAccess } from '../../common/access/owner-access';
 import { netReceived } from '../owner/cash/payment-trail';
@@ -74,7 +75,8 @@ export interface SlotCell {
   hhmm: string;
   priceAmount: number;
   currency: string;
-  state: 'available' | 'booked' | 'held' | 'past' | 'blocked';
+  /** `unpriced`: inside opening hours but no price rule covers it — nobody can book it until the tariff does. */
+  state: 'available' | 'booked' | 'held' | 'past' | 'blocked' | 'unpriced';
 }
 
 @Injectable()
@@ -148,7 +150,7 @@ export class BookingsService {
       ) {
         continue;
       }
-      const rule = matchPricingRule(
+      const rule = coveringPricingRule(
         court.pricingRules,
         dayOfWeek,
         start,
@@ -164,6 +166,7 @@ export class BookingsService {
       else if (blocked) state = 'blocked';
       else if (overlapping?.status === 'confirmed') state = 'booked';
       else if (overlapping?.status === 'held') state = 'held';
+      else if (!rule || !hasPricingCoverage(court.pricingRules, start, end, timeZone)) state = 'unpriced';
 
       cells.push({
         start: start.toISOString(),
@@ -197,7 +200,7 @@ export class BookingsService {
       throw new BadRequestException('Cannot book a past slot');
 
     const timeZone = court.venue.country.timezone;
-    const rule = matchPricingRule(
+    const rule = coveringPricingRule(
       court.pricingRules,
       zonedWeekday(slotStart, timeZone),
       slotStart,
@@ -210,14 +213,17 @@ export class BookingsService {
       slotStart.getTime() + court.slotDurationMins * units * 60_000,
     );
 
+    if (!hasPricingCoverage(court.pricingRules, slotStart, slotEnd, timeZone)) {
+      throw new BadRequestException('This court has no pricing configured for the entire booking');
+    }
     const weeklyHours = court.venue.weeklyHours as WeeklyHours | null;
     if (weeklyHours) {
-      const dayOfWeek = zonedWeekday(slotStart, timeZone);
-      const dayHours =
-        weeklyHours[String(dayOfWeek)] ??
-        weeklyHours[dayOfWeek as unknown as string];
-      if (!isTimeWithinDayHours(zonedHhmm(slotStart, timeZone), dayHours)) {
-        throw new BadRequestException('SLOT_OUTSIDE_HOURS');
+      for (let at = slotStart.getTime(); at < slotEnd.getTime(); at += 15 * 60_000) {
+        const instant = new Date(at);
+        const dayHours = weeklyHours[String(zonedWeekday(instant, timeZone))];
+        if (!isTimeWithinDayHours(zonedHhmm(instant, timeZone), dayHours)) {
+          throw new BadRequestException('SLOT_OUTSIDE_HOURS');
+        }
       }
     }
 
@@ -1040,7 +1046,6 @@ export class BookingsService {
     // A cancellation moves money and frees a slot the player was counting on.
     // When the venue or an admin cancels, this is the only way they find out;
     // when they cancel themselves, it's the receipt for what was refunded.
-    const refundMajor = Math.round(refundAmount / 100);
     await this.notifications
       .create({
         userId: booking.userId,
@@ -1051,8 +1056,8 @@ export class BookingsService {
         titleAr: cancelledByPlayer
           ? 'تم إلغاء حجزك'
           : 'الملعب ألغى حجزك',
-        bodyEn: refundAmount > 0 ? `${refundMajor} ${booking.currency} refunded to your wallet` : 'No refund was due under the cancellation policy',
-        bodyAr: refundAmount > 0 ? `تم رد ${refundMajor} ${booking.currency} إلى محفظتك` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
+        bodyEn: refundAmount > 0 ? `${moneyText(refundAmount, booking.currency, 'en')} refunded to your wallet` : 'No refund was due under the cancellation policy',
+        bodyAr: refundAmount > 0 ? `تم رد ${moneyText(refundAmount, booking.currency, 'ar')} إلى محفظتك` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
         deepLink: '/app/bookings',
         payload: { bookingId: booking.id, refundAmount },
       })

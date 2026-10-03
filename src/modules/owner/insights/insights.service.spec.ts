@@ -11,7 +11,7 @@ const rule = (over: Record<string, unknown> = {}) => ({
   priority: 0, kind: 'base', validFrom: null, validUntil: null, ...over,
 });
 
-function build(opts: { rules?: any[]; approvedAt?: Date; extraBookings?: any[]; discounts?: any[]; noBookings?: boolean } = {}) {
+function build(opts: { rules?: any[]; approvedAt?: Date; extraBookings?: any[]; discounts?: any[]; noBookings?: boolean; bookingCount?: number } = {}) {
   const busy = SUNDAYS.flatMap((d) => [
     { courtId: 'c1', slotStart: cairo(d, '10:00'), slotEnd: cairo(d, '14:00') },
     { courtId: 'c1', slotStart: cairo(d, '18:00'), slotEnd: cairo(d, '22:00') },
@@ -42,6 +42,7 @@ function build(opts: { rules?: any[]; approvedAt?: Date; extraBookings?: any[]; 
     booking: {
       findMany: jest.fn().mockResolvedValue(opts.noBookings ? [] : [...busy, ...(opts.extraBookings ?? [])]),
       findFirst: jest.fn().mockResolvedValue(opts.noBookings ? null : { slotStart: cairo('2026-09-06', '10:00') }),
+      count: jest.fn().mockResolvedValue(opts.noBookings ? 0 : opts.bookingCount ?? 40),
     },
     calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
     pricingDiscount: {
@@ -90,6 +91,17 @@ describe('InsightsService.occupancy', () => {
     expect(res.hasEnoughData).toBe(false);
     expect(res.windows).toEqual([]);
     expect(res.dips).toEqual([]);
+  });
+
+  it('an old venue with hardly any bookings has nothing to learn from: no suggestions, and it says how many it needs', async () => {
+    const { svc } = build({ bookingCount: 3 });
+    const res = await svc.occupancy(owner, 'v1');
+    expect(res.dataDays).toBeGreaterThan(21); // plenty of time...
+    expect(res.hasEnoughData).toBe(false); // ...but not enough bookings in it
+    expect(res.bookingsInWindow).toBe(3);
+    expect(res.minBookings).toBe(10);
+    expect(res.windows).toEqual([]);
+    expect(res.lostRevenueMonthly).toBe(0);
   });
 
   it('hides a window where a discount is already running, and one dismissed within four weeks', async () => {

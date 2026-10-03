@@ -20,7 +20,7 @@ export interface ResolvedOwnerRange {
   range: OwnerRangeKey;
 }
 
-function zonedYmd(instant: Date, timeZone: string): string {
+export function zonedYmd(instant: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',

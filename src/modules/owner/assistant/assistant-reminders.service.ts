@@ -9,6 +9,13 @@ import { fmtMoney } from './assistant-money';
 import { zonedHhmm } from '../../../common/utils/timezone.util';
 
 const HOUR = 3_600_000;
+/** The two moments of the day (venue-local) the overdue digest is sent. */
+const OVERDUE_LOCAL_HOURS = [11, 20] as const;
+
+/** 0–23 on the venue's own clock. */
+export function localHour(now: Date, timeZone: string): number {
+  return Number(zonedHhmm(now, timeZone).slice(0, 2));
+}
 /** The same unpaid set is mentioned again only after this long; a changed set is sent at once. */
 const SAME_DEBT_REMINDER_MS = 72 * HOUR;
 
@@ -33,12 +40,16 @@ export class AssistantRemindersService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Late morning and evening: what is still owed from bookings already played. */
-  @Cron('0 11,20 * * *', { timeZone: 'Africa/Cairo' })
+  /**
+   * Late morning and evening — on EACH VENUE'S OWN clock: what is still owed from bookings already played.
+   * It wakes every hour and sends only to venues for which it is now 11:00 or 20:00 locally, so a Dubai
+   * owner is nudged at their lunchtime, not at 12:00 Cairo time.
+   */
+  @Cron('0 * * * *')
   async overdueDigest(): Promise<void> {
     try {
       await withJobLock(this.prisma, 'assistant.overdue', async () => {
-        await this.sendOverdue();
+        await this.sendOverdue(new Date(), { localHours: OVERDUE_LOCAL_HOURS });
       });
     } catch (err) {
       this.logger.error(`Overdue reminders failed: ${String(err)}`);
@@ -57,15 +68,16 @@ export class AssistantRemindersService {
     }
   }
 
-  async sendOverdue(now = new Date()): Promise<number> {
+  async sendOverdue(now = new Date(), opts: { localHours?: readonly number[] } = {}): Promise<number> {
     const rows = await findOwed(this.prisma, {}, { kind: 'overdue', now });
     let sent = 0;
     for (const [venueId, list] of groupByVenue(rows)) {
       const venue = await this.prisma.venue.findUnique({
         where: { id: venueId },
-        select: { ownerId: true, nameAr: true, nameEn: true },
+        select: { ownerId: true, nameAr: true, nameEn: true, country: { select: { timezone: true } } },
       });
       if (!venue) continue;
+      if (opts.localHours && !opts.localHours.includes(localHour(now, venue.country?.timezone ?? 'Africa/Cairo'))) continue;
       // Once per venue per half-day: the digest is a nudge, not a feed.
       if (await this.recently(venue.ownerId, 'assistant_overdue', 'venueId', venueId, 10 * HOUR, now))
         continue;

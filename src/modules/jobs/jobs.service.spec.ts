@@ -281,6 +281,15 @@ describe('Unpaid manual booking reminders', () => {
     );
   });
 
+  it('writes the amount with the venue currency label — no bare ISO code in an Arabic sentence', async () => {
+    prisma.booking.findMany.mockResolvedValue([row({ currency: 'AED' })]);
+    await service.remindUnpaidManualBookingsNow(now);
+    const call = notifications.create.mock.calls[0][0];
+    expect(call.titleAr).toContain('250 د.إ');
+    expect(call.titleAr).not.toContain('AED');
+    expect(call.titleEn).toContain('250 AED');
+  });
+
   it('never repeats a reminder it already sent', async () => {
     prisma.booking.findMany.mockResolvedValue([row()]);
     prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
@@ -350,6 +359,16 @@ describe('Ending-unpaid reminders', () => {
         payload: { endingUnpaidFor: 'b9', venueId: 'v1' },
       }),
     );
+  });
+
+  it('uses the currency label in the Arabic title, body and the English text alike', async () => {
+    prisma.booking.findMany.mockResolvedValue([row({ currency: 'SAR' })]);
+    await service.remindBookingsEndingUnpaidNow(now);
+    const call = notifications.create.mock.calls[0][0];
+    expect(call.titleAr).toContain('400 ر.س');
+    expect(call.bodyAr).toContain('400 ر.س');
+    expect(call.bodyAr + call.titleAr).not.toContain('SAR');
+    expect(call.bodyEn).toContain('400 SAR');
   });
 
   it('is deduped separately from the pre-arrival reminder', async () => {

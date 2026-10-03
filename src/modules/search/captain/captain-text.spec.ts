@@ -31,8 +31,8 @@ describe('captain text helpers', () => {
   });
 
   it('refuses a match that rests on one stray word', () => {
-    const rows = [faq({ id: 'a', questionAr: 'ازاي الغي الحجز؟', answerAr: 'ماتشينا ممتاز' })];
-    expect(bestFaq('ماتشينا', rows)).toBeNull();
+    const rows = [faq({ id: 'a', questionAr: 'ازاي الغي الحجز؟', answerAr: 'ماتشنا ممتاز' })];
+    expect(bestFaq('ماتشنا', rows)).toBeNull();
     expect(bestFaq('', rows)).toBeNull();
   });
 

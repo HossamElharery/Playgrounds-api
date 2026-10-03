@@ -334,6 +334,7 @@ export class OwnerService {
         // on an exact start time used to lose any booking that did not begin on
         // a slot boundary — e.g. a walk-in entered at 15:53.
         const headSlotFor = new Map<string, number>();
+        const touchedSlots = new Map<string, number>();
         slots.forEach((slot, index) => {
           const start = new Date(slot.start);
           const end = new Date(slot.end);
@@ -341,6 +342,7 @@ export class OwnerService {
             if (b.courtId !== court.id) continue;
             if (b.slotStart >= end || b.slotEnd <= start) continue;
             if (!headSlotFor.has(b.id)) headSlotFor.set(b.id, index);
+            touchedSlots.set(b.id, (touchedSlots.get(b.id) ?? 0) + 1);
           }
         });
         const enriched = slots.map((slot, index) => {
@@ -349,18 +351,16 @@ export class OwnerService {
           const booking = dayBookings.find(
             (b) => b.courtId === court.id && b.slotStart < end && b.slotEnd > start,
           );
-          const spanSlots = booking
-            ? Math.max(
-                1,
-                Math.ceil(
-                  (booking.slotEnd.getTime() - booking.slotStart.getTime()) /
-                    (court.slotDurationMins * 60_000),
-                ),
-              )
-            : 1;
+          const spanSlots = booking ? touchedSlots.get(booking.id) ?? 1 : 1;
           const isSpanHead = !!booking && headSlotFor.get(booking.id) === index;
-          let state: 'free' | 'booked_platform' | 'booked_manual' | 'blocked' | 'past' =
-            slot.state === 'blocked' ? 'blocked' : slot.state === 'past' ? 'past' : 'free';
+          let state: 'free' | 'booked_platform' | 'booked_manual' | 'blocked' | 'past' | 'unpriced' =
+            slot.state === 'blocked'
+              ? 'blocked'
+              : slot.state === 'past'
+                ? 'past'
+                : slot.state === 'unpriced'
+                  ? 'unpriced'
+                  : 'free';
           if (booking?.source === 'platform') state = 'booked_platform';
           else if (booking?.source === 'manual') state = 'booked_manual';
           // A venue-wide block (courtId null) and a per-court block can both

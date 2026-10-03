@@ -21,11 +21,21 @@ import {
   toSearchBoundary,
 } from '../../common/utils/geo.util';
 import { assertVenueCurrency } from '../../common/money/venue-currency';
-import { loadBookingBlockers } from '../../common/utils/venue-readiness.util';
+import { bookingBlockers, loadBookingBlockers, venuePricingGaps } from '../../common/utils/venue-readiness.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
 import { zonedWallTimeToUtc } from '../../common/utils/timezone.util';
 import { buildPagination } from '../../common/dto/page-query.dto';
 import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
+
+/** A price window must end after it starts (the end is exclusive; "24:00" is midnight). */
+function assertRuleWindow(dto: { startTime: string; endTime: string }): void {
+  if (dto.startTime >= dto.endTime) {
+    throw new BadRequestException({
+      code: 'PRICE_WINDOW_INVALID',
+      message: 'The price window must end after it starts',
+    });
+  }
+}
 
 @Injectable()
 export class VenuesService {
@@ -134,7 +144,7 @@ export class VenuesService {
     venueId: string,
     ownerId: string,
     isPrivileged: boolean,
-    dto: UpdateVenueDto,
+    dto: UpdateVenueDto & { contactPhone?: string | null },
   ) {
     await this.assertOwnership(venueId, ownerId, isPrivileged);
     if (dto.weeklyHours) {
@@ -175,6 +185,7 @@ export class VenuesService {
         districtId: dto.districtId,
         governorateId: dto.governorateId,
         address: dto.address,
+        contactPhone: dto.contactPhone,
         surface: dto.surface,
         instantBook: dto.instantBook,
         cancellationPolicy: dto.cancellationPolicy,
@@ -233,7 +244,20 @@ export class VenuesService {
   async getOwnedDetail(id: string, ownerId: string, privileged: boolean) {
     await this.assertOwnership(id, ownerId, privileged);
     const venue = await this.getById(id);
-    return privileged ? venue : this.stripSeoOverrides(venue);
+    const rulesOf = (c: (typeof venue.courts)[number]) => c.pricingRules;
+    // What stops players from booking, and which hours have no price — computed with the venue
+    // so the owner's page never has to guess it from the raw rows.
+    const readiness = {
+      missing: bookingBlockers(
+        { weeklyHours: venue.weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
+        venue.courts.map((c) => ({ pricingRules: rulesOf(c).length, rules: rulesOf(c) })),
+      ),
+      pricingGaps: venuePricingGaps(
+        venue.weeklyHours,
+        venue.courts.map((c) => ({ id: c.id, name: c.name, rules: rulesOf(c) })),
+      ),
+    };
+    return { ...(privileged ? venue : this.stripSeoOverrides(venue)), readiness };
   }
 
   async getBySlug(slug: string) {
@@ -269,9 +293,21 @@ export class VenuesService {
   async listMine(ownerId: string, onlyVenueIds?: string[]) {
     const venues = await this.prisma.venue.findMany({
       where: { ownerId, ...(onlyVenueIds ? { id: { in: onlyVenueIds } } : {}) },
-      include: { courts: true, photos: { orderBy: { position: 'asc' } }, sports: { include: { sport: true } }, amenities: { include: { amenity: true } } },
+      include: {
+        courts: { include: { pricingRules: { select: { daysOfWeek: true, startTime: true, endTime: true, kind: true } } } },
+        photos: { orderBy: { position: 'asc' } },
+        sports: { include: { sport: true } },
+        amenities: { include: { amenity: true } },
+      },
     });
-    return venues.map((venue) => this.stripSeoOverrides(venue));
+    return venues.map((venue) => ({
+      ...this.stripSeoOverrides(venue),
+      // The venue switcher marks a venue players cannot book yet, so an owner of ten sees which one to finish.
+      bookingMissing: bookingBlockers(
+        { weeklyHours: venue.weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
+        venue.courts.map((c) => ({ pricingRules: c.pricingRules.length, rules: c.pricingRules })),
+      ),
+    }));
   }
 
   private parseBbox(
@@ -811,10 +847,12 @@ export class VenuesService {
     if (!isPrivileged && court.venue.ownerId !== ownerId)
       throw new ForbiddenException('Not your venue');
     assertVenueCurrency(court.venue.currency, dto.currency);
+    assertRuleWindow(dto);
     const created = await this.prisma.pricingRule.create({
       data: {
         courtId,
         ...dto,
+        label: dto.label?.trim() || 'base',
         currency: court.venue.currency,
       },
     });
@@ -836,9 +874,10 @@ export class VenuesService {
     if (!isPrivileged && rule.court.venue.ownerId !== ownerId)
       throw new ForbiddenException('Not your venue');
     assertVenueCurrency(rule.court.venue.currency, dto.currency);
+    assertRuleWindow(dto);
     const updated = await this.prisma.pricingRule.update({
       where: { id: ruleId },
-      data: { ...dto, currency: rule.court.venue.currency },
+      data: { ...dto, label: dto.label?.trim() || rule.label || 'base', currency: rule.court.venue.currency },
     });
     await this.refreshVenuePriceFrom(rule.court.venueId);
     return updated;

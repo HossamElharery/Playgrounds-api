@@ -9,7 +9,8 @@ export interface WeeklyDayHours {
 
 export type WeeklyHours = Record<string, WeeklyDayHours>;
 
-export function isValidHhmm(value?: string): boolean {
+export function isValidHhmm(value?: string, allowEndOfDay = false): boolean {
+  if (allowEndOfDay && value === '24:00') return true;
   if (!value || !HHMM.test(value)) return false;
   const minutes = Number(value.slice(3, 5));
   return ALLOWED_MINUTES.has(minutes);
@@ -50,7 +51,7 @@ export function validateWeeklyHours(hours?: WeeklyHours | null): string[] {
     }
     if (day.closed) continue;
     openDays += 1;
-    if (!isValidHhmm(day.open) || !isValidHhmm(day.close)) {
+    if (!isValidHhmm(day.open) || !isValidHhmm(day.close, true)) {
       errors.push(`Weekday ${i} needs valid 15-minute opening and closing times`);
     } else if (day.open === day.close) {
       errors.push(`Weekday ${i} opening and closing times must differ`);

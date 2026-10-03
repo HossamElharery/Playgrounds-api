@@ -7,6 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { LedgerService } from '../finance/ledger.service';
 import { pulseStatusFromOccupancy } from '../pulse/pulse-status.util';
 import { elapsedLiveMatchWhere } from '../social/match-lifecycle';
+import { moneyText } from '../../common/money/money-text';
 
 /**
  * Background sweeps that release time-bounded holds. This is what actually
@@ -256,15 +257,12 @@ export class JobsService {
         hour: '2-digit',
         minute: '2-digit',
       }).format(b.slotStart);
-      const major = new Intl.NumberFormat('en-US', {
-        maximumFractionDigits: 2,
-      }).format(outstanding / 100);
       const who = b.guestName?.trim();
       await this.notifications.create({
         userId: b.venue.ownerId,
         category: 'system',
-        titleEn: `${major} ${b.currency} still due at ${time}`,
-        titleAr: `متبقي ${major} ${b.currency} الساعة ${time}`,
+        titleEn: `${moneyText(outstanding, b.currency, 'en')} still due at ${time}`,
+        titleAr: `متبقي ${moneyText(outstanding, b.currency, 'ar')} الساعة ${time}`,
         bodyEn: `${who ?? 'A booking'} starts at ${time} and has not paid in full. Collect it before they play.`,
         bodyAr: `${who ? `حجز ${who}` : 'حجز'} هيبدأ ${time} ولسه ما دفعش كامل. حصّل المبلغ قبل ما يلعب.`,
         deepLink: '/owner/today',
@@ -327,17 +325,14 @@ export class JobsService {
         hour: '2-digit',
         minute: '2-digit',
       }).format(b.slotEnd);
-      const major = new Intl.NumberFormat('en-US', {
-        maximumFractionDigits: 2,
-      }).format(outstanding / 100);
       const who = b.guestName?.trim();
       await this.notifications.create({
         userId: b.venue.ownerId,
         category: 'system',
-        titleEn: `Collect ${major} ${b.currency} before ${endsAt}`,
-        titleAr: `حصّل ${major} ${b.currency} قبل ${endsAt}`,
-        bodyEn: `${who ?? 'A booking'} on ${b.court.name} finishes at ${endsAt} still owing ${major} ${b.currency}. Take it before they leave.`,
-        bodyAr: `${who ? `${who}` : 'حجز'} على ${b.court.name} بيخلص ${endsAt} ولسه عليه ${major} ${b.currency}. خده قبل ما يمشي.`,
+        titleEn: `Collect ${moneyText(outstanding, b.currency, 'en')} before ${endsAt}`,
+        titleAr: `حصّل ${moneyText(outstanding, b.currency, 'ar')} قبل ${endsAt}`,
+        bodyEn: `${who ?? 'A booking'} on ${b.court.name} finishes at ${endsAt} still owing ${moneyText(outstanding, b.currency, 'en')}. Take it before they leave.`,
+        bodyAr: `${who ? `${who}` : 'حجز'} على ${b.court.name} بيخلص ${endsAt} ولسه عليه ${moneyText(outstanding, b.currency, 'ar')}. خده قبل ما يمشي.`,
         deepLink: '/owner/today',
         payload: { endingUnpaidFor: b.id, venueId: b.venueId },
       });

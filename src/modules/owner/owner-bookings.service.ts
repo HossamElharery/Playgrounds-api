@@ -34,7 +34,8 @@ import {
   SOURCE_PRESETS,
   sourceDisplay,
 } from '../../common/utils/source-label.util';
-import { zonedHhmm, zonedWeekday } from '../../common/utils/timezone.util';
+import { zonedDayBounds, zonedHhmm, zonedWeekday } from '../../common/utils/timezone.util';
+import { zonedYmd } from '../../common/utils/owner-range.util';
 import {
   isTimeWithinDayHours,
   type WeeklyHours,
@@ -64,7 +65,7 @@ function mapPaymentMethod(
 function mapPaymentStatus(
   status?: 'paid' | 'unpaid' | 'partial',
 ): PaymentStatus {
-  if (status === 'unpaid') return 'pending';
+  if (status !== 'paid' && status !== 'partial') return 'pending';
   if (status === 'partial') return 'partial';
   return 'paid';
 }
@@ -226,7 +227,7 @@ export class OwnerBookingsService {
   ) {
     await this.assertSlotFree(tx, input.courtId, input.venueId, input.slotStart, input.slotEnd);
     // The booking is written in the venue's own currency — never the column default.
-    const venueRow = await tx.venue.findUnique({ where: { id: input.venueId }, select: { currency: true } });
+    const venueRow = await tx.venue.findUnique({ where: { id: input.venueId }, select: { currency: true, countryCode: true } });
     if (!venueRow) throw new NotFoundException('Venue not found');
     let code = generateManualCode();
     for (let i = 0; i < 5; i++) {
@@ -254,7 +255,7 @@ export class OwnerBookingsService {
         paymentStatus,
         paymentMethod,
         guestName: input.customerName?.trim() || null,
-        guestPhone: guestPhoneForStorage(input.customerPhone),
+        guestPhone: guestPhoneForStorage(input.customerPhone, venueRow.countryCode),
         source: 'manual',
         sourceKey: sourceLabel ? null : (input.sourceKey ?? 'walk_in'),
         sourceLabel: sourceLabel ?? null,
@@ -384,8 +385,9 @@ export class OwnerBookingsService {
       assign('guestName', booking.guestName, dto.customerName, { guestName: dto.customerName });
     }
     if (dto.customerPhone !== undefined) {
+      const country = (await this.prisma.venue.findUnique({ where: { id: booking.venueId }, select: { countryCode: true } }))?.countryCode;
       assign('guestPhone', booking.guestPhone, dto.customerPhone, {
-        guestPhone: guestPhoneForStorage(dto.customerPhone),
+        guestPhone: guestPhoneForStorage(dto.customerPhone, country ?? 'EG'),
       });
     }
     if (dto.notes !== undefined) assign('notes', booking.notes, dto.notes, { notes: dto.notes });
@@ -818,12 +820,22 @@ export class OwnerBookingsService {
       throw new BadRequestException('Court does not belong to this venue');
     }
     const tz = court.venue.country.timezone;
-    return quoteDurationPrice(
-      court.pricingRules,
-      new Date(startsAt),
-      durationMinutes,
-      tz,
-    );
+    const start = new Date(startsAt);
+    const quote = quoteDurationPrice(court.pricingRules, start, durationMinutes, tz);
+    const weeklyHours = court.venue.weeklyHours as WeeklyHours | null;
+    const warnings: string[] = [];
+    if (!hasOpeningHours(weeklyHours)) warnings.push('VENUE_HOURS_REQUIRED');
+    else {
+      for (let elapsed = 0; elapsed < durationMinutes; elapsed += 15) {
+        const instant = new Date(start.getTime() + elapsed * 60_000);
+        const hours = weeklyHours![String(zonedWeekday(instant, tz))];
+        if (!isTimeWithinDayHours(zonedHhmm(instant, tz), hours)) {
+          warnings.push('OUTSIDE_HOURS');
+          break;
+        }
+      }
+    }
+    return { ...quote, currency: court.venue.country.currency, warnings };
   }
 
   async listReportBookings(
@@ -839,18 +851,45 @@ export class OwnerBookingsService {
       q?: string;
       cursor?: string;
       limit?: number;
+      /** `upcoming` (nearest first), `today`, `past` (latest first), or `all` (latest first, the default). */
+      scope?: string;
     },
   ) {
     await assertVenueAccess(this.prisma, user, query.venueId, { write: false });
     const limit = Math.min(query.limit ?? 30, 100);
     const where: Prisma.BookingWhereInput = { venueId: query.venueId };
-    if (query.from || query.to) {
-      where.slotStart = {
-        ...(query.from ? { gte: new Date(query.from) } : {}),
-        ...(query.to ? { lte: new Date(query.to) } : {}),
-      };
+    const scope = ['upcoming', 'today', 'past'].includes(query.scope ?? '') ? (query.scope as 'upcoming' | 'today' | 'past') : 'all';
+    const venueRow = await this.prisma.venue.findUnique({
+      where: { id: query.venueId },
+      select: { country: { select: { timezone: true } } },
+    });
+    const tz = venueRow?.country?.timezone ?? 'Africa/Cairo';
+    const now = new Date();
+    const slotStart: Prisma.DateTimeFilter = {};
+    // A plain calendar day ("2026-10-05") means that day on the VENUE's clock, not UTC midnight.
+    const ymd = /^\d{4}-\d{2}-\d{2}$/;
+    if (query.from) {
+      if (ymd.test(query.from)) slotStart.gte = zonedDayBounds(query.from, tz).start;
+      else slotStart.gte = new Date(query.from);
+    }
+    if (query.to) {
+      if (ymd.test(query.to)) slotStart.lt = zonedDayBounds(query.to, tz).end;
+      else slotStart.lte = new Date(query.to);
+    }
+    if (Object.keys(slotStart).length) where.slotStart = slotStart;
+    if (scope === 'today') {
+      const day = zonedDayBounds(zonedYmd(now, tz), tz);
+      const today = { slotStart: { gte: day.start, lt: day.end } };
+      if (where.slotStart) where.AND = [today];
+      else where.slotStart = today.slotStart;
+    } else if (scope === 'upcoming') {
+      where.slotEnd = { gte: now };
+    } else if (scope === 'past') {
+      where.slotEnd = { lt: now };
     }
     if (query.status) where.status = query.status as Booking['status'];
+    // The "what is coming" views are about real bookings: a cancelled one is found with its own filter.
+    else if (scope === 'upcoming' || scope === 'today') where.status = { not: 'cancelled' };
     if (query.courtId) where.courtId = query.courtId;
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus as Booking['paymentStatus'];
     if (query.source === 'platform' || query.source === 'manual') {
@@ -879,7 +918,7 @@ export class OwnerBookingsService {
         user: { select: { id: true, name: true, phone: true } },
         payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
-      orderBy: [{ slotStart: 'desc' }, { id: 'desc' }],
+      orderBy: scope === 'upcoming' || scope === 'today' ? [{ slotStart: 'asc' }, { id: 'asc' }] : [{ slotStart: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(query.cursor ? { skip: 1, cursor: { id: query.cursor } } : {}),
     });
@@ -1168,7 +1207,7 @@ export class OwnerBookingsService {
         commissionAmount: isLocked ? b.commissionAmount : undefined,
         ownerNet: isLocked ? b.ownerNetAmount : undefined,
         paidAmount,
-        outstanding: Math.max(0, b.totalAmount - paidAmount),
+        outstanding: statement.outstanding,
         refunded,
         // Owner-funded discount, shown as its own line so base − discount − commission = net adds up.
         ownerFundedDiscount: statement.ownerDiscount,

@@ -1,4 +1,4 @@
-import { AssistantRemindersService, debtFingerprint } from './assistant-reminders.service';
+import { AssistantRemindersService, debtFingerprint, localHour } from './assistant-reminders.service';
 
 const NOW = new Date('2026-10-03T09:00:00.000Z');
 const HOUR = 3_600_000;
@@ -68,6 +68,29 @@ describe('AssistantRemindersService — unpaid digest', () => {
     const { service, sent } = build([row('1', 12_000)]);
     sent.push({ payload: { kind: 'assistant_overdue', venueId: 'v1', fingerprint: debtFingerprint([{ id: '1', outstanding: 12_000 }]) }, createdAt: new Date(NOW.getTime() - 80 * HOUR) });
     await expect(service.sendOverdue(NOW)).resolves.toBe(1);
+  });
+});
+
+describe('AssistantRemindersService — the digest follows each venue\'s own clock', () => {
+  const HOURS = { localHours: [11, 20] as const };
+
+  it('reads the hour on the venue clock, not the server\'s', () => {
+    expect(localHour(new Date('2026-10-03T07:00:00Z'), 'Asia/Dubai')).toBe(11);
+    expect(localHour(new Date('2026-10-03T07:00:00Z'), 'Africa/Cairo')).toBe(10);
+  });
+
+  it('stays quiet when it is not 11:00 or 20:00 where the venue is', async () => {
+    const { service, notifications } = build([row('1', 12_000)]);
+    // 09:00Z is 13:00 in Dubai — neither moment.
+    await expect(service.sendOverdue(NOW, HOURS)).resolves.toBe(0);
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('sends at 11:00 and at 20:00 local time (Dubai: 07:00Z and 16:00Z)', async () => {
+    const morning = build([row('1', 12_000)]);
+    await expect(morning.service.sendOverdue(new Date('2026-10-03T07:00:00Z'), HOURS)).resolves.toBe(1);
+    const evening = build([row('1', 12_000)]);
+    await expect(evening.service.sendOverdue(new Date('2026-10-03T16:00:00Z'), HOURS)).resolves.toBe(1);
   });
 });
 

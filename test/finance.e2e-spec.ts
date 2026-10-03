@@ -367,6 +367,7 @@ describe('finance integration (real Postgres)', () => {
   it('board: a booking that does not start on a slot boundary still has a head cell', async () => {
     const { OwnerService } = await import('../src/modules/owner/owner.service');
     const { venue, courts, user } = await makeVenue('board');
+    await prisma.venue.update({ where: { id: venue.id }, data: { weeklyHours: Object.fromEntries([0,1,2,3,4,5,6].map(day => [String(day), { open: '08:00', close: '23:00', closed: false }])) } });
     // 15:53–16:53 Cairo spans the 15:00 and 16:00 hourly cells, starting inside the first.
     const slotStart = new Date('2026-09-20T12:53:00Z');
     await insert(
@@ -400,5 +401,6 @@ describe('finance integration (real Postgres)', () => {
     const heads = row.slots.filter((slot) => slot['bookingId'] && Number(slot['spanSlots']) > 0);
     expect(heads.length).toBe(1);
     expect(heads[0]['state']).toBe('booked_manual');
+    expect(heads[0]['spanSlots']).toBe(2);
   });
 });

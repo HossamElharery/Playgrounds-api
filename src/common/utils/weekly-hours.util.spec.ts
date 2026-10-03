@@ -26,6 +26,13 @@ describe('weekly hours', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('accepts midnight only as an exclusive closing time and keeps the last quarter', () => {
+    const week = Object.fromEntries([0,1,2,3,4,5,6].map(d => [d, {closed:false,open:'00:00',close:'24:00'}]));
+    expect(validateWeeklyHours(week)).toEqual([]);
+    expect(isTimeWithinDayHours('23:45', week['0'])).toBe(true);
+    expect(validateWeeklyHours({...week, '0': {closed:false,open:'24:00',close:'01:00'}}).length).toBeGreaterThan(0);
+  });
+
   it('treats earlier closing as overnight', () => {
     expect(
       isTimeWithinDayHours('23:00', { closed: false, open: '18:00', close: '02:00' }),

@@ -131,7 +131,9 @@ export class CommandCentreService {
 }
 
 /** What makes a venue float to the top: not bookable, money chased, a drawer to close, a shift that did not balance. Pure. */
-export function attentionScore(v: Pick<CommandVenue, 'owed' | 'drawers' | 'blockers'>): number {
+export function attentionScore(v: Pick<CommandVenue, 'owed' | 'drawers' | 'blockers'> & { status?: string }): number {
+  // A venue that is still in review (or paused) is not running yet: it must not nag "needs you".
+  if (v.status && v.status !== 'active') return 0;
   return (
     (v.blockers.length ? 3 : 0) +
     (v.owed.overdueCount > 0 ? 2 : 0) +

@@ -302,6 +302,7 @@ export class ImportService {
     });
     const ctx: ImportContext = {
       timeZone: dbVenue?.country?.timezone ?? 'Africa/Cairo',
+      countryCode: (venue as { countryCode?: string }).countryCode ?? 'EG',
       now: new Date(),
       courts: courts.map((c) => ({ id: c.id, name: c.name, slotDurationMins: c.slotDurationMins, pricingRules: c.pricingRules })),
       weeklyHours: venue.weeklyHours as WeeklyHours | null,
@@ -322,7 +323,7 @@ export class ImportService {
         continue;
       }
       if (config.kind === 'customers') {
-        const out = normalizeCustomerRow(cells, mapping);
+        const out = normalizeCustomerRow(cells, mapping, ctx.countryCode);
         if (out.customer) customers.set(sheetRow, out.customer);
         rows.push({
           row: sheetRow,

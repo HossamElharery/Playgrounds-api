@@ -182,7 +182,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     id: 'for_owners',
     topicAr: 'أنا صاحب ملعب وعايز أضيف ملعبي',
     topicEn: 'I own a venue and want to list it',
-    ar: 'ماتشينا ليها لوحة تحكم لأصحاب الملاعب: المواعيد والأسعار والفريق والإيرادات من مكان واحد. للانضمام كشريك افتح صفحة الشركاء.',
+    ar: 'ماتشنا ليها لوحة تحكم لأصحاب الملاعب: المواعيد والأسعار والفريق والإيرادات من مكان واحد. للانضمام كشريك افتح صفحة الشركاء.',
     en: 'Matchena has a dashboard for venue owners: calendar, prices, staff and earnings in one place. To join as a partner, open the partners page.',
     cta: { target: 'partners', labelAr: 'صفحة الشركاء', labelEn: 'Partners page' },
   },

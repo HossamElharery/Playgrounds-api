@@ -3,7 +3,16 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { assertVenueAccess } from '../../../common/access/owner-access';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
-import { bookingBlockers, type BookingBlocker } from '../../../common/utils/venue-readiness.util';
+import { bookingBlockers, venuePricingGaps, type BookingBlocker } from '../../../common/utils/venue-readiness.util';
+
+/** Anchors on the owner's venue page (`?section=`). */
+export type VenueSection = 'hours' | 'units' | 'prices' | 'location' | 'details' | 'more';
+const blockerSection: Record<BookingBlocker, VenueSection> = {
+  hours: 'hours',
+  courts: 'units',
+  prices: 'prices',
+  location: 'location',
+};
 
 export type QuickstartKey = 'hours' | 'courts' | 'prices' | 'team' | 'firstBooking' | 'import';
 
@@ -44,7 +53,15 @@ export class QuickstartService {
   /** Same computation without an actor — used by the admin health board. */
   async compute(venueId: string, ownerId: string, weeklyHours: WeeklyHours | null) {
     const [courts, staff, anyBooking, venue, photos, imported] = await Promise.all([
-      this.prisma.court.findMany({ where: { venueId }, select: { id: true, _count: { select: { pricingRules: true } } } }),
+      this.prisma.court.findMany({
+        where: { venueId },
+        select: {
+          id: true,
+          name: true,
+          _count: { select: { pricingRules: true } },
+          pricingRules: { select: { daysOfWeek: true, startTime: true, endTime: true, kind: true } },
+        },
+      }),
       this.prisma.staffMember.count({ where: { ownerId, OR: [{ venueIds: { has: venueId } }, { venueIds: { isEmpty: true } }] } }),
       this.prisma.booking.findFirst({ where: { venueId, status: { not: 'cancelled' } }, select: { id: true } }),
       this.prisma.venue.findUnique({
@@ -58,10 +75,13 @@ export class QuickstartService {
     // Hours, courts and prices are all edited on the venue's own management page
     // (`/owner/venues/:id`) — there is no separate screen for any of them.
     const venuePage = `/owner/venues/${venueId}`;
+    // Each step opens the venue page already scrolled to the section that fixes it.
+    const section = (name: VenueSection) => `${venuePage}?section=${name}`;
+    const gaps = venuePricingGaps(weeklyHours, courts.map((c) => ({ id: c.id, name: c.name, rules: c.pricingRules ?? [] })));
     const steps: QuickstartStep[] = [
-      { key: 'hours', done: hoursSet, optional: false, route: venuePage },
-      { key: 'courts', done: courts.length > 0, optional: false, route: venuePage },
-      { key: 'prices', done: courts.length > 0 && courts.every((c) => c._count.pricingRules > 0), optional: false, route: venuePage },
+      { key: 'hours', done: hoursSet, optional: false, route: section('hours') },
+      { key: 'courts', done: courts.length > 0, optional: false, route: section('units') },
+      { key: 'prices', done: courts.length > 0 && courts.every((c) => c._count.pricingRules > 0), optional: false, route: section('prices') },
       { key: 'team', done: staff > 0, optional: true, route: '/owner/staff' },
       { key: 'firstBooking', done: !!anyBooking, optional: false, route: '/owner/today' },
       // Bringing the existing notebook in is optional, but it is what lets the venue stop keeping two books.
@@ -69,11 +89,11 @@ export class QuickstartService {
     ];
     const text = (v?: string | null) => (v ?? '').trim();
     const readinessItems: ReadinessItem[] = [
-      { key: 'photos', done: photos >= 1, level: 'required', have: photos, want: 3, route: venuePage },
-      { key: 'description', done: text(venue?.descriptionAr).length >= 20 || text(venue?.descriptionEn).length >= 20, level: 'required', route: venuePage },
-      { key: 'address', done: text(venue?.address).length > 0 && !(venue?.lat === 0 && venue?.lng === 0), level: 'required', route: venuePage },
-      { key: 'phone', done: text(venue?.contactPhone).length > 0, level: 'required', route: venuePage },
-      { key: 'cancellation', done: text(venue?.cancellationPolicy).length > 0, level: 'recommended', route: venuePage },
+      { key: 'photos', done: photos >= 1, level: 'required', have: photos, want: 3, route: section('details') },
+      { key: 'description', done: text(venue?.descriptionAr).length >= 20 || text(venue?.descriptionEn).length >= 20, level: 'required', route: section('details') },
+      { key: 'address', done: text(venue?.address).length > 0 && !(venue?.lat === 0 && venue?.lng === 0), level: 'required', route: section('location') },
+      { key: 'phone', done: text(venue?.contactPhone).length > 0, level: 'required', route: section('details') },
+      { key: 'cancellation', done: text(venue?.cancellationPolicy).length > 0, level: 'recommended', route: section('details') },
     ];
     // Three photos are what make a page look real; one is enough to count as "not empty".
     const photoItem = readinessItems[0];
@@ -87,14 +107,22 @@ export class QuickstartService {
     const missing: BookingBlocker[] = venue
       ? bookingBlockers(
           { weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
-          courts.map((c) => ({ pricingRules: c._count.pricingRules })),
+          courts.map((c) => ({ pricingRules: c._count.pricingRules, rules: c.pricingRules ?? undefined })),
         )
       : ['hours', 'courts', 'prices', 'location'];
     return {
       steps,
       complete: steps.filter((s) => !s.optional).every((s) => s.done),
       readiness,
-      bookable: { ready: missing.length === 0, missing, route: venuePage },
+      bookable: {
+        ready: missing.length === 0,
+        missing,
+        route: venuePage,
+        /** Deep link per missing piece, so "no prices" opens the prices, not the whole page. */
+        routes: Object.fromEntries(missing.map((m) => [m, section(blockerSection[m])])),
+        /** Hours the venue is open but a court has no price for — warning, not a blocker. */
+        pricingGaps: gaps,
+      },
     };
   }
 }

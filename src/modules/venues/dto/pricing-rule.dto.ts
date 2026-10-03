@@ -5,13 +5,15 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 
 export class UpsertPricingRuleDto {
-  @ApiProperty({ example: 'peak' })
+  @ApiPropertyOptional({ example: 'peak', description: 'A name for the owner only; defaults to "base".' })
+  @IsOptional()
   @IsString()
-  label!: string;
+  label?: string;
 
   @ApiProperty({
     example: [5, 6],
@@ -24,10 +26,12 @@ export class UpsertPricingRuleDto {
 
   @ApiProperty({ example: '17:00' })
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'startTime must be HH:mm' })
   startTime!: string;
 
-  @ApiProperty({ example: '23:00' })
+  @ApiProperty({ example: '23:00', description: 'Exclusive. "24:00" means until midnight.' })
   @IsString()
+  @Matches(/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/, { message: 'endTime must be HH:mm or 24:00' })
   endTime!: string;
 
   @ApiProperty({ example: 20000, description: 'Price in piasters (200 EGP = 20000)' })

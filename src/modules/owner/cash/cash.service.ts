@@ -7,7 +7,7 @@ import type { AuthenticatedUser } from '../../../common/types/authenticated-user
 import { resolveOwnerRange } from '../../../common/utils/owner-range.util';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { currencyLabel } from '../../../common/money/currency-label';
+import { moneyText } from '../../../common/money/money-text';
 import { CloseShiftDto, OpenShiftDto, ShiftListQueryDto } from './cash.dto';
 import { COUNTED_PAYMENT_STATUSES } from './payment-trail';
 
@@ -344,8 +344,8 @@ export class CashService {
     await this.notifications.create({
       userId: ownerId,
       category: 'system',
-      titleEn: `${venueEn}: handover found ${amount} ${currencyLabel(handover.currency, 'en')} ${less ? 'less' : 'more'} than the last shift left`,
-      titleAr: `${venueAr}: استلام الخزنة لقى ${amount} ${currencyLabel(handover.currency, 'ar')} ${less ? 'أقل' : 'أكتر'} من اللي سابته الوردية اللي قبلها`,
+      titleEn: `${venueEn}: handover found ${moneyText(amount, handover.currency, 'en')} ${less ? 'less' : 'more'} than the last shift left`,
+      titleAr: `${venueAr}: استلام الخزنة لقى ${moneyText(amount, handover.currency, 'ar')} ${less ? 'أقل' : 'أكتر'} من اللي سابته الوردية اللي قبلها`,
       bodyEn: `${who} took the drawer over and counted differently. Review it in Earnings → Cash & shifts.`,
       bodyAr: `${who} استلم الخزنة وعدّها بشكل مختلف. راجعها من الأرباح ← الخزنة والورديات.`,
       deepLink: '/owner/earnings?section=shifts',
@@ -458,8 +458,8 @@ export class CashService {
     await this.notifications.create({
       userId: ownerId,
       category: 'system',
-      titleEn: `${venueEn}: drawer ${short ? 'short' : 'over'} by ${amount} ${shift.currency}`,
-      titleAr: `${venueAr}: الخزنة ${short ? 'ناقصة' : 'زيادة'} ${amount} ${shift.currency}`,
+      titleEn: `${venueEn}: drawer ${short ? 'short' : 'over'} by ${moneyText(amount, shift.currency, 'en')}`,
+      titleAr: `${venueAr}: الخزنة ${short ? 'ناقصة' : 'زيادة'} ${moneyText(amount, shift.currency, 'ar')}`,
       bodyEn: `${who} closed the drawer. Review it in Earnings → Cash & shifts.`,
       bodyAr: `${who} قفل الخزنة. راجعها من الأرباح ← الخزنة والورديات.`,
       deepLink: '/owner/earnings?section=shifts',

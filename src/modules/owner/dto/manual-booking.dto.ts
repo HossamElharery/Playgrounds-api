@@ -39,7 +39,7 @@ export class CreateManualBookingDto {
   @Max(10_000_000)
   priceAmount!: number;
 
-  @ApiPropertyOptional({ enum: ['paid', 'unpaid', 'partial'], default: 'paid' })
+  @ApiPropertyOptional({ enum: ['paid', 'unpaid', 'partial'], default: 'unpaid' })
   @IsOptional()
   @IsIn(['paid', 'unpaid', 'partial'])
   paymentStatus?: 'paid' | 'unpaid' | 'partial';

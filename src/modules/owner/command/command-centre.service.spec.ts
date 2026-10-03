@@ -71,9 +71,11 @@ describe('CommandCentreService', () => {
   it('puts the venues that need the owner first', async () => {
     const { service } = build();
     const out = await service.centre(owner);
-    // Maadi: debt (2) + open drawers (1) = 3. Newcomer: not bookable = 3 (ties go alphabetically). Marina: shift to review = 2.
-    expect(out.venues.map((v) => v.id)).toEqual(['v-eg', 'v-new', 'v-ae']);
-    expect(out.needAttention).toBe(3);
+    // Maadi: debt (2) + open drawers (1) = 3. Marina: shift to review = 2.
+    // Newcomer is still in review (pending): it is not running yet, so it sits last and does not count as "needs you".
+    expect(out.venues.map((v) => v.id)).toEqual(['v-eg', 'v-ae', 'v-new']);
+    expect(out.venues[2].attention).toBe(0);
+    expect(out.needAttention).toBe(2);
   });
 
   it('shows staff only the venues they were given, and no drawer data without shifts.review', async () => {
@@ -92,5 +94,16 @@ describe('CommandCentreService', () => {
 describe('attentionScore', () => {
   it('is zero for a calm, bookable venue', () => {
     expect(attentionScore({ owed: { overdue: 0, overdueCount: 0, upcoming: 900, upcomingCount: 1 }, drawers: { open: 0, handovers: 0, toReview: 0 }, blockers: [] })).toBe(0);
+  });
+});
+
+describe('attentionScore for a venue that is not live', () => {
+  const busy = { owed: { overdue: 5000, overdueCount: 2, upcoming: 0, upcomingCount: 0 }, drawers: { open: 1, handovers: 0, toReview: 1 }, blockers: ['hours'] as never };
+  it('does not nag about a venue still in review or paused', () => {
+    expect(attentionScore({ ...busy, status: 'pending' })).toBe(0);
+    expect(attentionScore({ ...busy, status: 'suspended' })).toBe(0);
+  });
+  it('still counts an active venue the same way', () => {
+    expect(attentionScore({ ...busy, status: 'active' })).toBeGreaterThan(0);
   });
 });

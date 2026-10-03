@@ -169,6 +169,65 @@ describe('BookingsService', () => {
     });
   });
 
+  describe('an hour that the price list does not cover', () => {
+    const court = (rules: unknown[]) => ({
+      id: 'c1',
+      venueId: 'v1',
+      slotDurationMins: 60,
+      pricingRules: rules,
+      venue: {
+        id: 'v1',
+        paymentMode: 'at_venue',
+        currency: 'AED',
+        weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '20:00', close: '23:59' }])),
+        country: { timezone: 'Africa/Cairo', currency: 'AED', serviceFeePct: 5 },
+      },
+    });
+    const wire = (c: unknown) =>
+      Object.assign(prisma, {
+        court: { findUnique: jest.fn().mockResolvedValue(c) },
+        booking: { ...prisma.booking, findMany: jest.fn().mockResolvedValue([]) },
+        calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+
+    it('is "unpriced" — never offered as free at price 0 or at another hour\'s price', async () => {
+      // Open 20:00–24:00 but the tariff stops at 23:00.
+      wire(court([{ daysOfWeek: [], startTime: '08:00', endTime: '23:00', priceAmount: 12000, currency: 'AED', priority: 0 }]));
+      const grid = await service.getSlotGrid('c1', '2026-12-07');
+      expect(grid.map((c) => [c.hhmm, c.state])).toEqual([
+        ['20:00', 'available'],
+        ['21:00', 'available'],
+        ['22:00', 'available'],
+        ['23:00', 'unpriced'],
+      ]);
+      expect(grid[0].priceAmount).toBe(12000);
+    });
+
+    it('marks every open hour unpriced when the court has no price at all', async () => {
+      wire(court([]));
+      const grid = await service.getSlotGrid('c1', '2026-12-07');
+      expect(grid.length).toBeGreaterThan(0);
+      expect(grid.every((c) => c.state === 'unpriced')).toBe(true);
+    });
+
+    it('rejects a booking whose start is priced but its remaining time is not', async () => {
+      wire(court([{ daysOfWeek: [], startTime: '20:00', endTime: '23:00', priceAmount: 12000, currency: 'AED', priority: 0 }]));
+      await expect(service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T20:30:00.000Z' })).rejects.toThrow('entire booking');
+    });
+
+    it('refuses a player hold on an uncovered hour', async () => {
+      Object.assign(prisma, {
+        court: {
+          findUnique: jest.fn().mockResolvedValue(court([{ daysOfWeek: [], startTime: '08:00', endTime: '23:00', priceAmount: 12000, currency: 'AED', priority: 0 }])),
+        },
+      });
+      // 23:30 Cairo on a December Monday = 21:30 UTC
+      await expect(
+        service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T21:30:00.000Z' }),
+      ).rejects.toThrow('no pricing configured');
+    });
+  });
+
   it('rejects online-only methods when the venue is at_venue', async () => {
     prisma.booking.findUnique.mockResolvedValue({
       id: 'b1',

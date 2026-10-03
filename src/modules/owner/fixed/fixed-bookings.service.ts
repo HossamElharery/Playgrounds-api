@@ -552,8 +552,8 @@ export class FixedBookingsService {
         titleEn: 'A fixed booking clashes',
         bodyAr: `حجز ${who} الثابت مش هيتحجز في: ${list}. راجعه من تاب الحجوزات.`,
         bodyEn: `${who}'s fixed booking could not be placed on: ${dates.join(', ')}. Review it in Bookings.`,
-        deepLink: '/owner/bookings',
-        payload: { kind: 'fixed_booking_conflict', seriesId: series.id, courtId: court.id, dates },
+        deepLink: `/owner/bookings?venue=${series.venueId}`,
+        payload: { kind: 'fixed_booking_conflict', venueId: series.venueId, seriesId: series.id, courtId: court.id, dates },
       })
       .catch((err) => this.logger.warn(`fixed conflict notice failed: ${String(err)}`));
   }

@@ -124,3 +124,107 @@ describe('Notification delivery', () => {
     });
   });
 });
+
+describe('Notifications to an owner with several venues', () => {
+  const venue = { findUnique: jest.fn(), count: jest.fn() };
+  const prisma = {
+    user: { findUnique: jest.fn() },
+    notification: { create: jest.fn() },
+    venue,
+  };
+  let service: NotificationsService;
+  const input = { userId: 'owner-1', category: 'system', titleEn: '250 EGP still due', titleAr: 'متبقي 250 ج.م', payload: { venueId: 'v1' } };
+  beforeEach(() => {
+    jest.resetAllMocks();
+    prisma.user.findUnique.mockResolvedValue({ notificationPrefs: {}, preferredLang: 'ar' });
+    prisma.notification.create.mockImplementation(({ data }) => Promise.resolve({ id: 'n1', ...data }));
+    service = new NotificationsService(
+      prisma as unknown as PrismaService,
+      { emitToUser: jest.fn() } as unknown as RealtimeGatewayEmitter,
+      {} as ConfigService,
+      { send: jest.fn() } as never,
+      { sendToUser: jest.fn() } as never,
+    );
+  });
+
+  it('puts the venue name in front of the title when the owner has more than one venue', async () => {
+    venue.findUnique.mockResolvedValue({ ownerId: 'owner-1', nameAr: 'مارينا', nameEn: 'Marina Hub' });
+    venue.count.mockResolvedValue(3);
+    await service.create(input);
+    const data = prisma.notification.create.mock.calls[0][0].data;
+    expect(data.titleAr).toBe('مارينا: متبقي 250 ج.م');
+    expect(data.titleEn).toBe('Marina Hub: 250 EGP still due');
+  });
+
+  it('leaves the title alone for a one-venue owner', async () => {
+    venue.findUnique.mockResolvedValue({ ownerId: 'owner-1', nameAr: 'مارينا', nameEn: 'Marina Hub' });
+    venue.count.mockResolvedValue(1);
+    await service.create(input);
+    expect(prisma.notification.create.mock.calls[0][0].data.titleEn).toBe('250 EGP still due');
+  });
+
+  it('does not repeat a venue name the title already has', async () => {
+    venue.findUnique.mockResolvedValue({ ownerId: 'owner-1', nameAr: 'مارينا', nameEn: 'Marina Hub' });
+    venue.count.mockResolvedValue(2);
+    await service.create({ ...input, titleEn: 'Marina Hub: drawer short by 50 EGP' });
+    expect(prisma.notification.create.mock.calls[0][0].data.titleEn).toBe('Marina Hub: drawer short by 50 EGP');
+  });
+
+  it('never tags a player\'s notification, even when the payload names a venue', async () => {
+    venue.findUnique.mockResolvedValue({ ownerId: 'someone-else', nameAr: 'مارينا', nameEn: 'Marina Hub' });
+    venue.count.mockResolvedValue(5);
+    await service.create({ ...input, userId: 'player-1' });
+    expect(prisma.notification.create.mock.calls[0][0].data.titleEn).toBe('250 EGP still due');
+  });
+
+  it('still delivers when the venue lookup fails', async () => {
+    venue.findUnique.mockRejectedValue(new Error('db'));
+    await service.create(input);
+    expect(prisma.notification.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+
+describe('Legacy cash notice amounts', () => {
+  const notification = { findMany: jest.fn() };
+  const cashShift = { findMany: jest.fn() };
+  const cashHandover = { findMany: jest.fn() };
+  const service = new NotificationsService({ notification, cashShift, cashHandover } as never, {} as never, {} as never, {} as never, {} as never);
+  beforeEach(() => jest.resetAllMocks());
+  const legacy = { id: 'n1', titleAr: 'مارينا: الخزنة ناقصة 12550 EGP', titleEn: 'Marina: drawer short by 12550 EGP', payload: { venueId: 'v1', shiftId: 's1' } };
+  it('renders a legacy cash title from the source record without rewriting stored data', async () => {
+    notification.findMany.mockResolvedValue([legacy]);
+    cashShift.findMany.mockResolvedValue([{ id: 's1', venueId: 'v1', difference: -12550, currency: 'AED' }]);
+    const result = await service.list('owner');
+    expect(result.items[0].titleAr).toBe('مارينا: الخزنة ناقصة 125.5 د.إ');
+    expect(result.items[0].titleEn).toBe('Marina: drawer short by 125.5 AED');
+    expect(legacy.titleAr).toContain('12550 EGP');
+    expect(notification.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'owner' } }));
+  });
+  it('leaves modern text, other numbers, and mismatched venues untouched', async () => {
+    notification.findMany.mockResolvedValue([
+      { ...legacy, id: 'n1', titleAr: 'ناقصة 125.5 د.إ', titleEn: 'short by 125.5 AED' },
+      { ...legacy, id: 'n2', titleAr: 'رقم 900 EGP', titleEn: 'number 900 EGP' },
+      { ...legacy, id: 'n3', payload: { venueId: 'other', shiftId: 's1' } },
+    ]);
+    cashShift.findMany.mockResolvedValue([{ id: 's1', venueId: 'v1', difference: -12550, currency: 'AED' }]);
+    const result = await service.list('owner');
+    expect(result.items.map(n => n.titleAr)).toEqual(['ناقصة 125.5 د.إ', 'رقم 900 EGP', legacy.titleAr]);
+  });
+  it('does not reinterpret the fractional digits of a modern amount as minor units', async () => {
+    notification.findMany.mockResolvedValue([{ ...legacy, titleAr: '0.05 AED', titleEn: '0.05 AED' }]);
+    cashShift.findMany.mockResolvedValue([{ id: 's1', venueId: 'v1', difference: -5, currency: 'AED' }]);
+    expect((await service.list('owner')).items[0].titleEn).toBe('0.05 AED');
+  });
+  it('also corrects old handover notices and skips all cash queries for ordinary notices', async () => {
+    notification.findMany.mockResolvedValue([{ ...legacy, payload: { venueId: 'v1', handoverId: 'h1' } }]);
+    cashHandover.findMany.mockResolvedValue([{ id: 'h1', venueId: 'v1', difference: 12550, currency: 'AED' }]);
+    expect((await service.list('owner')).items[0].titleEn).toContain('125.5 AED');
+    expect(cashShift.findMany).not.toHaveBeenCalled();
+    notification.findMany.mockResolvedValue([{ ...legacy, payload: null }]);
+    cashHandover.findMany.mockClear();
+    expect((await service.list('owner')).items[0].titleAr).toBe(legacy.titleAr);
+    expect(cashHandover.findMany).not.toHaveBeenCalled();
+  });
+});

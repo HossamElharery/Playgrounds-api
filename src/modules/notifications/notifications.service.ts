@@ -1,3 +1,4 @@
+import { moneyText } from '../../common/money/money-text';
 import { Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -55,7 +56,36 @@ export class NotificationsService {
     return merged[category] !== false;
   }
 
-  async create(input: CreateNotificationInput) {
+  /**
+   * An owner with more than one venue gets "Marina Hub: …" so a reminder is never ambiguous.
+   * Only the venue's owner is tagged (a player's booking notice is not), and a title that
+   * already names the venue is left alone. Best effort: a failure here never blocks the notice.
+   */
+  private async tagWithVenue(input: CreateNotificationInput): Promise<CreateNotificationInput> {
+    const venueId = input.payload?.['venueId'];
+    if (typeof venueId !== 'string') return input;
+    try {
+      const venue = await this.prisma.venue.findUnique({
+        where: { id: venueId },
+        select: { ownerId: true, nameAr: true, nameEn: true },
+      });
+      if (!venue || venue.ownerId !== input.userId) return input;
+      const venues = await this.prisma.venue.count({ where: { ownerId: venue.ownerId } });
+      if (venues < 2) return input;
+      const tag = (title: string, name: string) =>
+        !name || title.includes(name) ? title : `${name}: ${title}`;
+      return {
+        ...input,
+        titleAr: tag(input.titleAr, venue.nameAr),
+        titleEn: tag(input.titleEn, venue.nameEn),
+      };
+    } catch {
+      return input;
+    }
+  }
+
+  async create(raw: CreateNotificationInput) {
+    const input = await this.tagWithVenue(raw);
     const user = await this.prisma.user.findUnique({
       where: { id: input.userId },
       select: { notificationPrefs: true, preferredLang: true },
@@ -95,8 +125,8 @@ export class NotificationsService {
     return notification;
   }
 
-  list(userId: string, cursor?: string, limit = 30) {
-    return paginateByCursor(
+  async list(userId: string, cursor?: string, limit = 30) {
+    const page = await paginateByCursor(
       (args) =>
         this.prisma.notification.findMany({
           where: { userId },
@@ -106,6 +136,31 @@ export class NotificationsService {
       limit,
       cursor,
     );
+    // Old cash notices embedded minor units in the title. Correct only identified
+    // cash records, using their immutable amount/currency; never guess from prose.
+    const payloads = page.items.map(n => n.payload as Record<string, unknown> | null);
+    const ids = (key: string) => payloads.flatMap(p => typeof p?.[key] === 'string' ? [p[key] as string] : []);
+    const shiftIds = ids('shiftId');
+    const handoverIds = ids('handoverId');
+    if (!shiftIds.length && !handoverIds.length) return page;
+    const select = { id: true, venueId: true, difference: true, currency: true } as const;
+    const [shifts, handovers] = await Promise.all([
+      shiftIds.length ? this.prisma.cashShift.findMany({ where: { id: { in: shiftIds } }, select }) : [],
+      handoverIds.length ? this.prisma.cashHandover.findMany({ where: { id: { in: handoverIds } }, select }) : [],
+    ]);
+    type CashNoticeSource = { id: string; venueId: string; difference: number; currency: string };
+    const shiftMap = new Map<string, CashNoticeSource>((shifts as CashNoticeSource[]).map(s => [s.id, s]));
+    const handoverMap = new Map<string, CashNoticeSource>((handovers as CashNoticeSource[]).map(h => [h.id, h]));
+    return { ...page, items: page.items.map(n => {
+      const p = n.payload as Record<string, unknown> | null;
+      const cash = typeof p?.['shiftId'] === 'string' ? shiftMap.get(p['shiftId'])
+        : typeof p?.['handoverId'] === 'string' ? handoverMap.get(p['handoverId']) : undefined;
+      if (!cash || cash.venueId !== p?.['venueId']) return n;
+      const amount = Math.abs(cash.difference);
+      const fix = (title: string, lang: 'ar' | 'en') => title.replace(/(?<![\d.,])(\d+) (EGP|AED|SAR|KWD|QAR|JOD)\b/g,
+        (match, raw: string) => Number(raw) === amount ? moneyText(amount, cash.currency, lang) : match);
+      return { ...n, titleAr: fix(n.titleAr, 'ar'), titleEn: fix(n.titleEn, 'en') };
+    }) };
   }
 
   dismiss(userId: string, id: string) {
