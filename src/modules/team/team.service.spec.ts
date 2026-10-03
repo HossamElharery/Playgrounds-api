@@ -58,7 +58,7 @@ function build() {
     },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
-  const realtime = { disconnectUser: jest.fn() };
+  const realtime = { disconnectUser: jest.fn(), emitToUser: jest.fn() };
   const svc = new TeamService(prisma, { get: () => 4 } as never, realtime as never);
   return { svc, prisma, tx, members, users, realtime };
 }

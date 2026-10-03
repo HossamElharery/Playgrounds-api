@@ -71,7 +71,7 @@ export class CommandCentreService {
       return { venueFilter: { ownerId: user.id }, canReviewShifts: true };
     }
     const scope = await loadStaffScope(this.prisma, user.id);
-    if (!scope || !scopeCan(scope, 'bookings.view')) throw new ForbiddenException('Not allowed');
+    if (!scope || !scopeCan(scope, 'bookings.view') || !scopeCan(scope, 'reports.view')) throw new ForbiddenException('Not allowed');
     return {
       venueFilter: { ownerId: scope.ownerId, id: { in: scope.venueIds } },
       canReviewShifts: scopeCan(scope, 'shifts.review'),

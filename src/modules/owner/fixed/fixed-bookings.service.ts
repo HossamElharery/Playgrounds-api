@@ -9,7 +9,7 @@ import { LedgerService } from '../../finance/ledger.service';
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { ApiException } from '../../../common/errors/api-exception';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
-import { assertVenueAccess } from '../../../common/access/owner-access';
+import { assertVenueAccess, assertStaffPermission } from '../../../common/access/owner-access';
 import { isBookingSlotConflict } from '../../../common/utils/booking-slot-conflict.util';
 import { isPastSlotStart } from '../../../common/utils/past-slot.util';
 import { quoteDurationPrice } from '../../../common/utils/price-quote.util';
@@ -92,6 +92,9 @@ export class FixedBookingsService {
       throw new ApiException(HttpStatus.CONFLICT, 'VENUE_HOURS_REQUIRED', 'Set the venue opening hours before adding bookings');
     }
     const plan = dto.paymentPlan ?? 'per_session';
+    if (plan === 'prepaid' || (dto.prepaidAmount ?? 0) > 0) {
+      await assertStaffPermission(this.prisma, user, 'payments.record');
+    }
     if (plan === 'prepaid' && !dto.prepaidAmount) {
       throw new BadRequestException('prepaidAmount is required for a prepaid plan');
     }

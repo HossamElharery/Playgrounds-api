@@ -403,4 +403,122 @@ describe('finance integration (real Postgres)', () => {
     expect(heads[0]['state']).toBe('booked_manual');
     expect(heads[0]['spanSlots']).toBe(2);
   });
+  async function operationFixture(label: string, total = 40025) {
+    const f = await makeVenue(label);
+    await prisma.venue.update({ where: { id: f.venue.id }, data: { weeklyHours: Object.fromEntries([0,1,2,3,4,5,6].map(d => [String(d), { open: '00:00', close: '23:45', closed: false }])) } });
+    const { OwnerBookingsService } = await import('../src/modules/owner/owner-bookings.service');
+    const service = new OwnerBookingsService(prisma, ledger, new CommissionService(prisma, {} as never), { create: async () => ({}) } as never);
+    const starts = new Date(Date.now() + 7 * 86400000); starts.setUTCHours(12, 0, 0, 0);
+    const dto = { venueId: f.venue.id, courtId: f.courts[0].id, startsAt: starts.toISOString(), durationMinutes: 60, priceAmount: total, paymentStatus: 'unpaid' as const, customerName: 'Integration guest' };
+    const booking = await service.createManualBooking(f.user, dto);
+    return { ...f, service, booking, dto };
+  }
+
+  it('keeps cents exact through deposit, balance, refund, cancellation and cash reporting', async () => {
+    const { service, booking, user, venue } = await operationFixture('money-lifecycle');
+    let b = await service.addManualPayment(user, booking.id, 10005, 'cash');
+    expect(b.money).toMatchObject({ total: 40025, paidAmount: 10005, outstanding: 30020 });
+    b = await service.addManualPayment(user, booking.id, 30020, 'instapay');
+    expect(b.money).toMatchObject({ paidAmount: 40025, outstanding: 0 });
+    const payments = await prisma.payment.findMany({ where: { bookingId: booking.id, amount: { gt: 0 } } });
+    for (const payment of payments) await service.voidManualPayment(user, booking.id, payment.id);
+    b = await service.getBooking(user, booking.id);
+    expect(b.money).toMatchObject({ total: 40025, paidAmount: 0, outstanding: 40025 });
+    await service.deleteManualBooking(user, booking.id);
+    const cash = await summary.cashbook(venue.id, new Date(Date.now() - 3600000), new Date(Date.now() + 3600000));
+    expect(cash.received).toBe(0);
+    expect(cash.refunds).toBe(40025);
+    expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(4);
+  });
+
+  it('rejects zero, negative and fractional payment amounts at the service boundary without writes', async () => {
+    const { service, booking, user } = await operationFixture('invalid-money');
+    for (const amount of [0, -1, -40025, 0.5, NaN, Infinity]) {
+      await expect(service.addManualPayment(user, booking.id, amount, 'cash')).rejects.toBeDefined();
+    }
+    expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(0);
+  });
+
+  it('concurrent full-balance payments never double collect and return a usable refusal', async () => {
+    for (let i = 0; i < 8; i++) {
+      const { service, booking, user } = await operationFixture(`parallel-payment-${i}`);
+      const outcomes = await Promise.allSettled([service.addManualPayment(user, booking.id, 40025, 'cash'), service.addManualPayment(user, booking.id, 40025, 'cash')]);
+      expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      const failed = outcomes.find(r => r.status === 'rejected') as PromiseRejectedResult;
+      expect(typeof failed.reason.getStatus).toBe('function');
+      expect([400, 409]).toContain(failed.reason.getStatus());
+      const b = await service.getBooking(user, booking.id);
+      expect(b.money.paidAmount).toBe(40025);
+      expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+    }
+  });
+
+  it('a duplicate refund cannot create two reversals, including concurrent requests', async () => {
+    const { service, booking, user } = await operationFixture('parallel-refund');
+    await service.addManualPayment(user, booking.id, 40025, 'cash');
+    const payment = await prisma.payment.findFirstOrThrow({ where: { bookingId: booking.id } });
+    const outcomes = await Promise.allSettled([service.voidManualPayment(user, booking.id, payment.id), service.voidManualPayment(user, booking.id, payment.id)]);
+    expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await prisma.payment.count({ where: { reversesPaymentId: payment.id } })).toBe(1);
+    const failed = outcomes.find(r => r.status === 'rejected') as PromiseRejectedResult;
+    expect(typeof failed.reason.getStatus).toBe('function');
+    expect([400, 409]).toContain(failed.reason.getStatus());
+    expect((await service.getBooking(user, booking.id)).money.paidAmount).toBe(0);
+  });
+
+  it('concurrent booking creation cannot occupy the same unit twice', async () => {
+    const { service, booking, user, dto } = await operationFixture('parallel-slot');
+    await service.deleteManualBooking(user, booking.id);
+    const outcomes = await Promise.allSettled(Array.from({length: 6}, () => service.createManualBooking(user, dto)));
+    expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await prisma.booking.count({ where: { courtId: dto.courtId, status: 'confirmed' } })).toBe(1);
+    for (const outcome of outcomes) if (outcome.status === 'rejected') {
+      expect(typeof outcome.reason.getStatus).toBe('function');
+      expect(outcome.reason.getStatus()).toBe(409);
+    }
+  });
+
+  it('restoring a cancelled booking races safely with a new booking for the same slot', async () => {
+    const { service, booking, user, dto } = await operationFixture('parallel-restore');
+    await service.deleteManualBooking(user, booking.id);
+    const outcomes = await Promise.allSettled([service.restoreManualBooking(user, booking.id), service.createManualBooking(user, dto)]);
+    expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(await prisma.booking.count({ where: { courtId: dto.courtId, status: 'confirmed' } })).toBe(1);
+    for (const outcome of outcomes) if (outcome.status === 'rejected') {
+      expect(typeof outcome.reason.getStatus).toBe('function');
+      expect(outcome.reason.getStatus()).toBe(409);
+    }
+  });
+
+  it('enforces staff payment permissions and delegated team scope on real database records', async () => {
+    const f = await operationFixture('staff-permissions');
+    const other = await makeVenue('other-scope');
+    await prisma.venue.update({where:{id: other.venue.id},data:{ownerId:f.user.id}});
+    const { TeamService } = await import('../src/modules/team/team.service');
+    const team = new TeamService(prisma, {get:()=>4} as never, {emitToUser:jest.fn(),disconnectUser:jest.fn()} as never);
+    const actor = await team.resolveActor(f.user);
+    const create = (name: string, permissions: string[], venueIds: string[]) => team.create(actor,{name,email:`${name}@example.invalid`,password:'TestOnly123!',permissions,venueIds});
+    const manager = await create('integration-manager',['bookings.view','team.manage'],[f.venue.id]);
+    const booker = await create('integration-booker',['bookings.view','bookings.create','bookings.edit'],[f.venue.id]);
+    const viewer = await create('integration-viewer',['bookings.view'],[f.venue.id]);
+    const elsewhere = await create('integration-elsewhere',['bookings.view'],[other.venue.id]);
+    const managerUser = {id:manager.userId,roles:['staff'],name:'Manager',phone:''} as AuthenticatedUser;
+    const delegated = await team.resolveActor(managerUser);
+    const listing = await team.list(delegated);
+    expect(listing.venues.map(v=>v.id)).toEqual([f.venue.id]);
+    expect(listing.members.map(m=>m.id)).toEqual(expect.arrayContaining([manager.id,viewer.id]));
+    expect(listing.members.map(m=>m.id)).not.toContain(elsewhere.id);
+    expect(listing.members.map(m=>m.id)).not.toContain(booker.id);
+    await expect(team.create(delegated,{name:'Escalated',username:'integration_escalated',password:'TestOnly123!',permissions:['reports.view'],venueIds:[f.venue.id]})).rejects.toMatchObject({status:403});
+    await expect(team.create(delegated,{name:'Wrong venue',username:'integration_wrong_venue',password:'TestOnly123!',permissions:['bookings.view'],venueIds:[other.venue.id]})).rejects.toMatchObject({status:403});
+    const staff = {id:booker.userId,roles:['staff'],name:'Booker',phone:''} as AuthenticatedUser;
+    await expect(f.service.createManualBooking(staff,{...f.dto,paymentStatus:'paid',startsAt:new Date(Date.now()+8*86400000).toISOString()})).rejects.toMatchObject({status:403});
+    await expect(f.service.updateManualBooking(staff,f.booking.id,{paymentStatus:'paid'})).rejects.toMatchObject({status:403});
+    await expect(f.service.addManualPayment(staff,f.booking.id,100)).rejects.toMatchObject({status:403});
+    await team.update(actor,booker.id,{permissions:['bookings.view','payments.record']});
+    await expect(f.service.addManualPayment(staff,f.booking.id,10005)).resolves.toMatchObject({money:{paidAmount:10005,outstanding:30020}});
+    await team.update(actor,booker.id,{venueIds:[other.venue.id]});
+    await expect(f.service.addManualPayment(staff,f.booking.id,100)).rejects.toMatchObject({status:403});
+  });
+
 });

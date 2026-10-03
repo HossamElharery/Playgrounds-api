@@ -79,6 +79,17 @@ const base = (tz: string, extra: object = {}) => ({
 });
 
 describe('FixedBookingsService', () => {
+  it('rejects a prepaid series for booking-only staff before creating any records', async () => {
+    const { svc, db, bookings, series, payments, tz } = setup();
+    db.staffMember = { findUnique: jest.fn(async () => ({ id: 's1', userId: 'u1', ownerId: 'o1', permissions: ['bookings.view', 'bookings.create'], venueIds: ['v1'] })) };
+    const staff: AuthenticatedUser = { id: 'u1', phone: '+2012', name: 'Booker', roles: ['staff'] };
+    await expect(svc.create(staff, { ...base(tz), customerName: 'Test', paymentPlan: 'prepaid', prepaidAmount: 10000 })).rejects.toMatchObject({ status: 403 });
+    expect(bookings).toHaveLength(0);
+    expect(series).toHaveLength(0);
+    expect(payments).toHaveLength(0);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
   it('previews every date, with quoted prices and a clash flagged', async () => {
     const { svc, bookings, tz } = setup();
     const dto = base(tz);

@@ -67,13 +67,14 @@ export class TeamService {
     if (!scope || !scope.permissions.includes('team.manage')) {
       throw new ForbiddenException('Insufficient permissions');
     }
+    if (venueId && !scope.venueIds.includes(venueId)) throw new ForbiddenException('Not your venue');
     return { kind: 'staff', userId: user.id, ownerId: scope.ownerId, scope };
   }
 
   async list(actor: TeamActor) {
     const [venues, rows] = await Promise.all([
       this.prisma.venue.findMany({
-        where: { ownerId: actor.ownerId },
+        where: { ownerId: actor.ownerId, ...(actor.kind === 'staff' ? { id: { in: actor.scope!.venueIds } } : {}) },
         select: { id: true, nameEn: true, nameAr: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -91,7 +92,10 @@ export class TeamService {
       ownerId: actor.ownerId,
       venues,
       canGrant: actor.kind === 'staff' ? actor.scope!.permissions : null,
-      members: rows.map((row) => ({
+      members: rows.filter(row => actor.kind !== 'staff' || (
+        row.permissions.every(permission => actor.scope!.permissions.includes(permission)) &&
+        row.venueIds.every(id => actor.scope!.venueIds.includes(id))
+      )).map((row) => ({
         id: row.id,
         userId: row.userId,
         name: row.user.name,
@@ -232,6 +236,7 @@ export class TeamService {
       // Never log the password itself.
       await this.audit(tx, actor, 'team.member.updated', staffId, { userId: member.userId, changed });
     });
+    if (changed.some(key => ['permissions', 'venues', 'status'].includes(key))) this.realtime?.emitToUser(member.userId, { type: 'team.access_changed' });
     if (resetPassword || dto.status === 'suspended') this.realtime?.disconnectUser(member.userId);
     return this.one(staffId);
   }

@@ -3,7 +3,8 @@ import { PrismaService } from '../../modules/prisma/prisma.service';
 import type { AuthenticatedUser } from '../types/authenticated-user.interface';
 import { ApiException } from '../errors/api-exception';
 import { Venue } from '@prisma/client';
-import { loadStaffScope } from './staff-scope';
+import { loadStaffScope, scopeCan } from './staff-scope';
+import type { PermissionKey } from './permissions';
 
 export async function assertVenueAccess(
   prisma: PrismaService,
@@ -51,4 +52,17 @@ export async function assertBookingAccess(
   if (!booking) throw new NotFoundException('Booking not found');
   const venue = await assertVenueAccess(prisma, user, booking.venueId, opts);
   return { booking, venue };
+}
+
+/** Secondary permissions must also hold when an operation writes through another service. */
+export async function assertStaffPermission(prisma: PrismaService, user: AuthenticatedUser, permission: PermissionKey) {
+  return assertStaffAnyPermission(prisma, user, [permission]);
+}
+
+export async function assertStaffAnyPermission(prisma: PrismaService, user: AuthenticatedUser, permissions: PermissionKey[]) {
+  if (user.roles.includes('owner') || user.roles.includes('admin')) return;
+  const scope = user.roles.includes('staff') ? await loadStaffScope(prisma, user.id) : null;
+  if (!permissions.some(permission => scopeCan(scope, permission))) {
+    throw new ApiException(HttpStatus.FORBIDDEN, 'INSUFFICIENT_PERMISSION', 'You do not have permission for this action');
+  }
 }

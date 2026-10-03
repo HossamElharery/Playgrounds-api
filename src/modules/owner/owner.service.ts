@@ -460,7 +460,7 @@ export class OwnerService {
       (args) =>
         this.prisma.assistantMessage.findMany({
           // The hidden undo-point rows are bookkeeping, not chat: they would eat the page.
-          where: { venueId, NOT: { text: UNDO_ANCHOR_TEXT } },
+          where: { venueId, ...(user.roles.includes('staff') && !user.roles.includes('owner') && !user.roles.includes('admin') ? { ownerId: user.id } : {}), NOT: { text: UNDO_ANCHOR_TEXT } },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           ...args,
         }),

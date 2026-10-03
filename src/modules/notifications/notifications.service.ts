@@ -1,3 +1,5 @@
+import { loadStaffScope } from '../../common/access/staff-scope';
+import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { moneyText } from '../../common/money/money-text';
 import { Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
@@ -125,17 +127,45 @@ export class NotificationsService {
     return notification;
   }
 
-  async list(userId: string, cursor?: string, limit = 30) {
+  async list(userId: string, cursor?: string, limit = 30, actor?: AuthenticatedUser) {
     const page = await paginateByCursor(
       (args) =>
         this.prisma.notification.findMany({
           where: { userId },
-          orderBy: { id: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           ...args,
         }),
       limit,
       cursor,
     );
+    // Historical staff notices must respect their current venue and money access too.
+    if (actor?.roles.includes('staff') && !actor.roles.includes('owner') && !actor.roles.includes('admin')) {
+      const scope = await loadStaffScope(this.prisma, userId);
+      const money = scope?.permissions.some(p => p === 'payments.record' || p === 'reports.view');
+      page.items = page.items.map(notification => {
+        const payload = notification.payload as Record<string, unknown> | null;
+        const venueId = payload?.['venueId'];
+        if (typeof venueId !== 'string') return notification;
+        const financial = ['assistant_overdue', 'assistant_arrival_due'].includes(String(payload?.['kind']))
+          || !!payload?.['shiftId'] || !!payload?.['handoverId'];
+        if (scope?.venueIds.includes(venueId) && (!financial || money)) return notification;
+        return { ...notification, titleAr: 'تنبيه سابق خارج صلاحياتك الحالية', titleEn: 'Previous notice outside your current access',
+          bodyAr: 'تغيّر نطاق عملك أو صلاحياتك. راجع صاحب المنشأة عند الحاجة.', bodyEn: 'Your venue scope or permissions changed. Contact the owner if needed.',
+          payload: null, deepLink: null };
+      });
+    }
+    // These older reminders lack an immutable currency. Do not guess it from today's venue.
+    page.items = page.items.map(notification => {
+      const payload = notification.payload as Record<string, unknown> | null;
+      if (!['assistant_overdue', 'assistant_arrival_due'].includes(String(payload?.['kind'])) || typeof payload?.['currency'] === 'string') return notification;
+      return {
+        ...notification,
+        titleAr: 'تذكير سابق بمديونية — راجع الرصيد الحالي',
+        titleEn: 'Previous balance reminder — check the current balance',
+        bodyAr: 'تنبيه سابق؛ افتح المنشأة لمعرفة الرصيد والعملة الحاليين.',
+        bodyEn: 'Previous reminder; open the venue for its current balance and currency.',
+      };
+    });
     // Old cash notices embedded minor units in the title. Correct only identified
     // cash records, using their immutable amount/currency; never guess from prose.
     const payloads = page.items.map(n => n.payload as Record<string, unknown> | null);

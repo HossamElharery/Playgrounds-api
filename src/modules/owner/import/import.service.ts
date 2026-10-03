@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { assertVenueAccess } from '../../../common/access/owner-access';
+import { assertVenueAccess, assertStaffPermission } from '../../../common/access/owner-access';
 import { ApiException } from '../../../common/errors/api-exception';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
@@ -139,6 +139,10 @@ export class ImportService {
     const importable = run.rows.filter((r) => r.status === 'ok' || r.status === 'warning');
     if (!importable.length) {
       throw new ApiException(HttpStatus.BAD_REQUEST, 'NOTHING_TO_IMPORT', 'No row in this file can be imported');
+    }
+    if (run.config.kind !== 'customers') await assertStaffPermission(this.prisma, user, 'bookings.create');
+    if (run.config.kind !== 'customers' && importable.some(r => (run.bookingsByRow.get(r.row)?.paidAmount ?? 0) > 0)) {
+      await assertStaffPermission(this.prisma, user, 'payments.record');
     }
     const batch = await this.prisma.venueImportBatch.create({
       data: {

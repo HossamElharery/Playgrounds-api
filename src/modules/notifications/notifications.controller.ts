@@ -55,7 +55,7 @@ export class NotificationsController {
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.notifications.list(user.id, cursor, clampLimit(limit, 30, 100));
+    return this.notifications.list(user.id, cursor, clampLimit(limit, 30, 100), user);
   }
 
   @Get('unread-count')

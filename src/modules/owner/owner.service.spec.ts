@@ -62,6 +62,12 @@ describe('Owner dashboard integrity', () => {
       expect(transcript.mirrorClientLine.mock.calls[0][0]).toMatchObject({ scheduleChange: true });
     });
 
+    it('staff only reads their own assistant history in the allowed venue', async () => {
+      db.staffMember = { findUnique: jest.fn().mockResolvedValue({ id:'s1', ownerId:'owner', venueIds:['v1'], permissions:['bookings.view'] }) };
+      await service.listAssistantMessages({id:'staff', roles:['staff']} as never, 'v1');
+      expect(db.assistantMessage.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{venueId:'v1',ownerId:'staff',NOT:{text:'assistant-undo'}}}));
+    });
+
     it('does not list the hidden undo-point rows as chat', async () => {
       await service.listAssistantMessages(owner as never, 'v1');
       expect(db.assistantMessage.findMany.mock.calls[0][0].where).toEqual({ venueId: 'v1', NOT: { text: 'assistant-undo' } });

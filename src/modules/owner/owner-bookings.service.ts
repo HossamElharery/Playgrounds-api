@@ -1,3 +1,4 @@
+import { rethrowConcurrentWrite } from '../../common/utils/transaction-error.util';
 import { isSafeReceiptUrl } from '../../common/utils/receipt-url.util';
 import { hasOpeningHours } from '../../common/utils/venue-readiness.util';
 import {
@@ -20,6 +21,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import {
   assertBookingAccess,
+  assertStaffPermission,
+  assertStaffAnyPermission,
   assertVenueAccess,
 } from '../../common/access/owner-access';
 import { ApiException } from '../../common/errors/api-exception';
@@ -92,6 +95,9 @@ export class OwnerBookingsService {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, {
       write: true,
     });
+    if (dto.paymentStatus === 'paid' || dto.paymentStatus === 'partial' || (dto.paidAmount ?? 0) > 0) {
+      await assertStaffPermission(this.prisma, user, 'payments.record');
+    }
     // A schedule with no opening hours is not a schedule: refuse instead of offering 03:00.
     if (!hasOpeningHours(venue.weeklyHours)) {
       throw new ApiException(
@@ -329,6 +335,9 @@ export class OwnerBookingsService {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, {
       write: true,
     });
+    if (dto.paymentStatus !== undefined || dto.paidAmount !== undefined || dto.paymentMethod !== undefined) {
+      await assertStaffPermission(this.prisma, user, 'payments.record');
+    }
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot be edited');
     }
@@ -404,6 +413,10 @@ export class OwnerBookingsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      if (current.updatedAt && booking.updatedAt && current.updatedAt.getTime() !== booking.updatedAt.getTime()) {
+        throw new ApiException(HttpStatus.CONFLICT, 'CONCURRENT_CHANGE', 'This booking changed. Refresh before editing it.');
+      }
       await this.assertSlotFree(tx, courtId, booking.venueId, slotStart, slotEnd, booking.id);
       await this.reconcilePayment(tx, booking, dto, next, changed, user.id);
       const row = await tx.booking.update({ where: { id: bookingId }, data: next });
@@ -419,7 +432,7 @@ export class OwnerBookingsService {
       });
       await this.ledger.syncBookingLedger(tx, bookingId);
       return row;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch(rethrowConcurrentWrite);
     return this.toOwnerBookingDto(updated, user);
   }
 
@@ -438,6 +451,7 @@ export class OwnerBookingsService {
     paymentId: string,
     reason?: string,
   ) {
+    await assertStaffPermission(this.prisma, user, 'payments.record');
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
@@ -445,6 +459,7 @@ export class OwnerBookingsService {
     const canAll = await this.canManageEveryonesCash(user);
     await this.prisma.$transaction(
       async (tx) => {
+        const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
         const payment = await tx.payment.findFirst({
           where: { id: paymentId, bookingId, status: 'paid', amount: { gt: 0 } },
         });
@@ -477,7 +492,7 @@ export class OwnerBookingsService {
         const { received } = await netReceived(tx, bookingId);
         await tx.booking.update({
           where: { id: bookingId },
-          data: { paymentStatus: derivePaymentStatus(booking.totalAmount, received) },
+          data: { paymentStatus: derivePaymentStatus(current.totalAmount, received) },
         });
         await tx.auditLogEntry.create({
           data: {
@@ -497,7 +512,7 @@ export class OwnerBookingsService {
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+    ).catch(rethrowConcurrentWrite);
     return this.toOwnerBookingDto(
       await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
       user,
@@ -535,7 +550,7 @@ export class OwnerBookingsService {
         },
       });
       return row;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch(rethrowConcurrentWrite);
     return this.toOwnerBookingDto(updated, user);
   }
 
@@ -551,13 +566,16 @@ export class OwnerBookingsService {
       throw new ApiException(HttpStatus.BAD_REQUEST, 'SLOT_IN_PAST', 'This time has already passed and cannot be restored');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      if (current.status !== 'cancelled') throw new BadRequestException('Only cancelled bookings can be restored');
+      if (current.slotEnd.getTime() <= Date.now()) throw new ApiException(HttpStatus.BAD_REQUEST, 'SLOT_IN_PAST', 'This time has already passed and cannot be restored');
       await this.assertSlotFree(
         tx,
-        booking.courtId,
-        booking.venueId,
-        booking.slotStart,
-        booking.slotEnd,
-        booking.id,
+        current.courtId,
+        current.venueId,
+        current.slotStart,
+        current.slotEnd,
+        current.id,
       );
       const row = await tx.booking.update({
         where: { id: bookingId },
@@ -574,7 +592,7 @@ export class OwnerBookingsService {
         },
       });
       return row;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch(rethrowConcurrentWrite);
     return this.toOwnerBookingDto(updated, user);
   }
 
@@ -584,6 +602,10 @@ export class OwnerBookingsService {
     amount: number,
     method?: string,
   ) {
+    await assertStaffPermission(this.prisma, user, 'payments.record');
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 100_000_000) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_PAYMENT_AMOUNT', 'Payment must be a positive whole number of minor units');
+    }
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
@@ -593,19 +615,21 @@ export class OwnerBookingsService {
     }
     await this.prisma.$transaction(
       async (tx) => {
+        const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+        if (current.status === 'cancelled') throw new BadRequestException('Restore the booking before recording a payment');
         // Read inside the transaction so two quick taps cannot both pass the
         // "does not exceed the balance" check.
         const { received: already } = await netReceived(tx, bookingId);
-        if (already + amount > booking.totalAmount) {
+        if (already + amount > current.totalAmount) {
           throw new ApiException(HttpStatus.BAD_REQUEST, 'OVERPAYMENT', 'Payment exceeds remaining balance');
         }
         const nextPaid = already + amount;
-        const paymentStatus: PaymentStatus = derivePaymentStatus(booking.totalAmount, nextPaid);
+        const paymentStatus: PaymentStatus = derivePaymentStatus(current.totalAmount, nextPaid);
         await tx.payment.create({
           data: {
             bookingId,
             amount,
-            currency: booking.currency,
+            currency: current.currency,
             method: mapPaymentMethod(method),
             status: 'paid',
             recordedByUserId: user.id,
@@ -621,12 +645,12 @@ export class OwnerBookingsService {
             action: 'owner.booking.payment_recorded',
             targetType: 'booking',
             targetId: bookingId,
-            metadata: { bookingId, venueId: booking.venueId, amount, method: mapPaymentMethod(method), remaining: booking.totalAmount - nextPaid } as Prisma.InputJsonValue,
+            metadata: { bookingId, venueId: booking.venueId, amount, method: mapPaymentMethod(method), remaining: current.totalAmount - nextPaid } as Prisma.InputJsonValue,
           },
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+    ).catch(rethrowConcurrentWrite);
     return this.toOwnerBookingDto(
       await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
       user,
@@ -931,6 +955,7 @@ export class OwnerBookingsService {
   }
 
   async attention(user: AuthenticatedUser, venueId: string) {
+    await assertStaffAnyPermission(this.prisma, user, ['payments.record', 'reports.view']);
     const phonesVisible = await this.canSeePhones(user);
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const now = new Date();

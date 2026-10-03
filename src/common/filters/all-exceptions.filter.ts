@@ -118,6 +118,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message: `Duplicate value for ${target ?? 'field'}`,
         };
       }
+      case 'P2034':
+        return { status: HttpStatus.CONFLICT, message: 'CONCURRENT_CHANGE' };
       case 'P2025':
         return { status: HttpStatus.NOT_FOUND, message: 'Record not found' };
       case 'P2003': {

@@ -79,10 +79,16 @@ describe('CommandCentreService', () => {
   });
 
   it('shows staff only the venues they were given, and no drawer data without shifts.review', async () => {
-    const { service, prisma } = build({ staff: { permissions: ['bookings.view'], venueIds: ['v-eg'], ownerId: 'o1' } });
+    const { service, prisma } = build({ staff: { permissions: ['bookings.view', 'reports.view'], venueIds: ['v-eg'], ownerId: 'o1' } });
     const out = await service.centre({ id: 's1', roles: ['staff'] } as never);
     expect(prisma.venue.findMany.mock.calls[0][0].where).toEqual({ ownerId: 'o1', id: { in: ['v-eg'] } });
     expect(out.venues.every((v) => v.drawers === null)).toBe(true);
+  });
+
+  it('refuses financial summaries for bookings-only staff without querying money', async () => {
+    const { service, prisma } = build({ staff: { permissions: ['bookings.view'], venueIds: ['v-eg'], ownerId: 'o1' } });
+    await expect(service.centre({ id: 's1', roles: ['staff'] } as never)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.venue.findMany).not.toHaveBeenCalled();
   });
 
   it('refuses staff who cannot even see bookings', async () => {

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { HttpStatus } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import { AllExceptionsFilter } from './all-exceptions.filter';
@@ -16,6 +17,11 @@ function run(exception: unknown) {
 }
 
 describe('AllExceptionsFilter 429 handling', () => {
+  it('returns a typed conflict after a rolled-back concurrent database write', () => {
+    const error = new Prisma.PrismaClientKnownRequestError('write conflict', {code:'P2034',clientVersion:'test'});
+    expect(run(error)).toEqual({status:409,body:{statusCode:409,message:'CONCURRENT_CHANGE',code:'CONCURRENT_CHANGE'}});
+  });
+
   it('keeps normalising the throttler 429 to RATE_LIMITED', () => {
     const { status, body } = run(new ThrottlerException());
     expect(status).toBe(429);

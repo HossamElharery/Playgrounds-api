@@ -823,6 +823,8 @@ export class OwnerAssistantService {
   ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.view')))
       return this.denied('debts');
+    if (!(await this.can(user, venueId, 'payments.record')) && !(await this.can(user, venueId, 'reports.view')))
+      return this.denied('debts');
     const { overdue, upcoming } = await findAllOwed(this.prisma, venueId);
     if (!overdue.length && !upcoming.length) {
       return this.blank(
@@ -1290,14 +1292,15 @@ export class OwnerAssistantService {
   ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.view')))
       return this.denied('attention');
+    const canSeeMoney = (await this.can(user, venueId, 'payments.record')) || (await this.can(user, venueId, 'reports.view'));
     const now = new Date();
     const [overdue, soon] = await Promise.all([
-      findOwed(this.prisma, { venueId }, { kind: 'overdue', now }),
-      findOwed(
+      canSeeMoney ? findOwed(this.prisma, { venueId }, { kind: 'overdue', now }) : Promise.resolve([]),
+      canSeeMoney ? findOwed(
         this.prisma,
         { venueId },
         { kind: 'upcoming', from: now, to: new Date(now.getTime() + 3 * 3_600_000) },
-      ),
+      ) : Promise.resolve([]),
     ]);
     const tomorrow = zonedDayBounds(nextDay(todayIn(tz)), tz);
     const tomorrowCount = await this.prisma.booking.count({
@@ -1349,7 +1352,7 @@ export class OwnerAssistantService {
     }
     if (!soon.length && !overdue.length) {
       lines.unshift(
-        bi('كله تمام ✅ مفيش فلوس متأخرة ولا حاجة محتاجة انتباه.', 'All clear ✅ nothing overdue.'),
+        canSeeMoney ? bi('كله تمام ✅ مفيش فلوس متأخرة ولا حاجة محتاجة انتباه.', 'All clear ✅ nothing overdue.') : bi('تابع حجوزات منشأتك من الجدول.', 'Follow your venue bookings on the schedule.'),
       );
     }
     return {

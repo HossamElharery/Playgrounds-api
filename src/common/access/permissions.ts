@@ -202,6 +202,10 @@ export interface PermissionPreset {
 
 export const PERMISSION_PRESETS: PermissionPreset[] = [
   {
+    key: 'bookings_only', labelAr: 'حجوزات فقط', labelEn: 'Bookings only',
+    permissions: ['bookings.view', 'bookings.create', 'bookings.edit', 'bookings.checkin'],
+  },
+  {
     key: 'reception',
     labelAr: 'استقبال',
     labelEn: 'Reception',

@@ -69,6 +69,7 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
   const tx = {
     booking: {
       findUnique: jest.fn().mockResolvedValue(null),
+      findUniqueOrThrow: jest.fn().mockResolvedValue(opts.booking ?? created),
       findFirst: jest.fn().mockResolvedValue(opts.overlap ? { id: 'other' } : null),
       create: jest.fn().mockResolvedValue(created),
       update: jest.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -120,6 +121,21 @@ describe('OwnerBookingsService', () => {
       create: jest.fn().mockResolvedValue(null),
     } as never);
   }
+
+  it.each(['paid', 'partial'] as const)('rejects %s creation by bookings-only staff before writing', async (paymentStatus) => {
+    const { prisma } = makePrisma();
+    const scoped = { ...prisma, staffMember: { findUnique: jest.fn().mockResolvedValue({ id: 's', ownerId: owner.id, venueIds: ['v1'], permissions: ['bookings.view', 'bookings.create', 'bookings.edit'] }) } };
+    const staff: AuthenticatedUser = { ...owner, id: 'staff-1', roles: ['staff'] };
+    await expect(service(scoped).createManualBooking(staff, { venueId: 'v1', courtId: 'c1', startsAt: '2026-09-20T18:00:00Z', durationMinutes: 60, priceAmount: 400, paymentStatus, paidAmount: paymentStatus === 'partial' ? 100 : undefined })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'INSUFFICIENT_PERMISSION' }) });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a payment edit by bookings-only staff before writing', async () => {
+    const { prisma } = makePrisma({ booking: bookingRow({ paymentStatus: 'pending' }) });
+    const scoped = { ...prisma, staffMember: { findUnique: jest.fn().mockResolvedValue({ id: 's', ownerId: owner.id, venueIds: ['v1'], permissions: ['bookings.view', 'bookings.edit'] }) } };
+    await expect(service(scoped).updateManualBooking({ ...owner, id: 'staff-1', roles: ['staff'] }, 'b1', { paymentStatus: 'paid' })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'INSUFFICIENT_PERMISSION' }) });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 
   it('quotes the venue currency and warns before booking outside opening hours', async () => {
     const { prisma } = makePrisma();
@@ -357,6 +373,21 @@ describe('OwnerBookingsService', () => {
     await expect(service(prisma).restoreManualBooking(owner, 'b1')).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'SLOT_IN_PAST' }),
     });
+  });
+
+  it('refuses collection when the booking was cancelled after the initial read', async () => {
+    const { prisma, tx } = makePrisma({ booking: bookingRow({ paymentStatus: 'pending', payments: [] }) });
+    tx.booking.findUniqueOrThrow.mockResolvedValue(bookingRow({ status: 'cancelled' }));
+    await expect(service(prisma).addManualPayment(owner, 'b1', 100, 'cash')).rejects.toMatchObject({ status: 400 });
+    expect(tx.payment.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+  });
+
+  it('checks collection against the price read inside the transaction', async () => {
+    const { prisma, tx } = makePrisma({ booking: bookingRow({ totalAmount: 400, paymentStatus: 'pending', payments: [] }) });
+    tx.booking.findUniqueOrThrow.mockResolvedValue(bookingRow({ totalAmount: 100, paymentStatus: 'pending', payments: [] }));
+    await expect(service(prisma).addManualPayment(owner, 'b1', 200, 'cash')).rejects.toMatchObject({ response: expect.objectContaining({ code: 'OVERPAYMENT' }) });
+    expect(tx.payment.create).not.toHaveBeenCalled();
   });
 
   it('a partial payment leaves the booking partial with the remainder outstanding, then completes it', async () => {

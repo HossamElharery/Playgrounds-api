@@ -16,23 +16,24 @@ const row = (id: string, total: number, hoursAgo = 48) => ({
   payments: [],
 });
 
-function build(bookings: ReturnType<typeof row>[], sent: Array<{ payload: Record<string, unknown>; createdAt: Date }> = []) {
+function build(bookings: ReturnType<typeof row>[], sent: Array<{ userId?:string; payload: Record<string, unknown>; createdAt: Date }> = [], staff: Array<{userId:string;permissions:string[]}> = []) {
   const prisma = {
+    staffMember: { findMany: jest.fn().mockResolvedValue(staff) },
     booking: { findMany: jest.fn().mockResolvedValue(bookings) },
     venue: { findUnique: jest.fn().mockResolvedValue({ ownerId: 'o1', nameAr: 'مارينا', nameEn: 'Marina', country: { timezone: 'Asia/Dubai' } }) },
     notification: {
       // Answers "was a notification with this kind/key/value created inside the window?" from `sent`.
-      findFirst: jest.fn().mockImplementation(({ where }: { where: { createdAt: { gte: Date }; AND: Array<{ payload: { path: string[]; equals: string } }> } }) => {
+      findFirst: jest.fn().mockImplementation(({ where }: { where: { userId: string; createdAt: { gte: Date }; AND: Array<{ payload: { path: string[]; equals: string } }> } }) => {
         const hit = sent.find(
-          (n) => n.createdAt >= where.createdAt.gte && where.AND.every((c) => n.payload[c.payload.path[0]] === c.payload.equals),
+          (n) => (n.userId ?? 'o1') === where.userId && n.createdAt >= where.createdAt.gte && where.AND.every((c) => n.payload[c.payload.path[0]] === c.payload.equals),
         );
         return Promise.resolve(hit ? { id: 'n' } : null);
       }),
     },
   };
   const notifications = {
-    create: jest.fn().mockImplementation(async (n: { payload: Record<string, unknown> }) => {
-      sent.push({ payload: n.payload, createdAt: NOW });
+    create: jest.fn().mockImplementation(async (n: { userId:string; payload: Record<string, unknown> }) => {
+      sent.push({ userId:n.userId, payload: n.payload, createdAt: NOW });
       return {};
     }),
   };
@@ -40,6 +41,12 @@ function build(bookings: ReturnType<typeof row>[], sent: Array<{ payload: Record
 }
 
 describe('AssistantRemindersService — unpaid digest', () => {
+  it('does not send debt totals to bookings-only staff', async () => {
+    const {service,notifications}=build([row('1',12000)],[],[{userId:'booker',permissions:['bookings.view']},{userId:'cashier',permissions:['bookings.view','payments.record']}]);
+    expect(await service.sendOverdue(NOW)).toBe(2);
+    expect(notifications.create.mock.calls.map(c=>c[0].userId)).toEqual(['o1','cashier']);
+  });
+
   it('sends one digest that opens THIS venue, with the venue currency', async () => {
     const { service, notifications } = build([row('1', 12_000)]);
     await expect(service.sendOverdue(NOW)).resolves.toBe(1);
@@ -95,6 +102,19 @@ describe('AssistantRemindersService — the digest follows each venue\'s own clo
 });
 
 describe('AssistantRemindersService — arrival with a balance', () => {
+  it('sends an operational arrival to bookings staff and money only to authorised recipients', async () => {
+    const soon = { ...row('9', 8000, 0), slotStart:new Date(NOW.getTime()+45*60000),slotEnd:new Date(NOW.getTime()+105*60000) };
+    const {service,notifications}=build([soon],[],[{userId:'booker',permissions:['bookings.view']},{userId:'cashier',permissions:['bookings.view','payments.record']}]);
+    expect(await service.sendArrivals(NOW)).toBe(3);
+    const calls=notifications.create.mock.calls.map(c=>c[0]);
+    const booker=calls.find(c=>c.userId==='booker');
+    expect(booker.titleAr).not.toContain('عليه');
+    expect(booker.payload).not.toHaveProperty('currency');
+    expect(booker.payload.kind).toBe('assistant_arrival');
+    expect(calls.find(c=>c.userId==='cashier').titleAr).toContain('د.إ');
+    expect(await service.sendArrivals(NOW)).toBe(0);
+  });
+
   it('links straight to the booking in the right venue', async () => {
     const soon = { ...row('9', 8_000, 0), slotStart: new Date(NOW.getTime() + 45 * 60_000), slotEnd: new Date(NOW.getTime() + 105 * 60_000) };
     const { service, notifications } = build([soon]);

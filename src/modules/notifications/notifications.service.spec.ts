@@ -193,6 +193,16 @@ describe('Legacy cash notice amounts', () => {
   const service = new NotificationsService({ notification, cashShift, cashHandover } as never, {} as never, {} as never, {} as never, {} as never);
   beforeEach(() => jest.resetAllMocks());
   const legacy = { id: 'n1', titleAr: 'مارينا: الخزنة ناقصة 12550 EGP', titleEn: 'Marina: drawer short by 12550 EGP', payload: { venueId: 'v1', shiftId: 's1' } };
+  it.each(['assistant_overdue', 'assistant_arrival_due'])('orders by creation time and does not guess an old %s currency', async (kind) => {
+    const old = { ...legacy, payload: { kind, venueId: 'v1', total: 12000 }, titleAr: '120 EGP', titleEn: '120 EGP' };
+    notification.findMany.mockResolvedValue([old]);
+    const result = await service.list('owner');
+    expect(notification.findMany).toHaveBeenCalledWith(expect.objectContaining({orderBy:[{createdAt:'desc'},{id:'desc'}]}));
+    expect(result.items[0].titleAr).toContain('تذكير سابق');
+    expect(result.items[0].titleAr).not.toContain('EGP');
+    expect(old.titleAr).toBe('120 EGP');
+  });
+
   it('renders a legacy cash title from the source record without rewriting stored data', async () => {
     notification.findMany.mockResolvedValue([legacy]);
     cashShift.findMany.mockResolvedValue([{ id: 's1', venueId: 'v1', difference: -12550, currency: 'AED' }]);
@@ -226,5 +236,26 @@ describe('Legacy cash notice amounts', () => {
     cashHandover.findMany.mockClear();
     expect((await service.list('owner')).items[0].titleAr).toBe(legacy.titleAr);
     expect(cashHandover.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('historical staff notification scope', () => {
+  it('redacts financial and reassigned venue notices using current access without changing stored rows', async () => {
+    const rows = [
+      { id: 'debt', titleAr: '120 AED', payload: { kind: 'assistant_overdue', venueId: 'assigned', currency: 'AED' }, deepLink: '/ar/owner/today' },
+      { id: 'other', titleAr: 'Other venue', payload: { kind: 'assistant_arrival', venueId: 'other' }, deepLink: '/ar/owner/today' },
+      { id: 'allowed', titleAr: 'Arrival', payload: { kind: 'assistant_arrival', venueId: 'assigned' }, deepLink: '/ar/owner/today' },
+    ];
+    const service = new NotificationsService({
+      notification: { findMany: jest.fn().mockResolvedValue(rows) },
+      staffMember: { findUnique: jest.fn().mockResolvedValue({ id: 'member', ownerId: 'owner', venueIds: ['assigned'], permissions: ['bookings.view'] }) },
+    } as never, {} as never, {} as never, {} as never, {} as never);
+    const page = await service.list('staff', undefined, 30, { id: 'staff', name: 'Staff', phone: '', roles: ['staff'] });
+    expect(page.items.slice(0, 2)).toEqual(expect.arrayContaining([expect.objectContaining({ payload: null, deepLink: null, titleAr: 'تنبيه سابق خارج صلاحياتك الحالية' })]));
+    expect(page.items[0].payload).toBeNull();
+    expect(page.items[1].payload).toBeNull();
+    expect(page.items[2]).toEqual(rows[2]);
+    expect(rows[0].titleAr).toBe('120 AED');
+    expect(rows[0].payload.venueId).toBe('assigned');
   });
 });

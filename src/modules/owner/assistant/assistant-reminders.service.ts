@@ -78,23 +78,20 @@ export class AssistantRemindersService {
       });
       if (!venue) continue;
       if (opts.localHours && !opts.localHours.includes(localHour(now, venue.country?.timezone ?? 'Africa/Cairo'))) continue;
-      // Once per venue per half-day: the digest is a nudge, not a feed.
-      if (await this.recently(venue.ownerId, 'assistant_overdue', 'venueId', venueId, 10 * HOUR, now))
-        continue;
-      // …and the same unpaid bookings are not announced again the next morning: only a change
-      // (a new debt, a part-payment) or three quiet days brings the digest back.
       const fingerprint = debtFingerprint(list);
-      if (await this.recently(venue.ownerId, 'assistant_overdue', 'fingerprint', fingerprint, SAME_DEBT_REMINDER_MS, now))
-        continue;
       const total = list.reduce((sum, b) => sum + b.outstanding, 0);
       const names = list
         .slice(0, 3)
         .map((b) => b.customerName ?? b.code)
         .join('، ');
       const cur = list[0].currency;
+      for (const recipient of await this.recipients(venueId, venue.ownerId)) {
+        if (!recipient.financial) continue;
+        if (await this.recently(recipient.userId, 'assistant_overdue', 'venueId', venueId, 10 * HOUR, now)) continue;
+        if (await this.recently(recipient.userId, 'assistant_overdue', 'fingerprint', fingerprint, SAME_DEBT_REMINDER_MS, now)) continue;
       await this.notifications
         .create({
-          userId: venue.ownerId,
+          userId: recipient.userId,
           category: 'bookings',
           titleAr: `فلوس لسه عند العملاء: ${fmtMoney(total, cur).ar}`,
           titleEn: `Still owed to you: ${fmtMoney(total, cur).en}`,
@@ -102,10 +99,11 @@ export class AssistantRemindersService {
           bodyEn: `${list.length} finished bookings still owe money (${names}${list.length > 3 ? '…' : ''}) — ${venue.nameEn}.`,
           // Opens THIS venue's Today screen, where the unpaid list lives — not whichever venue was last open.
           deepLink: `/owner/today?venue=${venueId}`,
-          payload: { kind: 'assistant_overdue', venueId, count: list.length, total, fingerprint },
+          payload: { kind: 'assistant_overdue', venueId, currency: cur, count: list.length, total, fingerprint },
         })
         .then(() => sent++)
         .catch((err) => this.logger.warn(`overdue reminder failed: ${String(err)}`));
+      }
     }
     return sent;
   }
@@ -127,26 +125,40 @@ export class AssistantRemindersService {
         select: { ownerId: true, country: { select: { timezone: true } } },
       });
       if (!venue) continue;
-      if (await this.recently(venue.ownerId, 'assistant_arrival_due', 'bookingId', b.id, 24 * HOUR, now))
-        continue;
       const tz = venue.country?.timezone ?? 'Africa/Cairo';
       const who = b.customerName ?? b.code;
+      for (const recipient of await this.recipients(b.venueId, venue.ownerId)) {
+        const kind = recipient.financial ? 'assistant_arrival_due' : 'assistant_arrival';
+        if (await this.recently(recipient.userId, kind, 'bookingId', b.id, 24 * HOUR, now)) continue;
       await this.notifications
         .create({
-          userId: venue.ownerId,
+          userId: recipient.userId,
           category: 'bookings',
-          titleAr: `${who} جاي ${zonedHhmm(b.slotStart, tz)} وعليه ${fmtMoney(b.outstanding, b.currency).ar}`,
-          titleEn: `${who} arrives ${zonedHhmm(b.slotStart, tz)} owing ${fmtMoney(b.outstanding, b.currency).en}`,
-          bodyAr: `${b.courtName} — حصّل الباقي وهو داخل.`,
-          bodyEn: `${b.courtName} — collect the balance at the door.`,
+          titleAr: recipient.financial ? `${who} جاي ${zonedHhmm(b.slotStart, tz)} وعليه ${fmtMoney(b.outstanding, b.currency).ar}` : `${who} جاي ${zonedHhmm(b.slotStart, tz)}`,
+          titleEn: recipient.financial ? `${who} arrives ${zonedHhmm(b.slotStart, tz)} owing ${fmtMoney(b.outstanding, b.currency).en}` : `${who} arrives ${zonedHhmm(b.slotStart, tz)}`,
+          bodyAr: recipient.financial ? `${b.courtName} — حصّل الباقي وهو داخل.` : `${b.courtName} — راجع الحجز قبل وصول اللاعب.`,
+          bodyEn: recipient.financial ? `${b.courtName} — collect the balance at the door.` : `${b.courtName} — review the booking before the player arrives.`,
           // Straight to the booking that owes, in the right venue.
           deepLink: `/owner/today?venue=${b.venueId}&booking=${b.id}`,
-          payload: { kind: 'assistant_arrival_due', venueId: b.venueId, bookingId: b.id },
+          payload: { kind, venueId: b.venueId, bookingId: b.id, ...(recipient.financial ? {currency:b.currency} : {}) },
         })
         .then(() => sent++)
         .catch((err) => this.logger.warn(`arrival reminder failed: ${String(err)}`));
+      }
     }
     return sent;
+  }
+
+  /** Re-read active staff and their current venue permissions at dispatch time. */
+  private async recipients(venueId: string, ownerId: string) {
+    const staff = await this.prisma.staffMember.findMany({
+      where: { ownerId, venueIds: { has: venueId }, permissions: { has: 'bookings.view' }, user: { status: 'active', roles: { has: 'staff' } } },
+      select: { userId: true, permissions: true },
+    });
+    return [{ userId: ownerId, financial: true }, ...staff.map(member => ({
+      userId: member.userId,
+      financial: member.permissions.includes('payments.record') || member.permissions.includes('reports.view'),
+    }))];
   }
 
   private async recently(
