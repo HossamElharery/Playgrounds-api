@@ -37,7 +37,7 @@ function build(bookings: ReturnType<typeof row>[], sent: Array<{ userId?:string;
       return {};
     }),
   };
-  return { service: new AssistantRemindersService(prisma as never, notifications as never), notifications, sent };
+  return { service: new AssistantRemindersService(prisma as never, notifications as never), notifications, sent, prisma };
 }
 
 describe('AssistantRemindersService — unpaid digest', () => {
@@ -120,5 +120,29 @@ describe('AssistantRemindersService — arrival with a balance', () => {
     const { service, notifications } = build([soon]);
     await expect(service.sendArrivals(NOW)).resolves.toBe(1);
     expect(notifications.create.mock.calls[0][0].deepLink).toBe('/owner/today?venue=v1&booking=9');
+  });
+});
+
+
+describe('settled arrivals and refunded balances', () => {
+  it('reminds the owner and booking staff about a fully paid arrival without asking for money', async () => {
+    const paid = { ...row('paid', 12000, -1), payments: [{ amount: 12000 }] };
+    const { service, notifications, prisma } = build([paid as ReturnType<typeof row>], [], [{ userId: 'booker', permissions: ['bookings.view'] }]);
+    expect(await service.sendArrivals(NOW)).toBe(2);
+    expect(prisma.booking.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.not.objectContaining({ paymentStatus: expect.anything() }) }));
+    for (const [notice] of notifications.create.mock.calls) {
+      expect(notice.payload.kind).toBe('assistant_arrival');
+      expect(notice.titleAr).not.toContain('عليه');
+      expect(notice.bodyAr).not.toContain('حصّل');
+    }
+    expect(await service.sendArrivals(NOW)).toBe(0);
+  });
+
+  it('subtracts refunded rows when computing the debt reminder', async () => {
+    const refunded = { ...row('refunded', 12000), payments: [{ amount: 12000 }, { amount: -5000 }] };
+    const { service, notifications, prisma } = build([refunded as ReturnType<typeof row>]);
+    expect(await service.sendOverdue(NOW)).toBe(1);
+    expect(notifications.create.mock.calls[0][0].payload.total).toBe(5000);
+    expect(prisma.booking.findMany).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({ payments: expect.objectContaining({ where: { status: { in: ['paid', 'refunded'] } } }) }) }));
   });
 });

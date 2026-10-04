@@ -856,6 +856,8 @@ model Payment {
   method            PaymentMethod
   status            PaymentStatus @default(pending)
   providerRef       String?
+  /// Stable identity of a manual collection; replaying it must never collect twice.
+  manualRequestKey  String?       @unique
   /// Who took the money at the venue (null for online/wallet payments and imported history).
   recordedByUserId  String?
   /// Set when a cash shift is closed over this payment; null = still in somebody's open drawer.

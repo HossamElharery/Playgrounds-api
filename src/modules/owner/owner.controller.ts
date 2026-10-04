@@ -229,6 +229,9 @@ export class OwnerController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: AssistantExecuteDto,
   ) {
+    if (dto.actions.some(action => action.kind === 'record_payment' && !action.requestKey)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'PAYMENT_REQUEST_KEY_REQUIRED', 'Update the app before recording a payment');
+    }
     return this.assistantExecutor.execute(
       user,
       dto.venueId,
@@ -703,11 +706,13 @@ export class OwnerController {
     @Param('id') id: string,
     @Body() dto: AddManualPaymentDto,
   ) {
+    if (!dto.requestKey) throw new ApiException(HttpStatus.BAD_REQUEST, 'PAYMENT_REQUEST_KEY_REQUIRED', 'Update the app before recording a payment');
     return this.ownerBookings.addManualPayment(
       user,
       id,
       dto.amount,
       dto.method,
+      dto.requestKey,
     );
   }
 

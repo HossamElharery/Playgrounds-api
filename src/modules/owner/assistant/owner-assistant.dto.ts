@@ -62,6 +62,11 @@ export class AssistantAskDto {
  * malformed body should never get that far.
  */
 export class AssistantActionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID('4')
+  requestKey?: string;
+
   @ApiProperty({
     enum: [
       'create_booking',

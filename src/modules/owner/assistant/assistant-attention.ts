@@ -28,7 +28,7 @@ export async function findOwed(
   scope: { venueId?: string },
   when:
     | { kind: 'overdue'; now: Date }
-    | { kind: 'upcoming'; from: Date; to: Date }
+    | { kind: 'upcoming'; from: Date; to: Date; includeSettled?: boolean }
     /** Not finished yet: playing now or still to come, up to `to`. */
     | { kind: 'ahead'; now: Date; to: Date },
 ): Promise<OwedRow[]> {
@@ -46,12 +46,12 @@ export async function findOwed(
       ...(scope.venueId ? { venueId: scope.venueId } : {}),
       source: 'manual',
       status: { in: ['held', 'confirmed', 'completed'] },
-      paymentStatus: { in: ['pending', 'partial'] },
+      ...(when.kind === 'upcoming' && when.includeSettled ? {} : { paymentStatus: { in: ['pending', 'partial'] as ('pending' | 'partial')[] } }),
       ...slot,
     },
     include: {
       court: { select: { name: true } },
-      payments: { where: { status: 'paid' }, select: { amount: true } },
+      payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } },
     },
     orderBy: { slotStart: 'asc' },
     take: 200,
@@ -73,7 +73,7 @@ export async function findOwed(
         currency: b.currency,
       };
     })
-    .filter((b) => b.outstanding > 0);
+    .filter((b) => (when.kind === 'upcoming' && when.includeSettled) || b.outstanding > 0);
 }
 
 const UPCOMING_DAYS = 30;

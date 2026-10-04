@@ -490,6 +490,33 @@ describe('finance integration (real Postgres)', () => {
     }
   });
 
+  it('replays a partial collection after a lost response, including concurrent retries, without a second payment', async () => {
+    const { service, booking, user } = await operationFixture('retry-deposit');
+    const key = crypto.randomUUID();
+    await service.addManualPayment(user, booking.id, 10005, 'cash', key);
+    await service.addManualPayment(user, booking.id, 10005, 'cash', key.toUpperCase());
+    const retries = await Promise.allSettled(Array.from({ length: 6 }, () => service.addManualPayment(user, booking.id, 10005, 'cash', key)));
+    expect(retries.every(r => r.status === 'fulfilled')).toBe(true);
+    expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+    expect((await prisma.payment.aggregate({ where: { bookingId: booking.id }, _sum: { amount: true } }))._sum.amount).toBe(10005);
+    await expect(service.addManualPayment(user, booking.id, 10006, 'cash', key)).rejects.toMatchObject({ status: 409 });
+    await expect(service.addManualPayment(user, booking.id, 10005, 'card', key)).rejects.toMatchObject({ status: 409 });
+    await service.deleteManualBooking(user, booking.id);
+    await service.addManualPayment(user, booking.id, 10005, 'cash', key);
+    expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+  });
+
+  it('serializes first submissions with the same collection identity and rejects reuse on another booking', async () => {
+    const { service, booking, user, dto } = await operationFixture('first-retry');
+    const key = crypto.randomUUID();
+    const outcomes = await Promise.allSettled(Array.from({ length: 8 }, () => service.addManualPayment(user, booking.id, 5005, 'cash', key)));
+    expect(outcomes.every(r => r.status === 'fulfilled')).toBe(true);
+    expect(await prisma.payment.count({ where: { manualRequestKey: key } })).toBe(1);
+    const other = await service.createManualBooking(user, { ...dto, startsAt: new Date(new Date(dto.startsAt).getTime() + 3600000).toISOString() });
+    await expect(service.addManualPayment(user, other.id, 5005, 'cash', key)).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.payment.count({ where: { bookingId: other.id } })).toBe(0);
+  });
+
   it('enforces staff payment permissions and delegated team scope on real database records', async () => {
     const f = await operationFixture('staff-permissions');
     const other = await makeVenue('other-scope');
@@ -516,8 +543,13 @@ describe('finance integration (real Postgres)', () => {
     await expect(f.service.updateManualBooking(staff,f.booking.id,{paymentStatus:'paid'})).rejects.toMatchObject({status:403});
     await expect(f.service.addManualPayment(staff,f.booking.id,100)).rejects.toMatchObject({status:403});
     await team.update(actor,booker.id,{permissions:['bookings.view','payments.record']});
-    await expect(f.service.addManualPayment(staff,f.booking.id,10005)).resolves.toMatchObject({money:{paidAmount:10005,outstanding:30020}});
-    await team.update(actor,booker.id,{venueIds:[other.venue.id]});
+    const paymentKey = crypto.randomUUID();
+    await expect(f.service.addManualPayment(staff,f.booking.id,10005,'cash',paymentKey)).resolves.toMatchObject({money:{paidAmount:10005,outstanding:30020}});
+    await expect(f.service.addManualPayment(f.user,f.booking.id,10005,'cash',paymentKey)).rejects.toMatchObject({status:409});
+    await team.update(actor,booker.id,{permissions:['bookings.view']});
+    await expect(f.service.addManualPayment(staff,f.booking.id,10005,'cash',paymentKey)).rejects.toMatchObject({status:403});
+    await team.update(actor,booker.id,{permissions:['bookings.view','payments.record'],venueIds:[other.venue.id]});
+    await expect(f.service.addManualPayment(staff,f.booking.id,10005,'cash',paymentKey)).rejects.toMatchObject({status:403});
     await expect(f.service.addManualPayment(staff,f.booking.id,100)).rejects.toMatchObject({status:403});
   });
 

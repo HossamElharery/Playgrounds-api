@@ -115,6 +115,7 @@ export type AssistantAction =
     }
   | {
       kind: 'record_payment';
+      requestKey?: string;
       bookingId: string;
       amount: number;
       method?: string;

@@ -161,6 +161,11 @@ export class UpdateManualBookingDto {
 }
 
 export class AddManualPaymentDto {
+  @ApiProperty({ description: "Stable UUID for retrying the same collection" })
+  @IsOptional()
+  @IsUUID('4')
+  requestKey!: string;
+
   @ApiProperty()
   @Type(() => Number)
   @IsInt()

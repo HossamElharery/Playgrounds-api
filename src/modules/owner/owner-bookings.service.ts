@@ -601,6 +601,7 @@ export class OwnerBookingsService {
     bookingId: string,
     amount: number,
     method?: string,
+    requestKey?: string,
   ) {
     await assertStaffPermission(this.prisma, user, 'payments.record');
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 100_000_000) {
@@ -610,11 +611,27 @@ export class OwnerBookingsService {
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot take owner payments');
     }
+    if (requestKey && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_REQUEST_KEY', 'A collection request key must be a UUID v4');
+    }
+    requestKey = requestKey?.toLowerCase();
+    const existingRequest = async (db: Pick<Prisma.TransactionClient, 'payment'>) => {
+      if (!requestKey) return false;
+      const existing = await db.payment.findUnique({ where: { manualRequestKey: requestKey } });
+      if (!existing) return false;
+      if (existing.bookingId !== bookingId || existing.recordedByUserId !== user.id || existing.amount !== amount || existing.method !== mapPaymentMethod(method)) {
+        throw new ApiException(HttpStatus.CONFLICT, 'REQUEST_KEY_REUSED', 'This collection identity belongs to a different operation');
+      }
+      return true;
+    };
+    if (await existingRequest(this.prisma)) return this.toOwnerBookingDto(
+      await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }), user);
     if (booking.status === 'cancelled') {
       throw new BadRequestException('Restore the booking before recording a payment');
     }
     await this.prisma.$transaction(
       async (tx) => {
+        if (await existingRequest(tx)) return;
         const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
         if (current.status === 'cancelled') throw new BadRequestException('Restore the booking before recording a payment');
         // Read inside the transaction so two quick taps cannot both pass the
@@ -633,6 +650,7 @@ export class OwnerBookingsService {
             method: mapPaymentMethod(method),
             status: 'paid',
             recordedByUserId: user.id,
+            manualRequestKey: requestKey,
           },
         });
         await tx.booking.update({
@@ -650,7 +668,11 @@ export class OwnerBookingsService {
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ).catch(rethrowConcurrentWrite);
+    ).catch(async error => {
+      // A concurrent duplicate can lose the transaction race after the other request committed.
+      if (requestKey && error instanceof Prisma.PrismaClientKnownRequestError && ['P2002', 'P2034'].includes(error.code) && await existingRequest(this.prisma)) return;
+      rethrowConcurrentWrite(error);
+    });
     return this.toOwnerBookingDto(
       await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } }),
       user,

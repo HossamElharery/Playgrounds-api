@@ -101,7 +101,7 @@ export class AssistantRemindersService {
           deepLink: `/owner/today?venue=${venueId}`,
           payload: { kind: 'assistant_overdue', venueId, currency: cur, count: list.length, total, fingerprint },
         })
-        .then(() => sent++)
+        .then(notification => { if (notification) sent++; })
         .catch((err) => this.logger.warn(`overdue reminder failed: ${String(err)}`));
       }
     }
@@ -114,6 +114,7 @@ export class AssistantRemindersService {
       {},
       {
         kind: 'upcoming',
+        includeSettled: true,
         from: new Date(now.getTime() + 30 * 60_000),
         to: new Date(now.getTime() + 75 * 60_000),
       },
@@ -128,21 +129,22 @@ export class AssistantRemindersService {
       const tz = venue.country?.timezone ?? 'Africa/Cairo';
       const who = b.customerName ?? b.code;
       for (const recipient of await this.recipients(b.venueId, venue.ownerId)) {
-        const kind = recipient.financial ? 'assistant_arrival_due' : 'assistant_arrival';
+        const includeBalance = recipient.financial && b.outstanding > 0;
+        const kind = includeBalance ? 'assistant_arrival_due' : 'assistant_arrival';
         if (await this.recently(recipient.userId, kind, 'bookingId', b.id, 24 * HOUR, now)) continue;
       await this.notifications
         .create({
           userId: recipient.userId,
           category: 'bookings',
-          titleAr: recipient.financial ? `${who} جاي ${zonedHhmm(b.slotStart, tz)} وعليه ${fmtMoney(b.outstanding, b.currency).ar}` : `${who} جاي ${zonedHhmm(b.slotStart, tz)}`,
-          titleEn: recipient.financial ? `${who} arrives ${zonedHhmm(b.slotStart, tz)} owing ${fmtMoney(b.outstanding, b.currency).en}` : `${who} arrives ${zonedHhmm(b.slotStart, tz)}`,
-          bodyAr: recipient.financial ? `${b.courtName} — حصّل الباقي وهو داخل.` : `${b.courtName} — راجع الحجز قبل وصول اللاعب.`,
-          bodyEn: recipient.financial ? `${b.courtName} — collect the balance at the door.` : `${b.courtName} — review the booking before the player arrives.`,
+          titleAr: includeBalance ? `${who} جاي ${zonedHhmm(b.slotStart, tz)} وعليه ${fmtMoney(b.outstanding, b.currency).ar}` : `${who} جاي ${zonedHhmm(b.slotStart, tz)}`,
+          titleEn: includeBalance ? `${who} arrives ${zonedHhmm(b.slotStart, tz)} owing ${fmtMoney(b.outstanding, b.currency).en}` : `${who} arrives ${zonedHhmm(b.slotStart, tz)}`,
+          bodyAr: includeBalance ? `${b.courtName} — حصّل الباقي وهو داخل.` : `${b.courtName} — راجع الحجز قبل وصول اللاعب.`,
+          bodyEn: includeBalance ? `${b.courtName} — collect the balance at the door.` : `${b.courtName} — review the booking before the player arrives.`,
           // Straight to the booking that owes, in the right venue.
           deepLink: `/owner/today?venue=${b.venueId}&booking=${b.id}`,
-          payload: { kind, venueId: b.venueId, bookingId: b.id, ...(recipient.financial ? {currency:b.currency} : {}) },
+          payload: { kind, venueId: b.venueId, bookingId: b.id, ...(includeBalance ? {currency:b.currency} : {}) },
         })
-        .then(() => sent++)
+        .then(notification => { if (notification) sent++; })
         .catch((err) => this.logger.warn(`arrival reminder failed: ${String(err)}`));
       }
     }
