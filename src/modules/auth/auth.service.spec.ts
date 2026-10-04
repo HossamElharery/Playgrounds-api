@@ -34,6 +34,7 @@ describe('AuthService', () => {
     };
     otpDelivery = { send: jest.fn() };
     email = {
+      assertDeliveryAvailable: jest.fn(),
       sendVerificationCode: jest.fn(),
       sendPasswordResetCode: jest.fn(),
       sendWelcome: jest.fn().mockResolvedValue(undefined),
@@ -46,7 +47,9 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: SquadService,
-          useValue: { leaveCurrentSquad: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            leaveCurrentSquad: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: JwtService,
@@ -105,6 +108,7 @@ describe('AuthService', () => {
     prisma.user.findUnique.mockResolvedValue({
       id: 'u1',
       email: 'owner@matchena.com',
+      roles: ['owner'],
     });
 
     await service.requestPasswordReset({ email: 'OWNER@matchena.com' });
@@ -124,6 +128,17 @@ describe('AuthService', () => {
       5,
     );
     expect(otpDelivery.send).not.toHaveBeenCalled();
+  });
+
+  it('fails consistently before account lookup when email delivery is unavailable', async () => {
+    email.assertDeliveryAvailable.mockImplementation(() => {
+      throw new Error('Email delivery is temporarily unavailable');
+    });
+    await expect(
+      service.requestPasswordReset({ email: 'owner@matchena.com' }),
+    ).rejects.toThrow('Email delivery is temporarily unavailable');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.otpCode.create).not.toHaveBeenCalled();
   });
 
   it('refuses Google and Facebook until client credentials are configured', async () => {

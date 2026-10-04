@@ -1,4 +1,9 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Transporter } from 'nodemailer';
 import { MAIL_TRANSPORT } from './email.tokens';
@@ -22,6 +27,17 @@ export class EmailService {
     private readonly config: ConfigService,
   ) {}
 
+  assertDeliveryAvailable(): void {
+    if (
+      this.config.get<string>('NODE_ENV') === 'production' &&
+      !this.config.get<string>('SMTP_HOST')?.trim()
+    ) {
+      throw new ServiceUnavailableException(
+        'Email delivery is temporarily unavailable. خدمة إرسال البريد غير متاحة حاليًا، حاول لاحقًا.',
+      );
+    }
+  }
+
   async sendVerificationCode(
     to: string,
     code: string,
@@ -36,7 +52,8 @@ export class EmailService {
         'Use this one-time code to finish creating your Matchena account. استخدم هذا الرمز لإكمال إنشاء حسابك.',
       bodyHtml: this.codeBlock(code, expiresInMinutes),
       bodyText: `Your Matchena verification code is ${code}. It expires in ${expiresInMinutes} minutes.\nرمز تأكيد بريدك في ماتشنا هو ${code} وينتهي خلال ${expiresInMinutes} دقائق.`,
-      footer: 'If you did not request this code, you can safely ignore this email.',
+      footer:
+        'If you did not request this code, you can safely ignore this email.',
     });
   }
 
@@ -91,7 +108,11 @@ export class EmailService {
     return `<div style="margin:24px 0;padding:20px;border:1px solid #365314;border-radius:16px;background:#0b1a10;text-align:center"><div style="font-size:34px;line-height:1;font-weight:900;letter-spacing:9px;color:#a3ff12">${this.escapeHtml(code)}</div><div style="margin-top:12px;color:#94a3b8;font-size:13px">Expires in ${expiresInMinutes} minutes · صالح لمدة ${expiresInMinutes} دقائق</div></div>`;
   }
 
-  async sendFinanceNotice(to: string, subject: string, body: string): Promise<void> {
+  async sendFinanceNotice(
+    to: string,
+    subject: string,
+    body: string,
+  ): Promise<void> {
     await this.sendTemplate(to, {
       subject,
       preheader: subject,
@@ -109,7 +130,8 @@ export class EmailService {
     message: string;
   }): Promise<void> {
     const to =
-      this.config.get<string>('MAIL_REPLY_TO')?.trim() || 'support@matchena.com';
+      this.config.get<string>('MAIL_REPLY_TO')?.trim() ||
+      'support@matchena.com';
     const safeName = this.escapeHtml(inquiry.fullName);
     const safeEmail = this.escapeHtml(inquiry.email);
     const safePhone = inquiry.phone ? this.escapeHtml(inquiry.phone) : '';
@@ -147,6 +169,7 @@ export class EmailService {
     content: EmailContent,
     extras?: { replyTo?: string },
   ): Promise<void> {
+    this.assertDeliveryAvailable();
     const from = this.config.get<string>(
       'MAIL_FROM',
       'Matchena <no-reply@matchena.com>',
@@ -164,7 +187,9 @@ export class EmailService {
       replyTo,
     });
     if (info.message) {
-      this.logger.debug(`[dev email:no-smtp] to=${to} subject="${content.subject}"`);
+      this.logger.debug(
+        `[dev email:no-smtp] to=${to} subject="${content.subject}"`,
+      );
     }
   }
 
@@ -172,6 +197,7 @@ export class EmailService {
    *  the code the same way console SMS OTP does, otherwise register/reset
    *  cannot be tested without production credentials. */
   private logDevCode(to: string, kind: string, code: string): void {
+    this.assertDeliveryAvailable();
     if (this.config.get<string>('SMTP_HOST')) return;
     this.logger.log(`[dev email:no-smtp] ${kind} for ${to}: ${code}`);
   }

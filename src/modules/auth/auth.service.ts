@@ -639,6 +639,9 @@ export class AuthService {
 
   async requestPasswordReset(identifier: ForgotPasswordDto): Promise<void> {
     const target = this.passwordResetTarget(identifier);
+    // Check before looking up the account so an outage cannot reveal its existence
+    // or create an OTP that was never delivered.
+    if (identifier.email) this.email.assertDeliveryAvailable();
     const user = await this.prisma.user.findUnique({
       where: identifier.email ? { email: target } : { phone: target },
     });

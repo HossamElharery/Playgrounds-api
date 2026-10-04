@@ -16,6 +16,23 @@ describe('EmailService', () => {
 
   beforeEach(() => sendMail.mockClear());
 
+  it('never reports success or logs reset codes without SMTP in production', async () => {
+    const production = {
+      get: (key: string) => (key === 'NODE_ENV' ? 'production' : undefined),
+    } as ConfigService;
+    const service = new EmailService({ sendMail } as never, production);
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    try {
+      await expect(
+        service.sendPasswordResetCode('owner@example.com', '1234', 5),
+      ).rejects.toThrow('Email delivery is temporarily unavailable');
+      expect(sendMail).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('sends a bilingual verification template with text fallback', async () => {
     await service.sendVerificationCode('player@example.com', '1234', 5);
 
@@ -33,7 +50,9 @@ describe('EmailService', () => {
   });
 
   it('logs the verification code when SMTP is not configured', async () => {
-    const logger = { log: jest.spyOn(Logger.prototype, 'log').mockImplementation() };
+    const logger = {
+      log: jest.spyOn(Logger.prototype, 'log').mockImplementation(),
+    };
     const local = {
       get: (key: string, fallback?: unknown) =>
         ({
@@ -81,4 +100,3 @@ describe('EmailService', () => {
     expect(html).not.toContain('Phone');
   });
 });
-
