@@ -12,7 +12,21 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+export class PrepareOwnerOfflineDto {
+  @IsUUID() venueId!: string;
+  @IsUUID('4') deviceId!: string;
+}
+
 export class CreateManualBookingDto {
+  @IsOptional()
+  @IsUUID('4')
+  requestKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  offlineGrant?: string;
+
   @ApiProperty()
   @IsUUID()
   venueId!: string;
@@ -179,6 +193,24 @@ export class AddManualPaymentDto {
   method?: 'cash' | 'instapay' | 'wallet' | 'card' | 'fawry' | 'other';
 }
 
+export class CancelManualBookingQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Money handed back to the customer, in minor units. Required when money was received; 0 keeps all of it.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  refundAmount?: number;
+
+  @ApiPropertyOptional({ enum: ['customer_request', 'venue_issue', 'duplicate', 'other'] })
+  @IsOptional()
+  @IsIn(['customer_request', 'venue_issue', 'duplicate', 'other'])
+  reason?: 'customer_request' | 'venue_issue' | 'duplicate' | 'other';
+}
+
 export class VoidPaymentDto {
   @ApiPropertyOptional({ description: 'Why the money was handed back (kept in the audit trail).' })
   @IsOptional()
@@ -249,4 +281,11 @@ export class OwnerRemittanceDto {
   @IsString()
   @MaxLength(500)
   receiptUrl?: string;
+}
+
+export class OwnerOfflineEventDto {
+  @IsUUID('4') requestKey!: string;
+  @IsUUID() bookingId!: string;
+  @IsIn(['attendance', 'note']) kind!: 'attendance' | 'note';
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }

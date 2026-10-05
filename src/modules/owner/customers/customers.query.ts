@@ -9,13 +9,18 @@ export interface OwnerCustomerItem {
   name: string | null;
   phone: string | null;
   phoneMasked: string | null;
-  /** Games booked (cancelled ones do not count). */
+  /** Games booked (cancelled ones do not count), played or not yet. */
   bookings: number;
+  /** Games that really happened: past, not cancelled, not a no-show. */
+  visits: number;
+  /** The next game booked from now, if any. */
+  nextBooking: Date | null;
   /** Money actually earned from this customer: what was received on their bookings. */
   spent: number;
   /** What this customer still owes the venue for games already played. */
   owed: number;
   noShows: number;
+  /** The latest game that really happened — a booking for later is not a visit. */
   lastVisit: Date | null;
   firstVisit: Date | null;
   sources: string[];
@@ -27,6 +32,8 @@ export interface OwnerCustomerItem {
 interface Row {
   key: string;
   bookings: number;
+  visits: number;
+  nextBooking: Date | null;
   noShows: number;
   spent: number;
   owed: number;
@@ -61,8 +68,10 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
            (COUNT(*) FILTER (WHERE "status" = 'no_show'))::int AS "noShows",
            COALESCE(SUM(revenue), 0)::int AS spent,
            COALESCE(SUM(owes) FILTER (WHERE "status" IN ('confirmed', 'completed')), 0)::int AS owed,
-           MAX("slotStart") AS "lastVisit",
-           MIN("slotStart") AS "firstVisit"
+           (COUNT(*) FILTER (WHERE "slotStart" <= (NOW() AT TIME ZONE 'UTC') AND "status" IN ('confirmed', 'completed')))::int AS visits,
+           MIN("slotStart") FILTER (WHERE "slotStart" > (NOW() AT TIME ZONE 'UTC') AND "status" IN ('confirmed', 'held')) AS "nextBooking",
+           MAX("slotStart") FILTER (WHERE "slotStart" <= (NOW() AT TIME ZONE 'UTC') AND "status" IN ('confirmed', 'completed')) AS "lastVisit",
+           MIN("slotStart") FILTER (WHERE "slotStart" <= (NOW() AT TIME ZONE 'UTC') AND "status" IN ('confirmed', 'completed')) AS "firstVisit"
     FROM b
     WHERE key IS NOT NULL
     GROUP BY key
@@ -88,15 +97,15 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
     if (!key) continue;
     (sources.get(key) ?? sources.set(key, new Set()).get(key)!).add(sourceDisplay(s.source, s.sourceKey, s.sourceLabel).label);
   }
-  // A display name for the venue's own callers: the latest one typed on a booking with that key.
+  // Keep the original contact name stable: another person's booking on a shared phone must not rename its owner.
   const manualKeys = rows.filter((r) => !r.key.startsWith('p:')).map((r) => r.key);
   const names = new Map<string, string>();
   if (manualKeys.length) {
     const named = await prisma.booking.findMany({
-      where: { venueId, source: 'manual', status: { not: 'cancelled' }, guestName: { not: null }, guestPhone: { not: null } },
+      where: { venueId, source: 'manual', status: { not: 'cancelled' }, AND: [{ guestName: { not: null } }, { guestName: { not: '' } }], guestPhone: { not: null } },
       select: { guestPhone: true, guestName: true },
-      orderBy: { slotStart: 'desc' },
-      take: 5000,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      distinct: ['guestPhone'],
     });
     for (const n of named) if (n.guestPhone && n.guestName && !names.has(`m:${n.guestPhone}`)) names.set(`m:${n.guestPhone}`, n.guestName);
   }
@@ -114,6 +123,8 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
       phone: r.key.startsWith('m:') ? r.key.slice(2) : null,
       phoneMasked: platform ? maskPlayerPhone(u?.phone) : null,
       bookings: r.bookings,
+      visits: r.visits ?? 0,
+      nextBooking: r.nextBooking ?? null,
       spent: r.spent,
       owed: r.owed,
       noShows: r.noShows,
@@ -134,6 +145,8 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
       phone: p.phone,
       phoneMasked: null,
       bookings: 0,
+      visits: 0,
+      nextBooking: null,
       spent: 0,
       owed: 0,
       noShows: 0,

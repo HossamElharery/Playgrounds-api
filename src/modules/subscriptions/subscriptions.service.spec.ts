@@ -10,7 +10,7 @@ function sub(over: Record<string, unknown> = {}) {
     id: 'sub1',
     venueId: 'v1',
     planKey: 'pro',
-    listPriceAmount: 300000,
+    listPriceAmount: 100000,
     agreedPriceAmount: 200000,
     currency: 'EGP',
     startedAt: at(-60),
@@ -77,7 +77,7 @@ describe('SubscriptionsService', () => {
     const view = await svc
       .forOwner({ id: 'owner-1', phone: '', name: 'O', roles: ['owner'] } as never, 'v1')
       .finally(() => jest.useRealTimers());
-    expect(view).toMatchObject({ listPriceAmount: 300000, isFree: true, state: 'expiring' });
+    expect(view).toMatchObject({ listPriceAmount: 100000, isFree: true, state: 'expiring' });
     expect(JSON.stringify(view)).not.toContain('agreedPrice');
     expect(JSON.stringify(view)).not.toContain('200000');
   });

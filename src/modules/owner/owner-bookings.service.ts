@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Booking, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { manualBookingHash, offlineTokenHash } from './offline/offline-policy';
 import { loadStaffScope, scopeCan } from '../../common/access/staff-scope';
 import { PlatformRequestsService } from './requests/platform-requests.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,6 +47,7 @@ import {
 import {
   CreateManualBookingDto,
   UpdateManualBookingDto,
+  OwnerOfflineEventDto,
 } from './dto/manual-booking.dto';
 import { CreateWalkInDto } from './dto/walk-in.dto';
 import { formatMoney, notifyFinance } from '../finance/finance-notify';
@@ -53,6 +55,8 @@ import { buildBookingStatement } from '../../common/money/booking-statement';
 import { COUNTED_PAYMENT_STATUSES, derivePaymentStatus, netOf, netReceived } from './cash/payment-trail';
 
 const NINETY_DAYS_MS = 90 * 86_400_000;
+
+export type CancelReason = 'customer_request' | 'venue_issue' | 'duplicate' | 'other';
 
 function mapPaymentMethod(
   method?: string,
@@ -88,15 +92,134 @@ export class OwnerBookingsService {
     private readonly requests?: PlatformRequestsService,
   ) {}
 
+  async offlineOperationOutcome(user: AuthenticatedUser, key: string, kind: string) {
+    key = key.toLowerCase();
+    if (kind === 'create') return this.offlineBookingOutcome(user, key);
+    let bookingId: string | null = null;
+    if (kind === 'payment') {
+      const payment = await this.prisma.payment.findUnique({ where: { manualRequestKey: key } });
+      if (payment?.recordedByUserId === user.id) bookingId = payment.bookingId;
+    } else if (kind === 'attendance' || kind === 'note') {
+      const event = await this.prisma.auditLogEntry.findUnique({ where: { id: key } });
+      if (event?.actorUserId === user.id && event.action === `owner.offline.${kind}`) bookingId = event.targetId;
+    } else throw new BadRequestException('Unknown operation kind');
+    if (!bookingId) return { booking: null };
+    await assertBookingAccess(this.prisma, user, bookingId, { write: false });
+    return { booking: await this.getBooking(user, bookingId) };
+  }
+
+  async offlineBookingOutcome(user: AuthenticatedUser, requestKey: string) {
+    const booking = await this.prisma.booking.findUnique({ where: { manualRequestKey: requestKey.toLowerCase() } });
+    if (!booking) return { booking: null };
+    if (booking.createdByUserId !== user.id) throw new NotFoundException('Operation not found');
+    await assertBookingAccess(this.prisma, user, booking.id, { write: false });
+    return { booking: await this.toOwnerBookingDto(booking, user) };
+  }
+
+  async recordOfflineEvent(user: AuthenticatedUser, dto: OwnerOfflineEventDto) {
+    dto = { ...dto, requestKey: dto.requestKey.toLowerCase() };
+    const { booking } = await assertBookingAccess(this.prisma, user, dto.bookingId, { write: true });
+    await assertStaffPermission(this.prisma, user, dto.kind === 'attendance' ? 'bookings.checkin' : 'bookings.edit');
+    const hash = offlineTokenHash(JSON.stringify({ bookingId: dto.bookingId, kind: dto.kind, note: dto.note?.trim() || null }));
+    const replay = async () => {
+      const event = await this.prisma.auditLogEntry.findUnique({ where: { id: dto.requestKey } });
+      if (!event) return false;
+      const meta = event.metadata as Record<string, unknown>;
+      if (event.actorUserId !== user.id || meta?.requestHash !== hash) throw new ConflictException({ code: 'OPERATION_KEY_REUSED', message: 'Operation identity changed' });
+      return true;
+    };
+    if (await replay()) return this.toOwnerBookingDto(booking, user);
+    if (booking.source !== 'manual') throw new BadRequestException('Offline events apply only to manual bookings');
+    if (dto.kind === 'note' && !dto.note?.trim()) throw new BadRequestException('Note is required');
+    try {
+      await this.prisma.$transaction(async tx => {
+        const current = await tx.booking.findUniqueOrThrow({ where: { id: dto.bookingId } });
+        if (!['confirmed', 'completed'].includes(current.status)) throw new ConflictException('Booking is no longer active');
+        if (dto.kind === 'attendance') {
+          if (current.slotStart.getTime() > Date.now() + 15 * 60_000) throw new ConflictException('Attendance cannot be recorded before the booking');
+          if (!current.checkedInAt) await tx.booking.update({ where: { id: current.id }, data: { checkedInAt: new Date(), checkedInByUserId: user.id, status: 'completed' } });
+        } else {
+          const notes = [current.notes, dto.note?.trim()].filter(Boolean).join('\n');
+          if (notes.length > 10_000) throw new BadRequestException('Booking notes limit reached');
+          await tx.booking.update({ where: { id: current.id }, data: { notes } });
+        }
+        await tx.auditLogEntry.create({ data: { id: dto.requestKey, actorUserId: user.id,
+          action: `owner.offline.${dto.kind}`, targetType: 'booking', targetId: current.id,
+          metadata: { requestHash: hash, venueId: current.venueId, note: dto.note ?? null, noAutomaticCollection: true } } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) { if (!(await replay())) rethrowConcurrentWrite(error); }
+    return this.getBooking(user, dto.bookingId);
+  }
+
+  async prepareOffline(user: AuthenticatedUser, venueId: string, deviceId: string) {
+    await assertVenueAccess(this.prisma, user, venueId, { write: true });
+    await assertStaffPermission(this.prisma, user, 'bookings.create');
+    const scope = await loadStaffScope(this.prisma, user.id);
+    const now = new Date();
+    const token = randomBytes(32).toString('hex');
+    const grant = await this.prisma.ownerOfflineGrant.create({ data: {
+      tokenHash: offlineTokenHash(token), userId: user.id, venueId, deviceId,
+      cashAllowed: user.roles.includes('owner') || user.roles.includes('admin') || scopeCan(scope, 'payments.record'),
+      issuedAt: now, expiresAt: new Date(now.getTime() + 24 * 3600_000),
+      replayUntil: new Date(now.getTime() + 30 * 86400_000),
+      horizonEnd: new Date(now.getTime() + 7 * 86400_000),
+    } });
+    return { token, venueId, deviceId, cashAllowed: grant.cashAllowed,
+      issuedAt: grant.issuedAt.toISOString(), expiresAt: grant.expiresAt.toISOString(),
+      replayUntil: grant.replayUntil.toISOString(), horizonEnd: grant.horizonEnd.toISOString() };
+  }
+
+  private async manualReplay(user: AuthenticatedUser, dto: CreateManualBookingDto) {
+    if (!dto.requestKey) return null;
+    const previous = await this.prisma.booking.findUnique({ where: { manualRequestKey: dto.requestKey } });
+    if (!previous) return null;
+    if (previous.createdByUserId !== user.id || previous.venueId !== dto.venueId ||
+        previous.manualRequestHash !== manualBookingHash(dto)) {
+      throw new ConflictException({ code: 'OPERATION_KEY_REUSED', message: 'Operation identity does not match its original booking' });
+    }
+    return { ...(await this.toOwnerBookingDto(previous, user)), warnings: [] };
+  }
+
   async createManualBooking(
     user: AuthenticatedUser,
     dto: CreateManualBookingDto,
   ) {
+    dto = { ...dto, requestKey: dto.requestKey?.toLowerCase() };
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, {
       write: true,
     });
+    await assertStaffPermission(this.prisma, user, 'bookings.create');
     if (dto.paymentStatus === 'paid' || dto.paymentStatus === 'partial' || (dto.paidAmount ?? 0) > 0) {
       await assertStaffPermission(this.prisma, user, 'payments.record');
+    }
+    if (!Number.isSafeInteger(dto.priceAmount) || dto.priceAmount < 0 || dto.priceAmount > 10_000_000 ||
+        !Number.isInteger(dto.durationMinutes) || dto.durationMinutes < 15 || dto.durationMinutes > 720 ||
+        !Number.isFinite(new Date(dto.startsAt).getTime()) ||
+        (dto.paidAmount != null && (!Number.isSafeInteger(dto.paidAmount) || dto.paidAmount <= 0 || dto.paidAmount > dto.priceAmount))) {
+      throw new BadRequestException('Invalid booking amount, time or duration');
+    }
+    const replay = await this.manualReplay(user, dto);
+    if (replay) return replay;
+    if (dto.offlineGrant) {
+      if (!dto.requestKey) throw new BadRequestException('Offline bookings require a request key');
+      const grant = await this.prisma.ownerOfflineGrant.findUnique({ where: { tokenHash: offlineTokenHash(dto.offlineGrant) } });
+      const start = new Date(dto.startsAt).getTime();
+      const end = start + dto.durationMinutes * 60_000;
+      if (!grant || grant.userId !== user.id || grant.venueId !== dto.venueId ||
+          grant.replayUntil.getTime() < Date.now() || start < grant.issuedAt.getTime() - 15 * 60_000 ||
+          end > grant.horizonEnd.getTime()) {
+        throw new ConflictException({ code: 'OFFLINE_GRANT_INVALID', message: 'Offline booking needs review: authorization or date range is invalid' });
+      }
+      if ((dto.paymentStatus === 'paid' || dto.paymentStatus === 'partial') &&
+          (!grant.cashAllowed || (dto.paymentMethod ?? 'cash') !== 'cash')) {
+        throw new BadRequestException('Only authorized cash collections are available offline');
+      }
+    }
+    if ((dto.paymentStatus ?? 'unpaid') === 'unpaid' && (dto.paidAmount ?? 0) > 0) {
+      throw new BadRequestException('An unpaid booking cannot include a collection');
+    }
+    if (dto.paymentStatus === 'paid' && dto.paidAmount != null && dto.paidAmount !== dto.priceAmount) {
+      throw new BadRequestException('A paid booking must collect its exact total');
     }
     // A schedule with no opening hours is not a schedule: refuse instead of offering 03:00.
     if (!hasOpeningHours(venue.weeklyHours)) {
@@ -118,7 +241,7 @@ export class OwnerBookingsService {
     }
     const slotStart = new Date(dto.startsAt);
     const slotEnd = new Date(slotStart.getTime() + dto.durationMinutes * 60_000);
-    assertSlotNotInPast(slotStart);
+    if (!dto.offlineGrant) assertSlotNotInPast(slotStart);
     if (dto.paymentStatus === 'partial') {
       if (!dto.paidAmount || dto.paidAmount <= 0 || dto.paidAmount >= dto.priceAmount) {
         throw new BadRequestException('paidAmount is required and must be between 0 and priceAmount');
@@ -156,6 +279,8 @@ export class OwnerBookingsService {
         async (tx) => {
           const created = await this.insertManualBooking(tx, {
             userId: user.id,
+            requestKey: dto.requestKey,
+            requestHash: dto.requestKey ? manualBookingHash(dto) : undefined,
             venueId: dto.venueId,
             courtId: dto.courtId,
             slotStart,
@@ -178,11 +303,16 @@ export class OwnerBookingsService {
               targetId: created.id,
               metadata: {
                 bookingId: created.id,
+                requestKey: dto.requestKey ?? null,
+                offlineReplay: Boolean(dto.offlineGrant),
                 venueId: dto.venueId,
                 code: created.code,
                 amount: dto.priceAmount,
                 currency: created.currency,
                 paymentStatus: dto.paymentStatus ?? 'unpaid',
+                // What was taken at the desk while booking: the trail must show it as money, not hide it in the price.
+                paid: dto.paymentStatus === 'paid' ? dto.priceAmount : dto.paymentStatus === 'partial' ? dto.paidAmount ?? 0 : 0,
+                paymentMethod: dto.paymentMethod ?? 'cash',
                 customer: dto.customerName?.trim() || null,
               } as Prisma.InputJsonValue,
             },
@@ -193,11 +323,15 @@ export class OwnerBookingsService {
       );
       return { ...(await this.toOwnerBookingDto(booking, user)), warnings };
     } catch (error) {
+      if (dto.requestKey) {
+        const replay = await this.manualReplay(user, dto);
+        if (replay) return replay;
+      }
       if (error instanceof ConflictException || error instanceof ApiException) throw error;
       if (isBookingSlotConflict(error)) {
         throw new ConflictException({ code: 'SLOT_ALREADY_HELD', message: 'Slot already held' });
       }
-      throw error;
+      rethrowConcurrentWrite(error);
     }
   }
 
@@ -210,6 +344,8 @@ export class OwnerBookingsService {
     tx: Prisma.TransactionClient,
     input: {
       userId: string;
+      requestKey?: string;
+      requestHash?: string;
       venueId: string;
       courtId: string;
       slotStart: Date;
@@ -247,6 +383,8 @@ export class OwnerBookingsService {
     const created = await tx.booking.create({
       data: {
         code,
+        manualRequestKey: input.requestKey,
+        manualRequestHash: input.requestHash,
         courtId: input.courtId,
         venueId: input.venueId,
         userId: input.userId,
@@ -525,18 +663,88 @@ export class OwnerBookingsService {
     return scopeCan(await loadStaffScope(this.prisma, user.id), 'shifts.review');
   }
 
-  async deleteManualBooking(user: AuthenticatedUser, bookingId: string) {
+  /**
+   * Cancels a manual booking. When money has already been received the caller must say what
+   * happens to it (`settlement.refundAmount`): hand all of it back, none of it (the venue keeps
+   * the deposit) or any amount in between. Nothing is silently kept or silently returned, and
+   * every refund is a negative `refunded` row so the drawer, the cashbook and the audit trail
+   * stay true. Venues differ — a padel club may refund a full day ahead, a billiards hall may
+   * keep a deposit — so the policy is the owner's call, shown to them, never assumed.
+   */
+  async deleteManualBooking(
+    user: AuthenticatedUser,
+    bookingId: string,
+    settlement?: { refundAmount?: number | 'all'; reason?: CancelReason },
+  ) {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {
       throw new ApiException(HttpStatus.FORBIDDEN, 'PLATFORM_BOOKING_LOCKED', 'Matchena bookings cannot be deleted');
     }
+    const canAll = await this.canManageEveryonesCash(user);
     const updated = await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.payment.findMany({
+        where: { bookingId, status: { in: COUNTED_PAYMENT_STATUSES } },
+        orderBy: { createdAt: 'asc' },
+      });
+      const { received } = netOf(rows);
+      // `all` = hand back whatever was received (undoing a booking seconds after making it).
+      const refundAmount = settlement?.refundAmount === 'all' ? Math.max(received, 0) : settlement?.refundAmount;
+      if (received > 0 && refundAmount === undefined) {
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'PAYMENT_DECISION_REQUIRED',
+          'This booking has money received: say how much to hand back (0 to keep it)',
+        );
+      }
+      if (refundAmount !== undefined && (!Number.isSafeInteger(refundAmount) || refundAmount < 0 || refundAmount > Math.max(received, 0))) {
+        throw new ApiException(HttpStatus.BAD_REQUEST, 'REFUND_EXCEEDS_RECEIVED', 'The refund cannot be more than the money received');
+      }
+      let handedBack = 0;
+      if (refundAmount && refundAmount > 0) {
+        // Walk the payments newest first so a partial refund comes out of the latest money.
+        const reversed = new Set(rows.filter((r) => r.reversesPaymentId).map((r) => r.reversesPaymentId as string));
+        const open = rows.filter((r) => r.amount > 0 && !reversed.has(r.id)).reverse();
+        // Un-tied earlier refunds (partial ones) are netted per method, not per payment.
+        const methodNet = new Map<string, number>();
+        for (const r of rows) methodNet.set(r.method, (methodNet.get(r.method) ?? 0) + r.amount);
+        let remaining = refundAmount;
+        for (const row of open) {
+          if (remaining <= 0) break;
+          const room = Math.min(row.amount, methodNet.get(row.method) ?? 0);
+          if (room <= 0) continue;
+          const take = Math.min(room, remaining);
+          if (!canAll && !(row.recordedByUserId === user.id && row.shiftId == null)) {
+            throw new ApiException(
+              HttpStatus.FORBIDDEN,
+              'PAYMENT_NOT_YOURS',
+              'You can only hand back money you recorded that is still in your open drawer',
+            );
+          }
+          await tx.payment.create({
+            data: {
+              bookingId,
+              amount: -take,
+              currency: row.currency,
+              method: row.method,
+              status: 'refunded',
+              // A whole payment taken back keeps the link (and can never be taken back twice).
+              ...(take === row.amount ? { reversesPaymentId: row.id } : {}),
+              recordedByUserId: row.shiftId == null ? row.recordedByUserId : user.id,
+            },
+          });
+          methodNet.set(row.method, (methodNet.get(row.method) ?? 0) - take);
+          remaining -= take;
+          handedBack += take;
+        }
+      }
+      const kept = Math.max(received - handedBack, 0);
       const row = await tx.booking.update({
         where: { id: bookingId },
         data: {
           status: 'cancelled',
           cancelledAt: new Date(),
           cancellationReason: 'deleted_by_owner',
+          paymentStatus: derivePaymentStatus(booking.totalAmount, kept),
         },
       });
       await this.ledger.syncBookingLedger(tx, bookingId, 'cancelled');
@@ -546,7 +754,17 @@ export class OwnerBookingsService {
           action: 'owner.booking.cancelled',
           targetType: 'booking',
           targetId: bookingId,
-          metadata: { bookingId, venueId: booking.venueId, code: booking.code, amount: booking.totalAmount, currency: booking.currency, customer: booking.guestName } as Prisma.InputJsonValue,
+          metadata: {
+            bookingId,
+            venueId: booking.venueId,
+            code: booking.code,
+            amount: booking.totalAmount,
+            currency: booking.currency,
+            customer: booking.guestName,
+            refunded: handedBack,
+            kept,
+            ...(settlement?.reason ? { reason: settlement.reason } : {}),
+          } as Prisma.InputJsonValue,
         },
       });
       return row;
@@ -937,7 +1155,16 @@ export class OwnerBookingsService {
     // The "what is coming" views are about real bookings: a cancelled one is found with its own filter.
     else if (scope === 'upcoming' || scope === 'today') where.status = { not: 'cancelled' };
     if (query.courtId) where.courtId = query.courtId;
-    if (query.paymentStatus) where.paymentStatus = query.paymentStatus as Booking['paymentStatus'];
+    if (query.paymentStatus === 'owing') {
+      // "Who still owes me": something unpaid or only partly paid, on a booking that still stands.
+      where.paymentStatus = { in: ['pending', 'partial'] };
+      if (!query.status) where.status = { in: ['confirmed', 'completed', 'held'] };
+    } else if (query.paymentStatus) {
+      if (!['pending', 'paid', 'failed', 'refunded', 'partial'].includes(query.paymentStatus)) {
+        throw new BadRequestException('Unknown payment status');
+      }
+      where.paymentStatus = query.paymentStatus as Booking['paymentStatus'];
+    }
     if (query.source === 'platform' || query.source === 'manual') {
       where.source = query.source;
     } else if (query.source && isPresetSourceKey(query.source)) {

@@ -309,6 +309,108 @@ describe('OwnerBookingsService', () => {
     await expect(service(prisma).deleteManualBooking(owner, 'p1')).rejects.toBeInstanceOf(ApiException);
   });
 
+  describe('cancelling a booking that already took money', () => {
+    const pay = (id: string, amount: number, method = 'cash', over: Record<string, unknown> = {}) => ({
+      id, amount, method, currency: 'EGP', status: 'paid', recordedByUserId: 'owner-1', shiftId: null, reversesPaymentId: null, createdAt: new Date(`2026-09-20T0${id.length}:00:00Z`), ...over,
+    });
+    function setup(rows: ReturnType<typeof pay>[]) {
+      const booking = bookingRow({ paymentStatus: 'partial', totalAmount: 400 });
+      const { prisma, tx } = makePrisma({ booking });
+      prisma.booking.findUnique.mockResolvedValue(booking);
+      tx.payment.findMany.mockResolvedValue(rows);
+      return { prisma, tx };
+    }
+
+    it('refuses to guess: money received means the owner must say what happens to it', async () => {
+      const { prisma, tx } = setup([pay('a', 250)]);
+      await expect(service(prisma).deleteManualBooking(owner, 'b1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'PAYMENT_DECISION_REQUIRED' }),
+      });
+      expect(tx.booking.update).not.toHaveBeenCalled();
+      expect(tx.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('a booking with no money received cancels without any decision', async () => {
+      const { prisma, tx } = setup([]);
+      await service(prisma).deleteManualBooking(owner, 'b1');
+      expect(tx.booking.update).toHaveBeenCalled();
+      expect(tx.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('hands everything back as a negative row tied to the payment, so the drawer and cashbook net out', async () => {
+      const { prisma, tx } = setup([pay('a', 250)]);
+      await service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 250, reason: 'customer_request' });
+      expect(tx.payment.create).toHaveBeenCalledTimes(1);
+      expect(tx.payment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ bookingId: 'b1', amount: -250, status: 'refunded', method: 'cash', reversesPaymentId: 'a', recordedByUserId: 'owner-1' }),
+      });
+      expect(tx.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'cancelled', paymentStatus: 'pending' }) }),
+      );
+      expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'owner.booking.cancelled', metadata: expect.objectContaining({ refunded: 250, kept: 0, reason: 'customer_request' }) }),
+      });
+    });
+
+    it('`all` hands back exactly what was received, however it was paid', async () => {
+      const { prisma, tx } = setup([pay('a', 50), pay('bb', 150, 'instapay')]);
+      await service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 'all' });
+      const amounts = tx.payment.create.mock.calls.map((c: [{ data: { amount: number; method: string } }]) => [c[0].data.method, c[0].data.amount]);
+      expect(amounts.sort()).toEqual([['cash', -50], ['instapay', -150]]);
+    });
+
+    it('keeping the deposit writes no refund and says so in the trail', async () => {
+      const { prisma, tx } = setup([pay('a', 250)]);
+      await service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 0 });
+      expect(tx.payment.create).not.toHaveBeenCalled();
+      expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ metadata: expect.objectContaining({ refunded: 0, kept: 250 }) }),
+      });
+    });
+
+    it('a partial refund comes out of the latest money and keeps the rest', async () => {
+      const { prisma, tx } = setup([pay('a', 100), pay('bb', 150, 'instapay')]);
+      await service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 160 });
+      const rows = tx.payment.create.mock.calls.map((c: [{ data: Record<string, unknown> }]) => c[0].data);
+      expect(rows).toEqual([
+        expect.objectContaining({ method: 'instapay', amount: -150, reversesPaymentId: 'bb' }),
+        // Only part of this payment goes back, so it is not a whole reversal and carries no link.
+        expect.not.objectContaining({ reversesPaymentId: expect.anything() }),
+      ]);
+      expect(rows[1]).toEqual(expect.objectContaining({ method: 'cash', amount: -10 }));
+      expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ metadata: expect.objectContaining({ refunded: 160, kept: 90 }) }),
+      });
+    });
+
+    it('never refunds more than was received', async () => {
+      const { prisma, tx } = setup([pay('a', 250)]);
+      await expect(service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 251 })).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'REFUND_EXCEEDS_RECEIVED' }),
+      });
+      expect(tx.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('does not hand back money that an earlier refund already returned', async () => {
+      const { prisma, tx } = setup([pay('a', 250), { ...pay('r', -100, 'cash', { status: 'refunded', reversesPaymentId: null }) }]);
+      await expect(service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 200 })).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'REFUND_EXCEEDS_RECEIVED' }),
+      });
+      await service(prisma).deleteManualBooking(owner, 'b1', { refundAmount: 150 });
+      expect(tx.payment.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amount: -150 }) });
+    });
+
+    it('staff cannot hand back cash from a drawer that was already closed by someone else', async () => {
+      const { prisma, tx } = setup([pay('a', 250, 'cash', { recordedByUserId: 'staff-9', shiftId: 'shift-1' })]);
+      const scoped = { ...prisma, staffMember: { findUnique: jest.fn().mockResolvedValue({ id: 's', ownerId: owner.id, venueIds: ['v1'], permissions: ['bookings.view', 'bookings.edit', 'payments.record'] }) } };
+      const staff: AuthenticatedUser = { ...owner, id: 'staff-1', roles: ['staff'] };
+      await expect(service(scoped).deleteManualBooking(staff, 'b1', { refundAmount: 250 })).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'PAYMENT_NOT_YOURS' }),
+      });
+      expect(tx.booking.update).not.toHaveBeenCalled();
+    });
+  });
+
   it('restores a cancelled manual booking when the slot is free', async () => {
     const cancelled = bookingRow({ status: 'cancelled' });
     const { prisma } = makePrisma({ booking: cancelled });
@@ -645,5 +747,22 @@ describe('the bookings list: what is coming first', () => {
     const args = findMany.mock.calls[0][0];
     expect(args.where.slotEnd).toBeUndefined();
     expect(args.orderBy).toEqual([{ slotStart: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('"still owes" means unpaid or partly paid on a booking that still stands', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { paymentStatus: 'owing' });
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.paymentStatus).toEqual({ in: ['pending', 'partial'] });
+    expect(where.status).toEqual({ in: ['confirmed', 'completed', 'held'] });
+  });
+
+  it('an explicit status wins over the "still owes" default, and an unknown payment status is refused', async () => {
+    const { svc, findMany } = build();
+    await ask(svc, { paymentStatus: 'owing', status: 'no_show' });
+    expect(findMany.mock.calls[0][0].where.status).toBe('no_show');
+    await expect(ask(svc, { paymentStatus: 'bogus' })).rejects.toThrow('Unknown payment status');
+    await ask(svc, { paymentStatus: 'paid' });
+    expect(findMany.mock.calls[1][0].where.paymentStatus).toBe('paid');
   });
 });

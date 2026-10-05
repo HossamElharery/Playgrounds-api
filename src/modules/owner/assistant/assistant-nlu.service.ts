@@ -9,6 +9,8 @@ export interface NluCourtRef {
   name: string;
   /** Console type, room tier, sport, format — what the owner might call it instead of its name. */
   details?: string;
+  /** Arabic sport name: tells apart two units that share a name («Table 1» for billiards and for ping-pong). */
+  sportAr?: string;
 }
 
 /** One earlier turn of the conversation, oldest first. */

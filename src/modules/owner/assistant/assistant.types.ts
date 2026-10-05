@@ -120,7 +120,7 @@ export type AssistantAction =
       amount: number;
       method?: string;
     }
-  | { kind: 'cancel_booking'; bookingId: string; reason?: string }
+  | { kind: 'cancel_booking'; bookingId: string; reason?: string; refundAmount?: number }
   | {
       kind: 'update_booking';
       bookingId: string;

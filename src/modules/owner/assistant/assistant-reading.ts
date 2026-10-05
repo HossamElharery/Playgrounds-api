@@ -233,3 +233,19 @@ export function completeReading(
   }
   return r;
 }
+
+/**
+ * What the owner said about money already received when cancelling a booking: hand it back,
+ * keep it, or nothing (or both at once) — in which case the assistant must ask instead of guessing.
+ */
+export function refundIntent(text: string): 'refund' | 'keep' | 'ask' {
+  let t = normalizeName(text);
+  // «مفيش استرداد» / «no refund» contain the word refund but mean the opposite.
+  const negated = /(مفيش|بدون|من غير|مش هيبقي|مش هرجع|لا)\s*(استرداد|استرجاع|رد|رجوع)|\bno refund\b|\bnon[- ]?refundable\b/;
+  const keptByNegation = negated.test(t);
+  t = t.replace(new RegExp(negated.source, 'g'), ' ');
+  const keep = keptByNegation || /احتفظ|خليه|خليها|عربون|مش هرجع|keep/.test(t);
+  const refund = /رجع|ارجع|استرد|استرجاع|رد الفلوس|رد المبلغ|refund|give back|return the/.test(t);
+  if (keep === refund) return 'ask';
+  return refund ? 'refund' : 'keep';
+}

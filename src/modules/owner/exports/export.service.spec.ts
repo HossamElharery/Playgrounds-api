@@ -78,7 +78,7 @@ describe('ExportService', () => {
         (rows['of which: kept from cancelled bookings'] as number),
     ).toBe(700);
     expect(sheets.map((s) => s.name)).toEqual([
-      'Summary', 'Bookings', 'Money received', 'Daily', 'By court', 'By source', 'Top customers', 'Expenses', 'Matchena account', 'Discounts',
+      'Summary', 'Bookings', 'Money received', 'Daily', 'By unit', 'By source', 'Top customers', 'Expenses', 'Matchena account', 'Discounts',
     ]);
   });
 

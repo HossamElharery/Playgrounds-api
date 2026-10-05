@@ -16,7 +16,7 @@ import {
   type SubscriptionState,
 } from './subscription-state.util';
 
-export const DEFAULT_LIST_PRICE = 300_000; // 3,000 EGP in piasters
+export const DEFAULT_LIST_PRICE = 100_000; // 1,000 EGP in piasters
 export const DEFAULT_TRIAL_DAYS = 30;
 
 /** Local yyyy-mm-dd in a time zone. */

@@ -29,7 +29,9 @@ import {
   sanitizeDraft,
   todayIn,
   courtDetails,
+  refundIntent,
 } from './assistant-reading';
+import { listUnits } from './assistant-courts';
 import { findAllOwed, findOwed, type OwedRow } from './assistant-attention';
 import {
   bi,
@@ -50,6 +52,7 @@ import { loadStaffScope, scopeCan } from '../../../common/access/staff-scope';
 import type { PermissionKey } from '../../../common/access/permissions';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import { quoteDurationPrice } from '../../../common/utils/price-quote.util';
+import { unitWords } from '../../../common/utils/unit-noun.util';
 import {
   zonedHhmm,
   zonedWallTimeToUtc,
@@ -155,7 +158,7 @@ export class OwnerAssistantService {
         ownerName: user.name,
         venueId,
         ownerText: text,
-        replyText: plan.needsConfirm && reply ? `${reply}\n(بانتظار تأكيد صاحب الملعب)` : reply,
+        replyText: plan.needsConfirm && reply ? `${reply}\n(بانتظار تأكيد صاحب المنشأة)` : reply,
         intent: plan.intent,
         outcome,
         confidence: plan.confidence,
@@ -235,6 +238,7 @@ export class OwnerAssistantService {
       id: c.id,
       name: c.name,
       details: courtDetails(c),
+      sportAr: c.sport?.nameAr,
     }));
 
     const known: NluKnownBooking[] = openBalances.map((b) => ({
@@ -266,7 +270,7 @@ export class OwnerAssistantService {
         draft,
       });
     }
-    if (reading.intent === 'help') return this.blank('help', this.helpText());
+    if (reading.intent === 'help') return this.blank('help', await this.helpText(venueId));
 
     const currency = venue.currency;
     try {
@@ -276,7 +280,7 @@ export class OwnerAssistantService {
         case 'pay':
           return await this.planPay(user, venueId, tz, currency, reading);
         case 'cancel':
-          return await this.planCancel(user, venueId, tz, currency, reading);
+          return await this.planCancel(user, venueId, tz, currency, reading, clean);
         case 'move':
           return await this.planMove(user, venueId, tz, currency, reading, courts);
         case 'agenda':
@@ -331,15 +335,16 @@ export class OwnerAssistantService {
     }
     const courts = await this.prisma.court.findMany({
       where: { venueId },
-      include: { pricingRules: true },
+      include: { pricingRules: true, sport: { select: { nameAr: true } } },
       orderBy: { name: 'asc' },
     });
     if (!courts.length) {
       return this.blank(
         'book',
-        bi('المنشأة دي لسه مفيهاش ملاعب.', 'This venue has no courts yet.'),
+        bi('المنشأة دي لسه مفيهاش وحدات تتحجز. ضيف الأول من «المنشآت».', 'This venue has nothing to book yet. Add a unit under “Venues” first.'),
       );
     }
+    const words = await this.unitWordsFor(venueId);
     const court = r.courtIds.length
       ? courts.find((c) => c.id === r.courtIds[0])
       : courts.length === 1
@@ -349,8 +354,8 @@ export class OwnerAssistantService {
       return this.blank(
         'book',
         bi(
-          `أي ملعب بالظبط؟ عندك: ${courts.map((c) => c.name).join('، ')}.`,
-          `Which one exactly? You have: ${courts.map((c) => c.name).join(', ')}.`,
+          `${words.ar.which} بالظبط؟ عندك: ${listUnits(courts.map((c) => ({ name: c.name, sportAr: c.sport?.nameAr })))}.`,
+          `Which ${words.en.one} exactly? You have: ${listUnits(courts.map((c) => ({ name: c.name, sportAr: c.sport?.nameAr })), ', ')}.`,
         ),
         { confidence: r.confidence, draft: r },
       );
@@ -721,6 +726,7 @@ export class OwnerAssistantService {
     tz: string,
     currency: string,
     r: AssistantReading,
+    text = '',
   ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.edit')))
       return this.denied('cancel');
@@ -731,16 +737,40 @@ export class OwnerAssistantService {
     if ('issue' in picked) return picked.plan;
     const booking = picked.booking;
 
+    // Money already received is never kept or returned by guesswork: the owner says which.
+    const paid = booking.paidAmount;
+    let refundAmount: number | undefined;
+    if (paid > 0) {
+      const intent = refundIntent(text);
+      if (intent === 'ask') {
+        return this.blank(
+          'cancel',
+          bi(
+            `الحجز ده اتدفع فيه ${fmt(paid, currency).ar}. أرجّع الفلوس للعميل ولا تحتفظ بيها؟ ` +
+              'قول «الغي الحجز ورجّع الفلوس» أو «الغي الحجز واحتفظ بالعربون».',
+            `${fmt(paid, currency).en} was already paid on this booking. Hand it back, or keep it? ` +
+              'Say "cancel and refund" or "cancel and keep the deposit".',
+          ),
+          { bookings: [booking], confidence: r.confidence },
+        );
+      }
+      refundAmount = intent === 'refund' ? paid : 0;
+    }
+
+    const when = zonedHhmm(new Date(booking.startsAt), tz);
+    const who = booking.customerName ?? booking.code;
     const summary = bi(
-      `إلغاء حجز ${booking.customerName ?? booking.code} في ${booking.courtName} ` +
-        `${zonedHhmm(new Date(booking.startsAt), tz)}` +
-        (booking.paidAmount > 0
-          ? ` — كان مدفوع فيه ${fmt(booking.paidAmount, currency).ar}، هتتراجع في الحسابات.`
+      `إلغاء حجز ${who} في ${booking.courtName} ${when}` +
+        (paid > 0
+          ? refundAmount
+            ? ` — هرجّع ${fmt(paid, currency).ar} للعميل.`
+            : ` — هتحتفظ بـ ${fmt(paid, currency).ar} كعربون.`
           : '.'),
-      `Cancel ${booking.customerName ?? booking.code} on ${booking.courtName} ` +
-        `${zonedHhmm(new Date(booking.startsAt), tz)}` +
-        (booking.paidAmount > 0
-          ? ` — ${fmt(booking.paidAmount, currency).en} was already paid; the books will reflect that.`
+      `Cancel ${who} on ${booking.courtName} ${when}` +
+        (paid > 0
+          ? refundAmount
+            ? ` — ${fmt(paid, currency).en} will be handed back.`
+            : ` — you keep the ${fmt(paid, currency).en} deposit.`
           : '.'),
     );
 
@@ -755,6 +785,7 @@ export class OwnerAssistantService {
           kind: 'cancel_booking',
           bookingId: booking.id,
           reason: r.reason || undefined,
+          refundAmount,
         },
       ],
       schedule: null,
@@ -781,10 +812,25 @@ export class OwnerAssistantService {
     const label = this.rangeLabel(range);
     const lines: Bi[] = [
       bi(
-        `${label.ar}: ${t.bookings} حجز، حصّلت ${fmt(t.collectedRevenue, currency).ar}.`,
-        `${label.en}: ${t.bookings} bookings, ${fmt(t.collectedRevenue, currency).en} collected.`,
+        `${label.ar}: ${t.bookings} حجز، إيراد ألعابها ${fmt(t.collectedRevenue, currency).ar}.`,
+        `${label.en}: ${t.bookings} bookings, ${fmt(t.collectedRevenue, currency).en} of game revenue.`,
       ),
     ];
+    // The drawer counts money by the day it was received, which is not always the day of the game.
+    const cashbook = s.cashbook;
+    if (cashbook && cashbook.received !== t.collectedRevenue) {
+      const extra: Bi[] = [];
+      if (cashbook.advance > 0)
+        extra.push(bi(`${fmt(cashbook.advance, currency).ar} عربون لحجوزات جاية`, `${fmt(cashbook.advance, currency).en} deposits for later games`));
+      if (cashbook.late > 0)
+        extra.push(bi(`${fmt(cashbook.late, currency).ar} لحجوزات فاتت`, `${fmt(cashbook.late, currency).en} for earlier games`));
+      lines.push(
+        bi(
+          `اتقبض فعليًا ${fmt(cashbook.received, currency).ar}${extra.length ? ` (منها ${extra.map((e) => e.ar).join(' و')})` : ''}.`,
+          `Actually received: ${fmt(cashbook.received, currency).en}${extra.length ? ` (including ${extra.map((e) => e.en).join(' and ')})` : ''}.`,
+        ),
+      );
+    }
     if (t.outstanding > 0) {
       lines.push(
         bi(
@@ -803,8 +849,8 @@ export class OwnerAssistantService {
     }
     lines.push(
       bi(
-        `الصافي بعد عمولة ماتشنا والمصاريف: ${fmt(t.netProfit, currency).ar}.`,
-        `Net after Matchena's commission and expenses: ${fmt(t.netProfit, currency).en}.`,
+        `صافي ربحك: ${fmt(t.netProfit, currency).ar}.`,
+        `Your net profit: ${fmt(t.netProfit, currency).en}.`,
       ),
     );
     return this.blank('money', joinBi(lines, '\n'), {
@@ -947,11 +993,12 @@ export class OwnerAssistantService {
     if (!courtIds.length && !r.allCourts && courts.length === 1)
       courtIds = [courts[0].id];
     if (!courtIds.length && !r.allCourts) {
+      const words = await this.unitWordsFor(venueId);
       return this.blank(
         r.intent,
         bi(
-          `أي ملعب بالظبط؟ عندك: ${courts.map((c) => c.name).join('، ')} — أو قول «كله».`,
-          `Which one? You have: ${courts.map((c) => c.name).join(', ')} — or say "all".`,
+          `${words.ar.which} بالظبط؟ عندك: ${listUnits(courts)} — أو قول «كله».`,
+          `Which ${words.en.one}? You have: ${listUnits(courts, ', ')} — or say "all".`,
         ),
         { confidence: r.confidence, draft: r },
       );
@@ -1051,7 +1098,8 @@ export class OwnerAssistantService {
       },
       include: {
         court: { select: { name: true } },
-        payments: { where: { status: 'paid' }, select: { amount: true } },
+        // Net of refunds: money handed back is not money still held.
+        payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } },
       },
       orderBy: { slotStart: 'asc' },
       take: 40,
@@ -1128,11 +1176,12 @@ export class OwnerAssistantService {
       r.durationMinutes === null &&
       r.totalAmount === null;
     if (nothingToChange) {
+      const words = await this.unitWordsFor(venueId);
       return this.blank(
         'move',
         bi(
-          `تمام، حجز ${who}. تعدّل فيه إيه — الوقت، الملعب، المدة ولا السعر؟`,
-          `OK, ${who}'s booking. What should change — time, court, length or price?`,
+          `تمام، حجز ${who}. تعدّل فيه إيه — الوقت، ${words.ar.one === 'وحدة' ? 'المكان' : 'ال' + words.ar.one}، المدة ولا السعر؟`,
+          `OK, ${who}'s booking. What should change — time, ${words.en.one}, length or price?`,
         ),
         { confidence: r.confidence, draft: r, bookings: [booking] },
       );
@@ -1520,7 +1569,8 @@ export class OwnerAssistantService {
     const include = {
       court: { select: { name: true } },
       payments: {
-        where: { status: 'paid' as const },
+        // Net of refunds: a payment taken back must not count as money still received.
+        where: { status: { in: ['paid' as const, 'refunded' as const] } },
         select: { amount: true },
       },
     };
@@ -1686,22 +1736,41 @@ export class OwnerAssistantService {
     return warnings.length ? joinBi([fallback, ...warnings], '\n') : fallback;
   }
 
-  private helpText(): Bi {
+  /** The unit noun this venue's own units go by, from what they really are. */
+  private async unitWordsFor(venueId: string) {
+    const rows = await this.prisma.court.findMany({
+      where: { venueId },
+      select: { sport: { select: { activityKind: true } } },
+    });
+    return unitWords(rows.map((r) => r.sport?.activityKind));
+  }
+
+  /** Examples use this venue's own units, so a billiards club never reads about padel courts. */
+  private async helpText(venueId: string): Promise<Bi> {
+    const rows = await this.prisma.court.findMany({
+      where: { venueId },
+      select: { name: true },
+      orderBy: { name: 'asc' },
+      take: 2,
+    });
+    const w = await this.unitWordsFor(venueId);
+    const first = rows[0]?.name ?? `${w.ar.one} 1`;
+    const second = rows[1]?.name ?? rows[0]?.name ?? `${w.ar.one} 2`;
     return bi(
       [
         'أقدر أساعدك في كل اللي بتعمله على الشاشة. اطلب بالعامية:',
-        '• حجز: «احجز PS5 Room 1 بكرة 9 الصبح ساعتين لمحمد بـ 400 دفع 200»',
+        `• حجز: «احجز ${first} بكرة 9 الصبح ساعتين لمحمد بـ 400 دفع 200»`,
         '• تحصيل: «محمد دفع الباقي» — «مين عليه فلوس؟»',
         '• تعديل: «انقل حجز محمد للساعة 8» — «الغي حجز أحمد»',
-        '• الجدول: «إيه حجوزات النهاردة؟» — «اقفل جهاز 2 من 5 لـ 7»',
+        `• الجدول: «إيه حجوزات النهاردة؟» — «اقفل ${second} من 5 لـ 7»`,
         '• الحسابات: «عملت كام النهاردة؟» — «سجل 500 جنيه كهربا»',
       ].join('\n'),
       [
         'I can do anything you can do on this screen. Just ask:',
-        '• Book: "book PS5 Room 1 tomorrow 9am for two hours for Mohamed, 400, paid 200"',
+        `• Book: "book ${first} tomorrow 9am for two hours for Mohamed, 400, paid 200"`,
         '• Collect: "Mohamed paid the rest" — "who still owes me?"',
         '• Change: "move Mohamed to 8pm" — "cancel Ahmed\'s booking"',
-        '• Schedule: "what is booked today?" — "close station 2 from 5 to 7"',
+        `• Schedule: "what is booked today?" — "close ${second} from 5 to 7"`,
         '• Money: "how much did I make today?" — "record a 500 electricity expense"',
       ].join('\n'),
     );

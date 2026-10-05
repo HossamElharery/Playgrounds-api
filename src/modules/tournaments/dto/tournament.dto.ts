@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  MaxLength,
   IsDateString,
   IsIn,
   IsInt,
@@ -22,11 +23,17 @@ export class CreateTournamentDto {
   @IsString()
   activityId!: string;
 
+  @ApiPropertyOptional({ description: 'English name; falls back to the Arabic one' })
+  @IsOptional()
   @IsString()
-  nameEn!: string;
+  @MaxLength(80)
+  nameEn?: string;
 
+  @ApiPropertyOptional({ description: 'Arabic name; falls back to the English one. At least one name is required.' })
+  @IsOptional()
   @IsString()
-  nameAr!: string;
+  @MaxLength(80)
+  nameAr?: string;
 
   @ApiPropertyOptional({ description: 'Minor currency units' })
   @IsOptional()

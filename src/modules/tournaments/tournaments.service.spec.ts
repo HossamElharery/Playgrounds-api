@@ -1,5 +1,8 @@
 import { TournamentsService } from './tournaments.service';
 
+// Who may run tournaments at a venue is covered by the access tests; here access is granted.
+jest.mock('../../common/access/venue-access', () => ({ assertVenueStaffAccess: jest.fn().mockResolvedValue(undefined) }));
+
 describe('Tournament entry fee payment', () => {
   const openTournament = {
     id: 'tour', status: 'open', maxParticipants: 8,
@@ -60,5 +63,44 @@ describe('Tournament entry fee payment', () => {
     prisma.tournament.findUnique.mockResolvedValue({ ...openTournament, status: 'in-progress' });
     await expect(service.withdraw('u1', 'tour')).rejects.toThrow('bracket has been generated');
     expect(prisma.tournamentParticipant.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('Creating a tournament needs one name, not two', () => {
+  const owner = { id: 'o1', roles: ['owner'] } as never;
+  const base = {
+    venueId: 'v1', activityId: 'sport-padel', maxParticipants: 8 as const,
+    registrationDeadline: '2030-01-01T18:00:00.000Z', startsAt: '2030-01-02T19:00:00.000Z',
+  };
+  function build() {
+    const prisma = {
+      sportCategory: { findFirst: jest.fn().mockResolvedValue({ id: 'sport-padel' }) },
+      gameCatalogEntry: { findFirst: jest.fn().mockResolvedValue(null) },
+      venue: { findUnique: jest.fn().mockResolvedValue({ currency: 'AED', ownerId: 'o1' }) },
+      tournament: { create: jest.fn().mockResolvedValue({ id: 't1' }) },
+    };
+    const service = new TournamentsService(prisma as never, {} as never, {} as never, {} as never, {} as never);
+    // Venue and activity rules are covered elsewhere; this pins only the names and the currency.
+    jest.spyOn(service as never, 'resolveActivity').mockResolvedValue(undefined as never);
+    return { service, prisma };
+  }
+
+  it('an Arabic-only name is used for both languages', async () => {
+    const { service, prisma } = build();
+    await service.create(owner, { ...base, nameAr: '  كأس البادل  ' } as never);
+    expect(prisma.tournament.create).toHaveBeenCalledWith({ data: expect.objectContaining({ nameAr: 'كأس البادل', nameEn: 'كأس البادل' }) });
+  });
+
+  it('an English-only name fills the Arabic one', async () => {
+    const { service, prisma } = build();
+    await service.create(owner, { ...base, nameEn: 'Padel Cup' } as never);
+    expect(prisma.tournament.create).toHaveBeenCalledWith({ data: expect.objectContaining({ nameAr: 'Padel Cup', nameEn: 'Padel Cup' }) });
+  });
+
+  it('no name at all is refused, and the fee is charged in the venue currency', async () => {
+    const { service, prisma } = build();
+    await expect(service.create(owner, { ...base, nameAr: '  ' } as never)).rejects.toThrow('A tournament needs a name');
+    await service.create(owner, { ...base, nameAr: 'كأس', entryFeeAmount: 5000 } as never);
+    expect(prisma.tournament.create).toHaveBeenCalledWith({ data: expect.objectContaining({ entryFeeCurrency: 'AED' }) });
   });
 });

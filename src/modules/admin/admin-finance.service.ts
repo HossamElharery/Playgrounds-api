@@ -130,7 +130,7 @@ export class AdminFinanceService {
     await notifyFinance(this.notifications, {
       userId: venue.ownerId,
       titleEn: `Pay-at-venue setting is now ${dto.paymentMode === 'online' ? 'online' : 'at the venue'}`,
-      titleAr: dto.paymentMode === 'online' ? 'الدفع بقى أونلاين' : 'الدفع في الملعب',
+      titleAr: dto.paymentMode === 'online' ? 'الدفع بقى أونلاين' : 'الدفع في المكان',
       bodyEn: 'New Matchena bookings use the new mode. Existing bookings keep their original mode.',
       bodyAr: 'الحجوزات الجديدة تتبع الوضع الجديد. الحجوزات الحالية تفضل زي ما هي.',
       payload: { venueId, paymentMode: dto.paymentMode },

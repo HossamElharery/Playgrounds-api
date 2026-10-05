@@ -67,7 +67,7 @@ export class OwnerAssistantExecutorService {
         kind: 'action',
         intent: kinds,
         outcome: 'applied',
-        text: `نُفِّذ بعد تأكيد صاحب الملعب:\n${result.reply.ar}`,
+        text: `نُفِّذ بعد تأكيد صاحب المنشأة:\n${result.reply.ar}`,
         meta: { actions },
       });
       return result;
@@ -238,6 +238,7 @@ export class OwnerAssistantExecutorService {
             const booking = await this.bookings.deleteManualBooking(
               user,
               action.bookingId,
+              { refundAmount: action.refundAmount },
             );
             done.push(booking.id);
             undo.push({ op: 'restore_booking', bookingId: booking.id });
@@ -421,7 +422,7 @@ export class OwnerAssistantExecutorService {
         venueId,
         kind: 'undo',
         outcome: result.ok ? 'undone' : 'failed',
-        text: `تراجع صاحب الملعب عن آخر تنفيذ:\n${result.reply.ar}`,
+        text: `تراجع صاحب المنشأة عن آخر تنفيذ:\n${result.reply.ar}`,
       });
       return result;
     } catch (err) {
@@ -504,7 +505,8 @@ export class OwnerAssistantExecutorService {
   private async apply(user: AuthenticatedUser, op: UndoOp): Promise<Bi> {
     switch (op.op) {
       case 'void_booking':
-        await this.bookings.deleteManualBooking(user, op.bookingId);
+        // Undoing a booking the assistant just recorded takes back whatever it collected with it.
+        await this.bookings.deleteManualBooking(user, op.bookingId, { refundAmount: 'all' });
         return bi(
           'اتلغى الحجز اللي سجلته ↩️',
           'The booking I recorded was cancelled ↩️',

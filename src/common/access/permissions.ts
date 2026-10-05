@@ -88,8 +88,8 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
     group: 'schedule',
     labelAr: 'يقفل مواعيد ويستخدم المساعد',
     labelEn: 'Close slots & use the assistant',
-    hintAr: 'قفل ملعب لفترة (صيانة/خاص) ومساعد الجدول.',
-    hintEn: 'Block a court for maintenance or private use; schedule assistant.',
+    hintAr: 'قفل ملعب أو جهاز أو ترابيزة لفترة (صيانة/خاص) ومساعد الجدول.',
+    hintEn: 'Block a court, station or table for maintenance or private use; schedule assistant.',
     requires: ['bookings.view'],
   },
   {

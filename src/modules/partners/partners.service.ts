@@ -945,7 +945,7 @@ export class PartnersService {
       PartnerDecisionDto['action'],
       { en: string; ar: string }
     > = {
-      approve: { en: 'Your venue was approved', ar: 'تمت الموافقة على ملعبك' },
+      approve: { en: 'Your venue was approved', ar: 'تمت الموافقة على منشأتك' },
       reject: { en: 'Your application was rejected', ar: 'تم رفض طلبك' },
       request_changes: {
         en: 'Changes requested on your application',
@@ -967,7 +967,7 @@ export class PartnersService {
   private namesFrom(payload: PartnerApplicationPayload) {
     return {
       publicNameEn: payload.publicNameEn?.trim() || 'Untitled venue',
-      publicNameAr: payload.publicNameAr?.trim() || 'ملعب بدون اسم',
+      publicNameAr: payload.publicNameAr?.trim() || 'منشأة بدون اسم',
     };
   }
 

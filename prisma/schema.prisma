@@ -743,8 +743,25 @@ enum SettlementStatus {
   rejected
 }
 
+model OwnerOfflineGrant {
+  id          String   @id @default(uuid())
+  tokenHash   String   @unique
+  userId      String
+  venueId     String
+  deviceId    String
+  cashAllowed Boolean
+  issuedAt    DateTime @default(now())
+  expiresAt   DateTime
+  replayUntil DateTime
+  horizonEnd  DateTime
+
+  @@index([userId, venueId])
+}
+
 model Booking {
   id                  String                  @id @default(uuid())
+  manualRequestKey    String?                 @unique
+  manualRequestHash   String?
   code                String                  @unique // human-friendly booking code
   courtId             String
   court               Court                   @relation(fields: [courtId], references: [id])
@@ -2569,7 +2586,7 @@ model VenueSubscription {
   venue             Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
   planKey           String   @default("pro")
   /// Public list price (minor units) — shown struck through to the owner.
-  listPriceAmount   Int      @default(300000)
+  listPriceAmount   Int      @default(100000)
   /// What was actually agreed. Admin-only, never sent to the owner.
   agreedPriceAmount Int?
   currency          String   @default("EGP")

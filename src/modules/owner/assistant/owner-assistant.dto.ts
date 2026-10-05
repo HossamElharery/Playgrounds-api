@@ -179,6 +179,14 @@ export class AssistantActionDto {
   @Max(100_000_000)
   amount?: number;
 
+  @ApiPropertyOptional({ description: 'Money handed back when cancelling a paid booking (minor units; 0 keeps it).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  refundAmount?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

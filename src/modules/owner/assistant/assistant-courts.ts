@@ -109,3 +109,15 @@ export function resolveCourtFromText(
   // Two courts scoring the same means the sentence did not say which.
   return best && !tie ? best.id : null;
 }
+
+/**
+ * The venue's units as one readable list. Two units can share a name across sports («Table 1» for
+ * billiards and for ping-pong): then each is followed by its sport so the owner can answer.
+ */
+export function listUnits(units: { name: string; sportAr?: string | null }[], separator = '، '): string {
+  const seen = new Map<string, number>();
+  for (const u of units) seen.set(u.name, (seen.get(u.name) ?? 0) + 1);
+  return units
+    .map((u) => ((seen.get(u.name) ?? 0) > 1 && u.sportAr ? `${u.name} (${u.sportAr})` : u.name))
+    .join(separator);
+}

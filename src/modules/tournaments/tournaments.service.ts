@@ -121,6 +121,10 @@ export class TournamentsService {
         'registrationDeadline must be before startsAt',
       );
     }
+    // One name is enough: the other language reuses it.
+    const nameAr = dto.nameAr?.trim() || dto.nameEn?.trim();
+    const nameEn = dto.nameEn?.trim() || nameAr;
+    if (!nameAr || !nameEn) throw new BadRequestException('A tournament needs a name');
     // A venue's tournament charges in the venue's currency; a platform-wide one defaults to EGP.
     const venueCurrency = dto.venueId
       ? (await this.prisma.venue.findUnique({ where: { id: dto.venueId }, select: { currency: true } }))?.currency
@@ -129,8 +133,8 @@ export class TournamentsService {
       data: {
         venueId: dto.venueId,
         activityId: dto.activityId,
-        nameEn: dto.nameEn,
-        nameAr: dto.nameAr,
+        nameEn,
+        nameAr,
         entryFeeAmount: dto.entryFeeAmount,
         entryFeeCurrency:
           venueCurrency ?? dto.entryFeeCurrency ?? (dto.entryFeeAmount ? 'EGP' : undefined),

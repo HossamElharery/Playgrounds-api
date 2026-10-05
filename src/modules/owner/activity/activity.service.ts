@@ -41,6 +41,19 @@ const PAGE = 40;
 
 type Meta = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+
+/** The words for each expense category, so the trail never shows a raw key like "electricity". */
+const EXPENSE_WORDS: Record<string, Bi> = {
+  electricity: bi('كهرباء', 'electricity'),
+  water: bi('مياه', 'water'),
+  rent: bi('إيجار', 'rent'),
+  salaries: bi('رواتب', 'salaries'),
+  maintenance: bi('صيانة', 'maintenance'),
+  marketing: bi('تسويق', 'marketing'),
+  supplies: bi('مشتريات', 'supplies'),
+  purchases: bi('مشتريات', 'purchases'),
+  other: bi('أخرى', 'other'),
+};
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
 /** Reads each field of `changed` ({ field: [before, after] }) as a short bilingual phrase. Pure. */
@@ -53,7 +66,7 @@ export function describeChanges(changed: Record<string, [unknown, unknown]> | un
     } else if (field === 'slotStart') {
       out.push(bi('الميعاد', 'the time'));
     } else if (field === 'courtId') {
-      out.push(bi('الملعب', 'the court'));
+      out.push(bi('الوحدة', 'the unit'));
     } else if (field === 'guestName' || field === 'guestPhone') {
       out.push(bi('بيانات العميل', 'the customer details'));
     } else if (field === 'paymentMethod') {
@@ -83,8 +96,8 @@ export function describeActivity(
         kind: 'booking',
         text: (who) =>
           bi(
-            `${who.ar} سجّل حجز${cust ? ` لـ ${cust}` : ''} بـ ${money(m.amount).ar}${code ? ` (${code})` : ''}`,
-            `${who.en} booked${cust ? ` for ${cust}` : ''} at ${money(m.amount).en}${code ? ` (${code})` : ''}`,
+            `${who.ar} سجّل حجز${cust ? ` لـ ${cust}` : ''} بـ ${money(m.amount).ar}${code ? ` (${code})` : ''}${num(m.paid) > 0 ? ` وقبض ${money(m.paid).ar}` : ''}`,
+            `${who.en} booked${cust ? ` for ${cust}` : ''} at ${money(m.amount).en}${code ? ` (${code})` : ''}${num(m.paid) > 0 ? ` and took ${money(m.paid).en}` : ''}`,
           ),
       };
     }
@@ -102,7 +115,16 @@ export function describeActivity(
     }
     case 'owner.booking.cancelled': {
       const r = ref('حجز', 'booking');
-      return { kind: 'booking', text: (who) => bi(`${who.ar} لغى ${r.ar}`, `${who.en} cancelled ${r.en}`) };
+      const gave = num(m.refunded);
+      const kept = num(m.kept);
+      const arMoney = gave > 0 ? ` ورجّع ${money(gave).ar}` : '';
+      const enMoney = gave > 0 ? ` and handed back ${money(gave).en}` : '';
+      const arKept = kept > 0 ? `${gave > 0 ? '، و' : ' و'}احتفظ بـ ${money(kept).ar}` : '';
+      const enKept = kept > 0 ? `${gave > 0 ? ', ' : ' and '}kept ${money(kept).en}` : '';
+      return {
+        kind: 'booking',
+        text: (who) => bi(`${who.ar} لغى ${r.ar}${arMoney}${arKept}`, `${who.en} cancelled ${r.en}${enMoney}${enKept}`),
+      };
     }
     case 'owner.booking.restored': {
       const r = ref('حجز', 'booking');
@@ -162,13 +184,16 @@ export function describeActivity(
     case 'owner.shift.reviewed':
       return { kind: 'cash', text: (who) => bi(`${who.ar} راجع وردية`, `${who.en} reviewed a shift`) };
     case 'owner.expense.recorded': {
-      const label = str(m.categoryLabel) ?? str(m.category) ?? '';
+      const key = str(m.category) ?? '';
+      const words = EXPENSE_WORDS[key];
+      const custom = str(m.categoryLabel);
+      const label: Bi = custom ? bi(custom, custom) : words ?? bi(key, key);
       return {
         kind: 'money',
         text: (who) =>
           bi(
-            `${who.ar} سجّل مصروف ${label} ${money(m.amount).ar}${m.fromDrawer ? ' من الخزنة' : ''}`.replace('  ', ' '),
-            `${who.en} recorded an expense ${label} ${money(m.amount).en}${m.fromDrawer ? ' from the drawer' : ''}`.replace('  ', ' '),
+            `${who.ar} سجّل مصروف ${label.ar} ${money(m.amount).ar}${m.fromDrawer ? ' من الخزنة' : ''}`.replace('  ', ' '),
+            `${who.en} recorded an expense ${label.en} ${money(m.amount).en}${m.fromDrawer ? ' from the drawer' : ''}`.replace('  ', ' '),
           ),
       };
     }

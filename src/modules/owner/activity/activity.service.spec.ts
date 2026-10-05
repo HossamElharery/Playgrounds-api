@@ -30,6 +30,33 @@ describe('describeActivity — a decision in a sentence', () => {
     expect(say('owner.shift.closed', { difference: -1_000 }).en).toBe('Ahmed closed the drawer: 10 AED short');
   });
 
+  it('the deposit taken while booking is shown as money, not hidden inside the price', () => {
+    const t = say('owner.booking.created', { amount: 20_000, currency: 'EGP', customer: 'QA', code: 'MAN-2', paid: 5_000 }, 'EGP');
+    expect(t.ar).toBe('أحمد سجّل حجز لـ QA بـ 200 ج.م (MAN-2) وقبض 50 ج.م');
+    expect(t.en).toBe('Ahmed booked for QA at 200 EGP (MAN-2) and took 50 EGP');
+    expect(say('owner.booking.created', { amount: 20_000, currency: 'EGP', code: 'MAN-3', paid: 0 }, 'EGP').en).not.toContain('took');
+  });
+
+  it('a cancellation says what happened to the money that had been received', () => {
+    expect(say('owner.booking.cancelled', { code: 'MAN-4', currency: 'EGP', refunded: 20_000, kept: 0 }, 'EGP').ar).toBe('أحمد لغى حجز MAN-4 ورجّع 200 ج.م');
+    expect(say('owner.booking.cancelled', { code: 'MAN-4', currency: 'EGP', refunded: 0, kept: 5_000 }, 'EGP').en).toBe('Ahmed cancelled booking MAN-4 and kept 50 EGP');
+    expect(say('owner.booking.cancelled', { code: 'MAN-4', currency: 'EGP', refunded: 3_000, kept: 2_000 }, 'EGP').en).toBe('Ahmed cancelled booking MAN-4 and handed back 30 EGP, kept 20 EGP');
+    expect(say('owner.booking.cancelled', { code: 'MAN-4', currency: 'EGP', refunded: 3_000, kept: 2_000 }, 'EGP').ar).toBe('أحمد لغى حجز MAN-4 ورجّع 30 ج.م، واحتفظ بـ 20 ج.م');
+    expect(say('owner.booking.cancelled', { code: 'MAN-4' }, 'EGP').en).toBe('Ahmed cancelled booking MAN-4');
+  });
+
+  it('an expense category is a word, never the raw key', () => {
+    const t = say('owner.expense.recorded', { category: 'electricity', amount: 5_050, currency: 'EGP' }, 'EGP');
+    expect(t.ar).toBe('أحمد سجّل مصروف كهرباء 50.5 ج.م');
+    expect(t.en).toBe('Ahmed recorded an expense electricity 50.5 EGP');
+    expect(say('owner.expense.recorded', { category: 'other', categoryLabel: 'تنظيف', amount: 1_000, currency: 'EGP' }, 'EGP').ar).toContain('تنظيف');
+  });
+
+  it('changing the unit of a booking says "unit", not "court"', () => {
+    const d = describeActivity('owner.booking.updated', { changed: { courtId: ['a', 'b'] } }, 'EGP');
+    expect(d.text(who).ar).toBe('أحمد عدّل الوحدة');
+  });
+
   it('never throws on an action it does not know', () => {
     expect(say('something.new', {}).en).toBe('Ahmed made a change');
   });

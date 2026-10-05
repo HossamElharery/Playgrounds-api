@@ -1,6 +1,7 @@
 import { loadStaffScope } from '../../common/access/staff-scope';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { moneyText } from '../../common/money/money-text';
+import { currencyLabel } from '../../common/money/currency-label';
 import { Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -165,6 +166,17 @@ export class NotificationsService {
         bodyAr: 'تنبيه سابق؛ افتح المنشأة لمعرفة الرصيد والعملة الحاليين.',
         bodyEn: 'Previous reminder; open the venue for its current balance and currency.',
       };
+    });
+    // Notices written before the currency label existed carry a bare code ("120 EGP"): say it the
+    // way every other screen does ("120 ج.م"), in the language each text is written in.
+    const label = (text: string | null, lang: 'ar' | 'en') =>
+      text?.replace(/(\d[\d.,]*)\s(EGP|AED|SAR|KWD|QAR|JOD)\b/g, (_m, n: string, code: string) => `${n} ${currencyLabel(code, lang)}`) ?? text;
+    page.items = page.items.map(n => {
+      const p = n.payload as Record<string, unknown> | null;
+      // Only the balance reminders carry a plain amount in major units. Cash-drawer notices are corrected
+      // below from their own stored amount, and anything else is left exactly as it was written.
+      if (!['assistant_overdue', 'assistant_arrival_due'].includes(String(p?.['kind']))) return n;
+      return { ...n, titleAr: label(n.titleAr, 'ar') ?? n.titleAr, titleEn: label(n.titleEn, 'en') ?? n.titleEn, bodyAr: label(n.bodyAr, 'ar'), bodyEn: label(n.bodyEn, 'en') };
     });
     // Old cash notices embedded minor units in the title. Correct only identified
     // cash records, using their immutable amount/currency; never guess from prose.

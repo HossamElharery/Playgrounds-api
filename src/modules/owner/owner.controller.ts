@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -72,10 +73,13 @@ import {
 import {
   AddManualPaymentDto,
   CreateManualBookingDto,
+  PrepareOwnerOfflineDto,
+  OwnerOfflineEventDto,
   OwnerCheckInDto,
   OwnerRemittanceDto,
   OwnerSummaryQueryDto,
   UpdateManualBookingDto,
+  CancelManualBookingQueryDto,
   VoidPaymentDto,
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
@@ -644,6 +648,37 @@ export class OwnerController {
     return this.expenses.remove(user, id);
   }
 
+  @Post('offline/events')
+  @RequireAnyPermission('bookings.checkin', 'bookings.edit')
+  offlineEvent(@CurrentUser() user: AuthenticatedUser, @Body() dto: OwnerOfflineEventDto) {
+    return this.ownerBookings.recordOfflineEvent(user, dto);
+  }
+
+  @RequirePermission('bookings.create')
+  @Post('offline/prepare')
+  prepareOffline(@CurrentUser() user: AuthenticatedUser, @Body() dto: PrepareOwnerOfflineDto) {
+    return this.ownerBookings.prepareOffline(user, dto.venueId, dto.deviceId);
+  }
+
+  @RequirePermission('bookings.view')
+  @Get('offline/operations/:requestKey')
+  offlineOperationOutcome(@CurrentUser() user: AuthenticatedUser, @Param('requestKey') key: string, @Query('kind') kind: string) {
+    return this.ownerBookings.offlineOperationOutcome(user, key, kind);
+  }
+
+  @RequirePermission('bookings.view')
+  @Get('offline/bookings/:requestKey')
+  offlineBookingOutcome(@CurrentUser() user: AuthenticatedUser, @Param('requestKey') key: string) {
+    return this.ownerBookings.offlineBookingOutcome(user, key);
+  }
+
+  @RequirePermission('bookings.create')
+  @Post('offline/bookings')
+  createOfflineBooking(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateManualBookingDto) {
+    if (!dto.requestKey) throw new BadRequestException('A stable operation key is required');
+    return this.ownerBookings.createManualBooking(user, dto);
+  }
+
   @RequirePermission('bookings.create')
   @Post('bookings/manual')
   @ApiOperation({
@@ -678,12 +713,18 @@ export class OwnerController {
 
   @RequirePermission('bookings.edit')
   @Delete('bookings/:id')
-  @ApiOperation({ summary: 'Soft-cancel a manual booking' })
+  @ApiOperation({
+    summary: 'Soft-cancel a manual booking (say what happens to money already received)',
+  })
   deleteManual(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
+    @Query() q: CancelManualBookingQueryDto,
   ) {
-    return this.ownerBookings.deleteManualBooking(user, id);
+    return this.ownerBookings.deleteManualBooking(user, id, {
+      refundAmount: q.refundAmount,
+      reason: q.reason,
+    });
   }
 
   @RequirePermission('bookings.edit')

@@ -26,3 +26,24 @@ describe('resolveCourtFromText', () => {
     expect(resolveCourtFromText('بلايستيشن 5', courts)).toBeNull();
   });
 });
+
+describe('listUnits — the list the assistant reads back', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { listUnits } = require('./assistant-courts');
+
+  it('a plain list when every name is its own', () => {
+    expect(listUnits([{ name: 'PS5 Room 1' }, { name: 'VIP Big-Screen Room' }])).toBe('PS5 Room 1، VIP Big-Screen Room');
+  });
+
+  it('two units with the same name are told apart by their sport', () => {
+    expect(listUnits([
+      { name: 'Table 1', sportAr: 'بلياردو' },
+      { name: 'Table 1', sportAr: 'بينج بونج' },
+      { name: 'Table 2', sportAr: 'بلياردو' },
+    ])).toBe('Table 1 (بلياردو)، Table 1 (بينج بونج)، Table 2');
+  });
+
+  it('without a sport name there is nothing to add', () => {
+    expect(listUnits([{ name: 'A' }, { name: 'A' }], ', ')).toBe('A, A');
+  });
+});

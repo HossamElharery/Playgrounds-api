@@ -501,9 +501,39 @@ describe('finance integration (real Postgres)', () => {
     expect((await prisma.payment.aggregate({ where: { bookingId: booking.id }, _sum: { amount: true } }))._sum.amount).toBe(10005);
     await expect(service.addManualPayment(user, booking.id, 10006, 'cash', key)).rejects.toMatchObject({ status: 409 });
     await expect(service.addManualPayment(user, booking.id, 10005, 'card', key)).rejects.toMatchObject({ status: 409 });
-    await service.deleteManualBooking(user, booking.id);
+    // Cancelled with the deposit kept: replaying the very same collection must still not collect twice.
+    await service.deleteManualBooking(user, booking.id, { refundAmount: 0 });
     await service.addManualPayment(user, booking.id, 10005, 'cash', key);
     expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+  });
+
+  it('cancelling a paid booking: no decision is refused; a refund nets to zero in the real payment table; keeping leaves the money', async () => {
+    const { service, booking, user, dto } = await operationFixture('cancel-money');
+    await service.addManualPayment(user, booking.id, 8000, 'cash', crypto.randomUUID());
+    await service.addManualPayment(user, booking.id, 2000, 'instapay', crypto.randomUUID());
+    await expect(service.deleteManualBooking(user, booking.id)).rejects.toMatchObject({ response: expect.objectContaining({ code: 'PAYMENT_DECISION_REQUIRED' }) });
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('confirmed');
+    await expect(service.deleteManualBooking(user, booking.id, { refundAmount: 10001 })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'REFUND_EXCEEDS_RECEIVED' }) });
+    const gone = await service.deleteManualBooking(user, booking.id, { refundAmount: 'all', reason: 'customer_request' });
+    expect(gone.status).toBe('cancelled');
+    const rows = await prisma.payment.findMany({ where: { bookingId: booking.id }, orderBy: { createdAt: 'asc' } });
+    expect(rows.reduce((n, r) => n + r.amount, 0)).toBe(0);
+    // Each method is handed back by itself, so the cash drawer only loses the cash.
+    expect(rows.filter((r) => r.amount < 0).map((r) => [r.method, r.amount]).sort()).toEqual([['cash', -8000], ['instapay', -2000]]);
+    expect(rows.filter((r) => r.amount < 0).every((r) => r.status === 'refunded' && r.reversesPaymentId)).toBe(true);
+    // A second booking, cancelled with the deposit kept, leaves every payment row exactly as it was.
+    const other = await service.createManualBooking(user, { ...dto, startsAt: new Date(new Date(dto.startsAt).getTime() + 7200000).toISOString() });
+    await service.addManualPayment(user, other.id, 3000, 'cash', crypto.randomUUID());
+    await service.deleteManualBooking(user, other.id, { refundAmount: 0 });
+    const kept = await prisma.payment.findMany({ where: { bookingId: other.id } });
+    expect(kept).toHaveLength(1);
+    expect(kept[0].amount).toBe(3000);
+    // A partial refund hands back part of the newest money and keeps the rest.
+    const third = await service.createManualBooking(user, { ...dto, startsAt: new Date(new Date(dto.startsAt).getTime() + 10800000).toISOString() });
+    await service.addManualPayment(user, third.id, 5000, 'cash', crypto.randomUUID());
+    const part = await service.deleteManualBooking(user, third.id, { refundAmount: 1500 });
+    expect(part.money.paidAmount).toBe(3500);
+    expect(part.money.refunded).toBe(1500);
   });
 
   it('serializes first submissions with the same collection identity and rejects reuse on another booking', async () => {

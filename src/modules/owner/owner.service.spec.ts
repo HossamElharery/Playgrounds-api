@@ -19,6 +19,18 @@ describe('Owner dashboard integrity', () => {
     const nlu: any = { enabled: false, interpret: jest.fn() };
     service = new OwnerService(db, bookings, nlu);
   });
+  it.each([[30, 4000], [45, 6000], [60, 8000], [90, 12000]])('quotes the actual %i-minute owner cell', async (minutes, amount) => {
+    db.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'owner', country: { timezone: 'Africa/Cairo' } });
+    db.court = { findMany: jest.fn().mockResolvedValue([{ id: 'c1', slotDurationMins: minutes,
+      sport: { activityKind: 'table-game' }, pricingRules: [{ daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 8000, currency: 'EGP', priority: 0 }] }]) };
+    db.calendarBlock = { findMany: jest.fn().mockResolvedValue([]) };
+    const start = new Date('2026-10-05T09:00:00Z');
+    service = new OwnerService(db, { getSlotGrid: jest.fn().mockResolvedValue([{ start: start.toISOString(),
+      end: new Date(start.getTime() + minutes * 60000).toISOString(), state: 'free', priceAmount: 8000 }]) } as never, { enabled: false } as never);
+    const result = await service.board(owner as never, 'v1', '2026-10-05');
+    expect(result.courts[0].slots[0].priceAmount).toBe(amount);
+  });
+
   it('rejects finance for another owner venue', async () => {
     await expect(service.finance({ ...owner, id: 'other' },'v1','2026-09-01','2026-09-07')).rejects.toBeInstanceOf(ForbiddenException);
     expect(db.booking.findMany).not.toHaveBeenCalled();

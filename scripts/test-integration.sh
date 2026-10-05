@@ -10,4 +10,4 @@ psql "$BASE_URL/postgres" -qc "DROP DATABASE IF EXISTS \"$DB_NAME\"" -c "CREATE 
 export TEST_DATABASE_URL="$BASE_URL/$DB_NAME?schema=public"
 trap 'psql "$BASE_URL/postgres" -qc "DROP DATABASE IF EXISTS \"$DB_NAME\"" >/dev/null' EXIT
 DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy >/dev/null
-DATABASE_URL="$TEST_DATABASE_URL" npx jest --config ./test/jest-e2e.json --runInBand --testRegex 'finance\.e2e-spec\.ts$'
+DATABASE_URL="$TEST_DATABASE_URL" npx jest --config ./test/jest-e2e.json --runInBand --testRegex '(finance|owner-offline)\.e2e-spec\.ts$'

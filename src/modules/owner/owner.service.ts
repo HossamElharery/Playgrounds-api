@@ -27,6 +27,7 @@ import { AssistantTranscriptService } from '../ai/transcript/assistant-transcrip
 import { UNDO_ANCHOR_TEXT } from './assistant/assistant-undo';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { assertVenueAccess } from '../../common/access/owner-access';
+import { quoteDurationPrice } from '../../common/utils/price-quote.util';
 import { sourceDisplay } from '../../common/utils/source-label.util';
 import { maskPlayerPhone } from '../../common/utils/phone.util';
 
@@ -295,7 +296,7 @@ export class OwnerService {
       where: { venueId },
       include: {
         pricingRules: true,
-        sport: { select: { activityKind: true } },
+        sport: { select: { activityKind: true, slug: true } },
       },
       orderBy: { name: 'asc' },
     });
@@ -385,6 +386,8 @@ export class OwnerService {
           );
           return {
             ...slot,
+            // Tariffs are hourly; the owner sees the price of this actual cell.
+            priceAmount: quoteDurationPrice(court.pricingRules, start, (end.getTime() - start.getTime()) / 60_000, timeZone).priceAmount ?? 0,
             state,
             bookingId: booking?.id,
             blockId: block?.id,

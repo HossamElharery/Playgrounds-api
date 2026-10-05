@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as ngeohash from 'ngeohash';
 import { HELP_FAQS } from './data/help-faqs';
+import { EGYPT_GEO } from './data/egypt-geo';
 
 const prisma = new PrismaClient();
 
@@ -225,6 +226,27 @@ async function main() {
     ),
   );
 
+  // Every other Egyptian governorate, exactly as the production migration installs them.
+  for (const g of EGYPT_GEO) {
+    const gov = await prisma.governorate.upsert({
+      where: { id: g.id },
+      update: { slug: g.slug },
+      create: { id: g.id, countryCode: 'EG', slug: g.slug, nameEn: g.nameEn, nameAr: g.nameAr },
+    });
+    for (const d of g.districts) {
+      const pad = 0.03;
+      const polygon = ring([
+        [d.lng - pad, d.lat - pad], [d.lng + pad, d.lat - pad], [d.lng + pad, d.lat + pad],
+        [d.lng - pad, d.lat + pad], [d.lng - pad, d.lat - pad],
+      ]);
+      await prisma.district.upsert({
+        where: { id: d.id },
+        update: { slug: d.slug, lat: d.lat, lng: d.lng },
+        create: { id: d.id, governorateId: gov.id, slug: d.slug, nameEn: d.nameEn, nameAr: d.nameAr, lat: d.lat, lng: d.lng, polygon },
+      });
+    }
+  }
+
   const riyadh = await prisma.governorate.upsert({
     where: { id: 'gov-riyadh' },
     update: { slug: 'riyadh' },
@@ -430,7 +452,7 @@ async function main() {
     await prisma.pricingRule.createMany({
       data: [
         { courtId: court.id, label: 'base', daysOfWeek: [], startTime: '08:00', endTime: '17:00', priceAmount: 12000, currency: v.currency, priority: 0 },
-        { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '23:00', priceAmount: 20000, currency: v.currency, priority: 1 },
+        { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '24:00', priceAmount: 20000, currency: v.currency, priority: 1 },
         { courtId: court.id, label: 'weekend', daysOfWeek: [5, 6], startTime: '00:00', endTime: '23:59', priceAmount: 22000, currency: v.currency, priority: 2 },
       ],
     });
@@ -496,8 +518,10 @@ async function main() {
       ]) {
         await prisma.pricingRule.createMany({
           data: [
-            { courtId: court.id, label: 'base', daysOfWeek: [], startTime: '10:00', endTime: '17:00', priceAmount: court.base, currency: 'EGP', priority: 0 },
-            { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '02:00', priceAmount: court.peak, currency: 'EGP', priority: 1 },
+            { courtId: court.id, label: 'base', daysOfWeek: [], startTime: '09:00', endTime: '17:00', priceAmount: court.base, currency: 'EGP', priority: 0 },
+            { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '24:00', priceAmount: court.peak, currency: 'EGP', priority: 1 },
+            // A price window cannot cross midnight: the small hours are their own window.
+            { courtId: court.id, label: 'late', daysOfWeek: [], startTime: '00:00', endTime: '02:00', priceAmount: court.peak, currency: 'EGP', priority: 1 },
             { courtId: court.id, label: 'weekend', daysOfWeek: [5, 6], startTime: '00:00', endTime: '23:59', priceAmount: court.weekend, currency: 'EGP', priority: 2 },
           ],
         });
@@ -560,8 +584,8 @@ async function main() {
       ]) {
         await prisma.pricingRule.createMany({
           data: [
-            { courtId: court.id, label: 'base', daysOfWeek: [], startTime: '10:00', endTime: '17:00', priceAmount: court.base, currency: 'EGP', priority: 0 },
-            { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '00:00', priceAmount: court.peak, currency: 'EGP', priority: 1 },
+            { courtId: court.id, label: 'base', daysOfWeek: [], startTime: '09:00', endTime: '17:00', priceAmount: court.base, currency: 'EGP', priority: 0 },
+            { courtId: court.id, label: 'peak', daysOfWeek: [], startTime: '17:00', endTime: '24:00', priceAmount: court.peak, currency: 'EGP', priority: 1 },
             { courtId: court.id, label: 'weekend', daysOfWeek: [5, 6], startTime: '00:00', endTime: '23:59', priceAmount: court.weekend, currency: 'EGP', priority: 2 },
           ],
         });

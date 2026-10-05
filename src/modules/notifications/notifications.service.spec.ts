@@ -237,6 +237,16 @@ describe('Legacy cash notice amounts', () => {
     expect((await service.list('owner')).items[0].titleAr).toBe(legacy.titleAr);
     expect(cashHandover.findMany).not.toHaveBeenCalled();
   });
+
+  it('says a balance reminder written with a bare currency code the way every other screen does', async () => {
+    notification.findMany.mockResolvedValue([
+      { id: 'n9', titleAr: 'متبقي 120 EGP الساعة 09:00', titleEn: '120 EGP left at 09:00', bodyAr: 'حصّل 40 SAR', bodyEn: 'collect 40 SAR', payload: { kind: 'assistant_arrival_due', currency: 'EGP', venueId: 'v1' } },
+    ]);
+    const [n] = (await service.list('owner')).items;
+    expect(n.titleAr).toBe('متبقي 120 ج.م الساعة 09:00');
+    expect(n.titleEn).toBe('120 EGP left at 09:00');
+    expect(n.bodyAr).toBe('حصّل 40 ر.س');
+  });
 });
 
 describe('historical staff notification scope', () => {
@@ -258,4 +268,5 @@ describe('historical staff notification scope', () => {
     expect(rows[0].titleAr).toBe('120 AED');
     expect(rows[0].payload.venueId).toBe('assigned');
   });
+
 });
