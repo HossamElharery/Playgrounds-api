@@ -1,0 +1,70 @@
+const dbUrl=process.env.TEST_DATABASE_URL??'';
+const parsed=new URL(dbUrl);
+if(!['localhost','127.0.0.1'].includes(parsed.hostname)||!/^\/matchena_gaming_test_[a-z0-9_]+$/.test(parsed.pathname))throw new Error('Dedicated local gaming database required');
+process.env.DATABASE_URL=dbUrl;
+import { randomUUID } from 'crypto';
+import { PrismaService } from '../src/modules/prisma/prisma.service';
+import { GamingCommandService } from '../src/modules/owner/gaming/gaming-command.service';
+import { GamingLayoutService } from '../src/modules/owner/gaming/gaming-layout.service';
+import { GamingSetupService } from '../src/modules/owner/gaming/gaming-setup.service';
+import { GamingSessionsService } from '../src/modules/owner/gaming/gaming-sessions.service';
+import { GamingReceiptsService } from '../src/modules/owner/gaming/gaming-receipts.service';
+import { CommissionService } from '../src/modules/finance/commission.service';
+import { LedgerService } from '../src/modules/finance/ledger.service';
+import { AuthenticatedUser } from '../src/common/types/authenticated-user.interface';
+import { GamingSetupDto } from '../src/modules/owner/gaming/gaming-setup.dto';
+import { calculateUsageCharge } from '../src/modules/owner/gaming/session-billing';
+jest.setTimeout(120000);
+describe('guided setup + multi pricing on PostgreSQL',()=>{
+ const db=new PrismaService(),commands=new GamingCommandService(db),layouts=new GamingLayoutService(db),setup=new GamingSetupService(commands,layouts),sessions=new GamingSessionsService(commands,new LedgerService(db,new CommissionService(db,{} as never))),receipts=new GamingReceiptsService(commands,sessions);
+ let user:AuthenticatedUser,sportId:string;
+ const key=(venueId:string)=>({venueId,requestKey:randomUUID()});
+ const plan=(venueId:string):GamingSetupDto=>({...key(venueId),groups:[{assetKey:'ps5',count:6,hourlyRateMinor:12000,multiHourlyRateMinor:18000,privateHourlyRateMinor:15000,privateMultiHourlyRateMinor:24000,floorIndex:0}],rooms:[{name:'VIP',floorIndex:1,occupancy:'independent',members:[{assetKey:'ps5',count:2}]}],floorCount:2,arrangement:'rows',ambience:'neon',language:'ar',expectedRevision:0,reuseExisting:false});
+ const venue=async()=>db.venue.create({data:{ownerId:user.id,slug:randomUUID(),nameAr:'محل التجهيز',nameEn:'Setup hall',lat:30,lng:31,geohash:'sv8',status:'active',approvedAt:new Date(),sports:{create:{sportId}}}});
+ beforeAll(async()=>{
+  await db.countryConfig.upsert({where:{code:'EG'},create:{code:'EG',nameAr:'مصر',nameEn:'Egypt',currency:'EGP',phoneCallingCode:'+20',timezone:'Africa/Cairo',weekendDays:[5,6],paymentMethods:['cash']},update:{}});
+  const u=await db.user.create({data:{name:'Setup owner',phone:'+201099991123',roles:['owner']}});user={id:u.id,name:u.name,phone:u.phone!,roles:['owner']};
+  sportId=(await db.sportCategory.create({data:{slug:'setup-fixture',nameAr:'ألعاب',nameEn:'Gaming',icon:'gamepad',accentColor:'#22cc88',activityKind:'gaming-station'}})).id;
+ });
+ afterAll(()=>db.$disconnect());
+ it('atomically creates totals, room membership, published layout and separate tariffs; exact retry does not duplicate',async()=>{
+  const v=await venue(),d=plan(v.id),result=await setup.setup(user,d);
+  expect(result.unitCount).toBe(6);expect(await db.court.count({where:{venueId:v.id}})).toBe(6);expect(await db.gamingRoom.count({where:{venueId:v.id}})).toBe(1);
+  expect((await setup.setup(user,d)).revision).toBe(result.revision);expect(await db.court.count({where:{venueId:v.id}})).toBe(6);
+  const units=await db.court.findMany({where:{venueId:v.id}});expect(units.filter(u=>u.gamingRoomId)).toHaveLength(2);expect(units.filter(u=>u.gamingRoomId).every(u=>u.gamingHourlyRateMinor===15000)).toBe(true);
+  expect((await db.venue.findUniqueOrThrow({where:{id:v.id}})).gamingSessionsEnabled).toBe(true);
+  await expect(setup.setup(user,{...d,groups:[{...d.groups[0],count:5}]})).rejects.toMatchObject({status:409});
+  await expect(setup.setup(user,{...d,...key(v.id),expectedRevision:1})).rejects.toMatchObject({status:409});
+ });
+ it('reuses existing IDs and generated layout; rejects lower totals without changing anything',async()=>{
+  const v=await venue();const old=await db.court.create({data:{venueId:v.id,sportId,name:'My PS5',gamingConfig:{consoleType:'ps5',roomTier:'vip-big-screen'},gamingHourlyRateMinor:6000,pricingRules:{create:{label:'base',startTime:'00:00',endTime:'24:00',daysOfWeek:[],priceAmount:6000,currency:'EGP'}}}});
+  const snapshot=await layouts.read(user,v.id);expect((await setup.status(user,v.id)).eligible).toBe(true);const d=plan(v.id);d.reuseExisting=true;d.expectedRevision=snapshot.revision;await setup.setup(user,d);expect(await db.court.count({where:{venueId:v.id}})).toBe(6);expect((await db.court.findUniqueOrThrow({where:{id:old.id}})).name).toBe('My PS5');
+ });
+ it('two concurrent setup requests leave one complete hall',async()=>{const v=await venue();const r=await Promise.allSettled([setup.setup(user,plan(v.id)),setup.setup(user,plan(v.id))]);expect(r.filter(x=>x.status==='fulfilled')).toHaveLength(1);expect(await db.court.count({where:{venueId:v.id}})).toBe(6);expect(await db.gamingLayoutRevision.count({where:{venueId:v.id}})).toBe(1);});
+ it('invalid over-allocation rolls back; foreign owner and unapproved venue are denied',async()=>{const v=await venue(),d=plan(v.id);d.rooms[0].members[0].count=7;await expect(setup.setup(user,d)).rejects.toMatchObject({status:400});expect(await db.court.count({where:{venueId:v.id}})).toBe(0);await expect(setup.setup({...user,id:randomUUID()},plan(v.id))).rejects.toThrow();await db.venue.update({where:{id:v.id},data:{approvedAt:null}});await expect(setup.setup(user,plan(v.id))).rejects.toMatchObject({status:403});});
+ it('whole-room setup publishes one parent; its session occupies children and charges the room tariff once',async()=>{const v=await venue(),d=plan(v.id);d.rooms[0].occupancy='exclusive';d.rooms[0].hourlyRateMinor=30000;d.rooms[0].multiHourlyRateMinor=40000;await setup.setup(user,d);const room=await db.gamingRoom.findFirstOrThrow({where:{venueId:v.id}});const s=await sessions.start(user,{...key(v.id),unitId:room.bookableCourtId!,startMode:'now',playMode:'multi'});const children=await db.court.findMany({where:{gamingRoomId:room.id}});expect(children.every(u=>!u.gamingPublished)).toBe(true);const published=await layouts.read(user,v.id);await layouts.save(user,{venueId:v.id,baseRevision:published.revision,draftVersion:published.draftVersion,document:published.published as Record<string,unknown>});await layouts.publish(user,{...key(v.id),baseRevision:published.revision,draftVersion:published.draftVersion+1});expect((await db.court.findMany({where:{gamingRoomId:room.id}})).every(u=>!u.gamingPublished)).toBe(true);expect(await db.resourceOccupancy.count({where:{sessionId:s.id,running:true}})).toBe(3);expect((await db.usageSegment.findFirstOrThrow({where:{sessionId:s.id}})).hourlyRateMinor).toBe(40000);});
+ it('multi transfer/mode change snapshots rates; price edits cannot reprice old legs; receipt states the mode',async()=>{
+  const v=await venue();await setup.setup(user,plan(v.id));const units=await db.court.findMany({where:{venueId:v.id,gamingRoomId:null},orderBy:{name:'asc'}});
+  const s=await sessions.start(user,{...key(v.id),unitId:units[0].id,startMode:'now',playMode:'multi'});
+  const first=await db.usageSegment.findFirstOrThrow({where:{sessionId:s.id}});expect(first.hourlyRateMinor).toBe(18000);
+  await sessions.tariffs(user,{...key(v.id),unitId:units[0].id,hourlyRateMinor:9000,multiHourlyRateMinor:27000});
+  expect((await db.usageSegment.findUniqueOrThrow({where:{id:first.id}})).hourlyRateMinor).toBe(18000);
+  const switched=await sessions.changePlayMode(user,s.id,{...key(v.id),expectedVersion:1,playMode:'standard'});
+  await sessions.transfer(user,s.id,{...key(v.id),expectedVersion:switched.version,targetUnitId:units[1].id});
+  const current=await db.usageSession.findUniqueOrThrow({where:{id:s.id},include:{segments:{orderBy:{startedAt:'asc'}}}});
+  expect(current.segments.map(g=>g.hourlyRateMinor)).toEqual([18000,9000,12000]);
+  await expect(sessions.changePlayMode(user,s.id,{...key(v.id),expectedVersion:1,playMode:'multi'})).rejects.toMatchObject({status:409});
+  await sessions.end(user,s.id,{...key(v.id),expectedVersion:current.version});
+  const bill=await receipts.bill(user,s.orderId,{...key(v.id)});const snapshot=bill.snapshot as unknown as {lines:{snapshot:{detail:{playMode:string}[]}}[]};expect(snapshot.lines[0].snapshot.detail.map(g=>g.playMode)).toEqual(['multi','standard','standard']);
+  const now=Date.now(),fixture={...current,endedAt:new Date(now),segments:[{...current.segments[0],startedAt:new Date(now-30*60000),endedAt:new Date(now-20*60000),hourlyRateMinor:18000},{...current.segments[1],startedAt:new Date(now-20*60000),endedAt:new Date(now),hourlyRateMinor:9000}]};expect(calculateUsageCharge(fixture,new Date(now))).toBe(6000);
+ });
+ it('venue management alone cannot set prices/publish and revoked permissions block a replay',async()=>{
+  const v=await venue();const staff=await db.user.create({data:{name:'Setup staff',phone:'+201099991124',roles:['staff']}});await db.staffMember.create({data:{userId:staff.id,ownerId:user.id,createdById:user.id,venueIds:[v.id],permissions:['venue.manage','bookings.view']}});const actor={id:staff.id,name:staff.name,phone:staff.phone!,roles:['staff']} as AuthenticatedUser;const d=plan(v.id);
+  await expect(setup.setup(actor,d)).rejects.toMatchObject({status:403});expect(await db.court.count({where:{venueId:v.id}})).toBe(0);
+  await db.staffMember.update({where:{userId:staff.id},data:{permissions:['venue.manage','bookings.view','pricing.manage','layout.view','layout.edit','layout.publish']}});await setup.setup(actor,d);await db.staffMember.update({where:{userId:staff.id},data:{permissions:['venue.manage','bookings.view']}});await expect(setup.setup(actor,d)).rejects.toMatchObject({status:403});
+ });
+ it('splits one station type across floors without counting room stations twice',async()=>{const v=await venue(),d=plan(v.id);d.groups[0].floorCounts=[2,2];const result=await setup.setup(user,d);expect(result.document.placements.filter(p=>p.unitId&&p.floorId===result.document.floors[0].id)).toHaveLength(2);expect(result.document.placements.filter(p=>p.unitId&&p.floorId===result.document.floors[1].id)).toHaveLength(4);});
+ it('saving station tariffs also repairs a missing base rule so the station can start',async()=>{const v=await venue();await setup.setup(user,plan(v.id));const unit=await db.court.findFirstOrThrow({where:{venueId:v.id,gamingRoomId:null}});await db.pricingRule.deleteMany({where:{courtId:unit.id}});await sessions.tariffs(user,{...key(v.id),unitId:unit.id,hourlyRateMinor:6000,multiHourlyRateMinor:9000});const s=await sessions.start(user,{...key(v.id),unitId:unit.id,startMode:'now',playMode:'multi'});expect((await db.usageSegment.findFirstOrThrow({where:{sessionId:s.id}})).hourlyRateMinor).toBe(9000);});
+ it('100-station setup remains atomic and completes within the transaction budget',async()=>{const v=await venue(),d=plan(v.id);d.groups[0].count=100;d.rooms=[];d.floorCount=1;const start=Date.now();const result=await setup.setup(user,d);expect(result.unitCount).toBe(100);expect(await db.court.count({where:{venueId:v.id}})).toBe(100);console.info('guided-setup-100-stations-ms',Date.now()-start);});
+ it('missing destination multi price preserves the original session atomically',async()=>{const v=await venue();await setup.setup(user,plan(v.id));const units=await db.court.findMany({where:{venueId:v.id,gamingRoomId:null}});await sessions.tariffs(user,{...key(v.id),unitId:units[1].id,hourlyRateMinor:12000});const s=await sessions.start(user,{...key(v.id),unitId:units[0].id,startMode:'now',playMode:'multi'});await expect(sessions.transfer(user,s.id,{...key(v.id),expectedVersion:1,targetUnitId:units[1].id})).rejects.toMatchObject({status:400});expect((await db.usageSession.findUniqueOrThrow({where:{id:s.id}})).unitId).toBe(units[0].id);expect(await db.usageSegment.count({where:{sessionId:s.id}})).toBe(1);});
+});

@@ -1,3 +1,4 @@
+import { activateGamingDefaults } from '../owner/gaming/gaming-activation';
 import {
   BadRequestException,
   ConflictException,
@@ -9,6 +10,7 @@ import { loadBookingBlockers } from '../../common/utils/venue-readiness.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   AdminReviewDto,
   AdminUserDto,
@@ -52,6 +54,7 @@ export class ManagementService {
   constructor(
     private readonly db: PrismaService,
     @Optional() private readonly transcript?: AssistantTranscriptService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
   private page(q: ManagementQuery) {
     return { skip: (q.page - 1) * q.perPage, take: q.perPage };
@@ -335,9 +338,13 @@ export class ManagementService {
       const errors = validateWeeklyHours(weeklyHours);
       if (errors.length) throw new BadRequestException(errors.join('; '));
     }
-    return this.db.$transaction(async (tx) => {
+    let statusChange: { to: string; ownerId: string; nameAr: string; nameEn: string } | null = null;
+    const result = await this.db.$transaction(async (tx) => {
       const before = await tx.venue.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('Venue not found');
+      if (data.status && data.status !== before.status) {
+        statusChange = { to: data.status, ownerId: before.ownerId, nameAr: before.nameAr, nameEn: before.nameEn };
+      }
       if (data.status === 'active' && before.status !== 'active' && !force) {
         const missing = await loadBookingBlockers(tx as never, id);
         if (missing.length) {
@@ -459,6 +466,7 @@ export class ManagementService {
           })),
         });
       }
+      if (data.status === 'active' && before.status !== 'active') await activateGamingDefaults(tx, id);
       if (amenityKeys) {
         const amenities = await tx.amenity.findMany({
           where: { key: { in: amenityKeys } },
@@ -470,9 +478,85 @@ export class ManagementService {
           data: amenities.map((a) => ({ venueId: id, amenityId: a.id })),
         });
       }
+      // Keep the partner application in step with the venue, otherwise a venue the
+      // admin suspended here still reads "approved" on the owner's side (and the
+      // reverse after reactivating it).
+      if (data.status && data.status !== before.status) {
+        const flip =
+          data.status === 'suspended'
+            ? { from: 'approved' as const, to: 'suspended' as const }
+            : data.status === 'active' && before.status === 'suspended'
+              ? { from: 'suspended' as const, to: 'approved' as const }
+              : null;
+        if (flip) {
+          const apps = await tx.partnerApplication.findMany({
+            where: { venueId: id, status: flip.from },
+            select: { id: true },
+          });
+          for (const app of apps) {
+            await tx.partnerApplication.update({
+              where: { id: app.id },
+              data: {
+                status: flip.to,
+                version: { increment: 1 },
+                events: {
+                  create: {
+                    actorUserId: actor,
+                    fromStatus: flip.from,
+                    toStatus: flip.to,
+                    note: reason,
+                  },
+                },
+              },
+            });
+          }
+        }
+      }
       await this.audit(tx, actor, 'venue', id, reason, before, dto);
       return updated;
     });
+    if (statusChange) await this.notifyVenueStatus(id, statusChange, reason, result.updatedAt);
+    return result;
+  }
+  /** Tells the owner what the new status means for them; never blocks or fails the admin edit. */
+  private async notifyVenueStatus(
+    venueId: string,
+    change: { to: string; ownerId: string; nameAr: string; nameEn: string },
+    reason: string,
+    stamp: Date,
+  ) {
+    if (!this.notifications) return;
+    const copy = {
+      active: {
+        titleEn: `${change.nameEn} is approved`,
+        titleAr: `تم اعتماد ${change.nameAr}`,
+        bodyEn: 'You can now set up floors and devices, then start sessions.',
+        bodyAr: 'يمكنك الآن إعداد الأدوار والأجهزة ثم بدء الجلسات.',
+      },
+      suspended: {
+        titleEn: `${change.nameEn} is suspended`,
+        titleAr: `تم تعليق ${change.nameAr}`,
+        bodyEn: 'Operations are paused. Your data is kept; contact Matchena support.',
+        bodyAr: 'التشغيل متوقف مؤقتًا وبياناتك محفوظة. تواصل مع دعم ماتشنا.',
+      },
+      pending: {
+        titleEn: `${change.nameEn} is back in review`,
+        titleAr: `${change.nameAr} قيد المراجعة`,
+        bodyEn: 'We will let you know as soon as the review is finished.',
+        bodyAr: 'سنبلغك فور انتهاء المراجعة.',
+      },
+    }[change.to];
+    if (!copy) return;
+    await this.notifications
+      .create({
+        dedupKey: `venue-status:${venueId}:${change.to}:${stamp.getTime()}`,
+        userId: change.ownerId,
+        category: 'system',
+        ...copy,
+        deepLink: '/owner/today',
+        payload: { kind: 'venue_status', venueId, status: change.to, reason: change.to === 'active' ? undefined : reason },
+      })
+      .catch(() => undefined);
   }
   async updateReview(actor: string, id: string, dto: AdminReviewDto) {
     const { reason, ...data } = dto;

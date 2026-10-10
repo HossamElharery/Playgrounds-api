@@ -118,3 +118,33 @@ describe('VenuesService — the owner\'s venue page', () => {
     });
   });
 });
+
+describe('VenuesService.update — activities and single-language text', () => {
+  function withSports(current: string[], texts?: any) {
+    const venue = { id: 'v1', ownerId: 'o1' };
+    const prisma: any = {
+      venue: { findUnique: jest.fn(async () => venue), update: jest.fn(async ({ data }: any) => ({ ...venue, ...data })) },
+      venueSport: { findMany: jest.fn(async () => current.map((sportId) => ({ sportId }))), deleteMany: jest.fn(), createMany: jest.fn() },
+      sportCategory: { count: jest.fn(async (args: any) => args.where.id.in.length) },
+      court: { count: jest.fn(async () => 0) },
+      $transaction: jest.fn((fn: any) => fn(prisma)),
+    };
+    return { svc: new VenuesService(prisma, undefined, texts), prisma };
+  }
+
+  it('an owner cannot change the venue activities, only an administrator can', async () => {
+    const { svc, prisma } = withSports(['sport-playstation']);
+    await expect(svc.update('v1', 'o1', false, { sportIds: ['sport-playstation', 'sport-padel'] } as any)).rejects.toMatchObject({ response: { code: 'ACTIVITIES_LOCKED' } });
+    expect(prisma.venueSport.deleteMany).not.toHaveBeenCalled();
+    await svc.update('v1', 'o1', false, { sportIds: ['sport-playstation'] } as any); // same set is harmless
+    await svc.update('v1', 'admin', true, { sportIds: ['sport-playstation', 'sport-padel'] } as any);
+    expect(prisma.venueSport.createMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('a single name and description fill both languages', async () => {
+    const texts = { both: jest.fn(async (t: string, kind: string) => (kind === 'name' ? { ar: t, en: 'Neon Lounge' } : { ar: t, en: 'Cosy place' })) };
+    const { svc, prisma } = withSports([], texts);
+    await svc.update('v1', 'o1', false, { name: 'صالة نيون', description: 'مكان مريح' } as any);
+    expect(prisma.venue.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ nameAr: 'صالة نيون', nameEn: 'Neon Lounge', descriptionAr: 'مكان مريح', descriptionEn: 'Cosy place' }) }));
+  });
+});

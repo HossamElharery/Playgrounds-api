@@ -123,6 +123,7 @@ describe('BookingsService', () => {
       ],
       venue: {
         id: 'v1',
+        status: 'active',
         paymentMode: 'at_venue',
         currency: 'EGP',
         weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:45' }])),
@@ -132,7 +133,8 @@ describe('BookingsService', () => {
     Object.assign(prisma, {
       court: { findUnique: jest.fn().mockResolvedValue(court) },
       platformSetting: { findUnique: jest.fn().mockResolvedValue({ serviceFeePct: 5, coinToEgpRate: 20 }) },
-      calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      resourceOccupancy: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+    calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
       booking: { ...prisma.booking, findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'b-new' }) },
     });
     const created = await service.holdSlot('u1', { courtId: 'c1', slotStart: new Date(Date.now() + 3_600_000).toISOString() });
@@ -153,7 +155,7 @@ describe('BookingsService', () => {
       venueId: 'v1',
       slotDurationMins: 60,
       pricingRules: [{ daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 400, currency: 'EGP', priority: 0 }],
-      venue: { id: 'v1', paymentMode: 'at_venue', currency: 'EGP', weeklyHours: null, country: { timezone: 'Africa/Cairo', currency: 'EGP' } },
+      venue: { id: 'v1', status: 'active', paymentMode: 'at_venue', currency: 'EGP', weeklyHours: null, country: { timezone: 'Africa/Cairo', currency: 'EGP' } },
     };
 
     it('offers no slots at all (it used to look open 24 hours)', async () => {
@@ -177,6 +179,7 @@ describe('BookingsService', () => {
       pricingRules: rules,
       venue: {
         id: 'v1',
+        status: 'active',
         paymentMode: 'at_venue',
         currency: 'AED',
         weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '20:00', close: '23:59' }])),
@@ -187,7 +190,8 @@ describe('BookingsService', () => {
       Object.assign(prisma, {
         court: { findUnique: jest.fn().mockResolvedValue(c) },
         booking: { ...prisma.booking, findMany: jest.fn().mockResolvedValue([]) },
-        calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
+        resourceOccupancy: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+    calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
       });
 
     it('is "unpriced" — never offered as free at price 0 or at another hour\'s price', async () => {
@@ -226,6 +230,23 @@ describe('BookingsService', () => {
         service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T21:30:00.000Z' }),
       ).rejects.toThrow('no pricing configured');
     });
+  });
+
+  it.each(['suspended', 'pending'])('refuses a player hold on a %s venue even when the court id is known', async (status) => {
+    Object.assign(prisma, {
+      court: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'c1',
+          venueId: 'v1',
+          slotDurationMins: 60,
+          pricingRules: [],
+          venue: { id: 'v1', status, weeklyHours: null, country: { timezone: 'Africa/Cairo' } },
+        }),
+      },
+    });
+    await expect(
+      service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T20:00:00.000Z' }),
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'VENUE_UNAVAILABLE' }) });
   });
 
   it('rejects online-only methods when the venue is at_venue', async () => {

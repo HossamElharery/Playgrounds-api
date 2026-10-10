@@ -40,6 +40,7 @@ enum UserStatus {
 
 model User {
   id                String        @id @default(uuid())
+  socialExposures    LobbySocialExposure[]
   phone             String?       @unique
   email             String?       @unique
   emailVerifiedAt   DateTime?
@@ -552,6 +553,18 @@ model Venue {
   createdAt                DateTime         @default(now())
   updatedAt                DateTime         @updatedAt
 
+  gamingSessionsEnabled Boolean @default(false)
+  gamingProductsEnabled Boolean @default(false)
+  gamingReceiptsEnabled Boolean @default(false)
+  gamingBillingPolicy Json?
+  gamingRooms        GamingRoom[]
+  gamingSessions     UsageSession[]
+  gamingOrders       GamingOrder[]
+  gamingProducts     GamingProduct[]
+  receiptDocuments   ReceiptDocument[]
+  receiptSettings    ReceiptSettings?
+  gamingLayout       GamingLayout?
+  gamingLayoutRevisions GamingLayoutRevision[]
   courts             Court[]
   photos             VenuePhoto[]
   amenities          VenueAmenity[]
@@ -647,6 +660,14 @@ model Court {
   ageRating        String?
   createdAt        DateTime      @default(now())
 
+  gamingHourlyRateMinor Int?
+  gamingPublished Boolean @default(true)
+  gamingRoomId   String?
+  gamingRoom     GamingRoom? @relation("GamingRoomChildren", fields: [gamingRoomId], references: [id], onDelete: Restrict)
+  bookableRoom   GamingRoom? @relation("GamingRoomCourt")
+  usageSessions  UsageSession[]
+  usageSegments  UsageSegment[]
+  occupancies    ResourceOccupancy[]
   pricingRules   PricingRule[]
   discounts      PricingDiscount[]
   bookings       Booking[]
@@ -816,6 +837,9 @@ model Booking {
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
 
+  receiptDocuments ReceiptDocument[]
+  usageSession        UsageSession?
+  occupancies         ResourceOccupancy[]
   splitShares         BookingSplitShare[]
   payments            Payment[]
   ledgerEntries       VenueLedgerEntry[]
@@ -866,8 +890,13 @@ model BookingSplitShare {
 
 model Payment {
   id                String        @id @default(uuid())
-  bookingId         String
-  booking           Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId         String?
+  booking           Booking?      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  gamingOrderId     String?
+  gamingOrder       GamingOrder? @relation(fields: [gamingOrderId], references: [id], onDelete: Restrict)
+  allocations       GamingPaymentAllocation[]
+  receiptDocuments  ReceiptDocument[]
+  moneyScale Int @default(100)
   amount            Int
   currency          String        @default("EGP")
   method            PaymentMethod
@@ -882,6 +911,7 @@ model Payment {
   shift             CashShift?    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
   /// A taken-back payment is never deleted: a negative `refunded` row points at the original, so a
   /// closed shift stays true and the correction lands in the shift that was open when it happened.
+  gamingReversesPaymentId String?
   reversesPaymentId String?       @unique
   note              String?
   createdAt         DateTime      @default(now())
@@ -914,6 +944,7 @@ model CashShift {
   difference     Int       @default(0)
   /// Cash left in the drawer for the next shift; the rest (counted − carryOver) was handed to the owner.
   carryOver      Int       @default(0)
+  moneyScale Int @default(100)
   currency       String    @default("EGP")
   /// { cash: { in, out, count }, instapay: {...}, ... } — every method, for the receipt.
   breakdown      Json
@@ -1332,6 +1363,7 @@ model ChatMessage {
 }
 
 model Notification {
+  dedupKey String? @unique
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1353,12 +1385,34 @@ model Notification {
 
 model Squad {
   id        String   @id @default(uuid())
+  socialState LobbySocialState?
   createdAt DateTime @default(now())
 
   members      SquadMember[]
   invites      SquadInvite[]
   joinRequests SquadJoinRequest[]
   inviteLink   SquadInviteLink?
+}
+
+/// Private server state. Public snapshots are explicit projections, never this JSON.
+model LobbySocialState {
+  squadId   String   @id
+  squad     Squad    @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  state     Json
+  updatedAt DateTime @default(now()) @db.Timestamptz
+}
+
+model LobbySocialExposure {
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roundId    String
+  sessionId  String
+  questionId String
+  familyId   String
+  seenAt     DateTime @default(now()) @db.Timestamptz
+
+  @@id([userId, roundId])
+  @@index([userId, familyId])
 }
 
 /// One shareable private link per squad. The public token is
@@ -1983,6 +2037,14 @@ model PlatformSetting {
   coinToEgpRate           Float    @default(20)
   autoHideReportThreshold Int      @default(5)
   updatedAt               DateTime @updatedAt
+}
+
+model LobbySocialQuestion {
+  id        String   @id
+  data      Json
+  version   Int      @default(1)
+  updatedBy String
+  updatedAt DateTime @default(now()) @db.Timestamptz
 }
 
 model PageSeoOverride {
@@ -3005,6 +3067,7 @@ model CashHandover {
   countedFloat   Int        @default(0)
   /// counted − expected: negative = less than the last shift left.
   difference     Int        @default(0)
+  moneyScale Int @default(100)
   currency       String     @default("EGP")
   note           String?
   /// Set when the shift this handover started is closed.
@@ -3013,4 +3076,253 @@ model CashHandover {
 
   @@index([venueId, drawerUserId, shiftId])
   @@index([venueId, openedAt])
+}
+
+/// Venue drawing only: changing it never changes booking/payment identity.
+model GamingLayout {
+  venueId       String @id
+  venue         Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  revision      Int @default(0)
+  draftVersion  Int @default(0)
+  draft         Json?
+  draftByUserId String?
+  updatedAt     DateTime @updatedAt
+}
+
+/// Append-only published snapshots; restore creates another revision.
+model GamingLayoutRevision {
+  id            String @id @default(uuid())
+  venueId       String
+  venue         Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  revision      Int
+  document      Json
+  requestKey    String @unique
+  requestHash   String
+  createdById   String
+  createdAt     DateTime @default(now())
+  @@unique([venueId, revision])
+  @@index([venueId, createdAt])
+}
+
+
+/// Published room identity; a bookable exclusive room reuses Court.
+model GamingRoom {
+  id String @id
+  venueId String
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  name String
+  floorId String
+  occupancy String @default("independent")
+  bookableCourtId String? @unique
+  bookableCourt Court? @relation("GamingRoomCourt", fields: [bookableCourtId], references: [id], onDelete: Restrict)
+  children Court[] @relation("GamingRoomChildren")
+  @@index([venueId])
+}
+
+model UsageSession {
+  id String @id @default(uuid())
+  venueId String
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  unitId String
+  unit Court @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  bookingId String? @unique
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  orderId String
+  order GamingOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  state String @default("running")
+  startedAt DateTime
+  endedAt DateTime?
+  expectedEnd DateTime?
+  version Int @default(1)
+  policy Json
+  createdById String
+  segments UsageSegment[]
+  occupancies ResourceOccupancy[]
+  @@index([venueId, state])
+  @@index([unitId, startedAt])
+  @@index([orderId])
+}
+
+model UsageSegment {
+  id String @id @default(uuid())
+  sessionId String
+  session UsageSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  unitId String
+  unit Court @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  startedAt DateTime
+  endedAt DateTime?
+  hourlyRateMinor Int
+  currency String
+  rateSnapshot Json
+  @@index([sessionId, startedAt])
+}
+
+/// Shared by triggers for EVERY Booking source and active UsageSession.
+model ResourceOccupancy {
+  id String @id @default(uuid())
+  resourceId String
+  resource Court @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  bookingId String?
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sessionId String?
+  session UsageSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  blockId String?
+  startsAt DateTime
+  endsAt DateTime?
+  running Boolean @default(false)
+  @@index([bookingId])
+  @@index([sessionId])
+  @@index([blockId])
+  @@index([resourceId, startsAt])
+}
+
+model GamingOrder {
+  id String @id @default(uuid())
+  venueId String
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  moneyScale Int @default(100)
+  currency String
+  state String @default("open")
+  version Int @default(1)
+  customerId String?
+  guestName String?
+  guestPhone String?
+  totalMinor Int @default(0)
+  createdById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions UsageSession[]
+  lines GamingOrderLine[]
+  payments Payment[]
+  receipts ReceiptDocument[]
+  @@index([venueId, state, createdAt])
+}
+
+model GamingOrderLine {
+  id String @id @default(uuid())
+  orderId String
+  order GamingOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  kind String
+  sourceId String?
+  nameAr String
+  nameEn String
+  quantity Int
+  unitPriceMinor Int
+  amountMinor Int
+  returnedQuantity Int @default(0)
+  snapshot Json
+  createdAt DateTime @default(now())
+  allocations GamingPaymentAllocation[]
+  @@index([orderId, createdAt])
+}
+
+model GamingPaymentAllocation {
+  id String @id @default(uuid())
+  paymentId String
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  lineId String
+  line GamingOrderLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  amountMinor Int
+  @@unique([paymentId, lineId])
+  @@index([lineId])
+}
+
+model GamingProduct {
+  id String @id @default(uuid())
+  venueId String
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  nameAr String
+  nameEn String
+  category String @default("other")
+  sku String?
+  priceMinor Int
+  currency String
+  active Boolean @default(true)
+  stockTracked Boolean @default(false)
+  availableQuantity Int @default(0)
+  version Int @default(1)
+  movements GamingStockMovement[]
+  @@index([venueId, active, category])
+}
+
+model GamingStockMovement {
+  id String @id @default(uuid())
+  productId String
+  product GamingProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
+  delta Int
+  reason String
+  orderLineId String?
+  createdById String
+  createdAt DateTime @default(now())
+  @@index([productId, createdAt])
+}
+
+model GamingCommand {
+  id String @id @default(uuid())
+  venueId String
+  actorId String
+  requestKey String
+  requestHash String
+  operation String
+  response Json
+  createdAt DateTime @default(now())
+  @@unique([venueId, actorId, requestKey])
+}
+
+model ReceiptDocument {
+  id String @id @default(uuid())
+  venueId String
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  bookingId String?
+  booking Booking? @relation(fields:[bookingId], references:[id], onDelete:Restrict)
+  orderId String?
+  order GamingOrder? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentId String? @unique
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  number Int
+  kind String
+  originalId String?
+  snapshot Json
+  issuedAt DateTime @default(now())
+  printJobs GamingPrintJob[]
+  @@unique([venueId, number])
+  @@index([orderId, issuedAt])
+}
+
+model ReceiptSettings {
+  logoPhotoId String?
+  venueId String @id
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  widthMm Int @default(80)
+  language String @default("bilingual")
+  header String @default("")
+  footer String @default("")
+  copies Int @default(1)
+  autoPrint Boolean @default(false)
+  nextNumber Int @default(1)
+  version Int @default(1)
+}
+
+model GamingPrintJob {
+  id String @id @default(uuid())
+  receiptId String
+  receipt ReceiptDocument @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  actorId String
+  terminalId String
+  status String @default("queued")
+  attempts Int @default(0)
+  updatedAt DateTime @updatedAt
+  @@index([receiptId])
+}
+
+model GamingOutbox {
+  id String @id @default(uuid())
+  venueId String
+  entityId String
+  version Int
+  type String
+  createdAt DateTime @default(now())
+  deliveredAt DateTime?
+  attempts Int @default(0)
+  @@index([deliveredAt, createdAt])
 }

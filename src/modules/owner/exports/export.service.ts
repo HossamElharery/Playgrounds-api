@@ -1,3 +1,5 @@
+import { legacyMoney } from '../../../common/money/money-scale';
+import { GAMING_BOOKING_MONEY_SELECT,gamingBookingPayments } from '../gaming/booking-gaming-money';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../../finance/ledger.service';
@@ -121,7 +123,7 @@ const WEEKDAYS: [string, string][] = [
   ['الخميس', 'Thursday'], ['الجمعة', 'Friday'], ['السبت', 'Saturday'],
 ];
 
-const major = (minor: number) => Math.round(minor) / 100;
+const major = (minor: number) => minor / 100;
 
 /**
  * "Export centre": every figure an accountant asks for, for any period, in one workbook.
@@ -211,6 +213,7 @@ export class ExportService {
     const bookingRows = await this.prisma.booking.findMany({
       where: { venueId, slotStart: { gte: range.start, lt: range.end }, status: { not: 'cancelled' } },
       include: {
+        usageSession:{select:GAMING_BOOKING_MONEY_SELECT},
         court: { select: { name: true } },
         user: { select: { name: true } },
         payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
@@ -231,7 +234,7 @@ export class ExportService {
       rows: bookingRows.map((b) => {
         const local = localDateTime(b.slotStart, tz);
         // The same statement the booking sheet shows: price − your discount = owed − commission = what you keep.
-        const { received, refunded } = netOf(b.payments);
+        const { received, refunded } = netOf([...b.payments,...gamingBookingPayments(b.usageSession)]);
         const st = buildBookingStatement(b, received, refunded);
         return [
           b.code,
@@ -260,10 +263,10 @@ export class ExportService {
       where: {
         status: { in: COUNTED_PAYMENT_STATUSES },
         createdAt: { gte: range.start, lt: range.end },
-        booking: { venueId },
-        OR: [{ booking: { source: 'manual' } }, { recordedByUserId: { not: null } }],
+        AND: [{ OR: [{ booking: { venueId } }, { gamingOrder: { venueId } }] }],
+        OR: [{ gamingOrder: { venueId } }, { booking: { source: 'manual' } }, { recordedByUserId: { not: null } }],
       },
-      include: { booking: { select: { code: true, slotStart: true, status: true, guestName: true, source: true, user: { select: { name: true } } } } },
+      include: { booking: { select: { code: true, slotStart: true, status: true, guestName: true, source: true, user: { select: { name: true } } } }, gamingOrder: { select: { id: true, guestName: true, createdAt: true } } },
       orderBy: { createdAt: 'asc' },
       take: MAX_BOOKING_ROWS,
     });
@@ -273,11 +276,11 @@ export class ExportService {
     });
     const takerName = new Map(takers.map((u) => [u.id, u.name]));
     const bucketOf = (p: (typeof paymentRows)[number]) =>
-      p.booking.status === 'cancelled'
+      p.booking?.status === 'cancelled'
         ? t('bucketCancelled')
-        : p.booking.slotStart >= range.end
+        : p.booking && p.booking.slotStart >= range.end
           ? t('bucketAdvance')
-          : p.booking.slotStart < range.start
+          : p.booking && p.booking.slotStart < range.start
             ? t('bucketLate')
             : t('bucketPeriod');
     const moneyInSheet: ExportSheet = {
@@ -292,11 +295,11 @@ export class ExportService {
         return [
           at.date,
           at.time,
-          p.booking.code,
-          localDateTime(p.booking.slotStart, tz).date,
-          p.booking.source === 'manual' ? (p.booking.guestName ?? '') : (p.booking.user?.name ?? ''),
+          p.booking?.code ?? p.gamingOrder?.id ?? '',
+          localDateTime(p.booking?.slotStart ?? p.gamingOrder?.createdAt ?? p.createdAt, tz).date,
+          p.booking ? (p.booking.source === 'manual' ? p.booking.guestName ?? '' : p.booking.user?.name ?? '') : p.gamingOrder?.guestName ?? '',
           p.method,
-          major(p.amount),
+          major(legacyMoney(p)),
           p.recordedByUserId ? (takerName.get(p.recordedByUserId) ?? '') : '',
           bucketOf(p),
           p.note ?? '',

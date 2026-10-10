@@ -33,7 +33,7 @@ function build(over: { staff?: { permissions: string[]; venueIds: string[]; owne
         return Promise.resolve([]);
       }),
     },
-    payment: { groupBy: jest.fn().mockImplementation(({ where }: { where: { booking: { venueId: string } } }) => Promise.resolve(where.booking.venueId === 'v-eg' ? [{ recordedByUserId: 'a' }, { recordedByUserId: 'b' }] : [])) },
+    payment: { groupBy: jest.fn().mockImplementation(({ where }: { where: { OR:{booking?:{venueId:string}}[] } }) => Promise.resolve(where.OR[0].booking!.venueId === 'v-eg' ? [{ recordedByUserId: 'a' }, { recordedByUserId: 'b' }] : [])) },
     cashHandover: { count: jest.fn().mockResolvedValue(0) },
     cashShift: { count: jest.fn().mockImplementation(({ where }: { where: { venueId: string } }) => Promise.resolve(where.venueId === 'v-ae' ? 1 : 0)) },
     staffMember: { findUnique: jest.fn().mockResolvedValue(over.staff ?? null) },

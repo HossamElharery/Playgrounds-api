@@ -8,7 +8,7 @@ import {
 } from './morph-catalog';
 
 describe('morph catalog', () => {
-  it('matches the literal v5 id list (parity with the frontend registry spec)', () => {
+  it('matches the literal v6 id list (parity with the frontend registry spec)', () => {
     expect(MORPH_CATALOG.map((d) => d.id)).toEqual([
       'potato',
       'banana',
@@ -33,13 +33,14 @@ describe('morph catalog', () => {
       'griff',
       'rabid',
       'tiny_planet',
+      'pilot_rooster',
     ]);
   });
 
-  it('has 10 common, 6 epic and 7 misk morphs, all rollable with weight 10', () => {
+  it('has 10 common, 6 epic and 8 misk morphs, all rollable with weight 10', () => {
     const count = (t: string) =>
       MORPH_CATALOG.filter((d) => d.tier === t).length;
-    expect([count('COMMON'), count('EPIC'), count('MISK')]).toEqual([10, 6, 7]);
+    expect([count('COMMON'), count('EPIC'), count('MISK')]).toEqual([10, 6, 8]);
     expect(MORPH_CATALOG.every((d) => d.rollable && d.weight === 10)).toBe(
       true,
     );
@@ -52,7 +53,7 @@ describe('morph catalog', () => {
     expect(morphById('royal_falcon')).toMatchObject({ tier: 'MISK', sinceVersion: 2 });
     expect(
       MORPH_CATALOG.filter(
-        (d) => !['royal_falcon', 'nile_queen', 'ultra', 'gamer', 'griff', 'rabid', 'tiny_planet'].includes(d.id),
+        (d) => !['royal_falcon', 'nile_queen', 'ultra', 'gamer', 'griff', 'rabid', 'tiny_planet', 'pilot_rooster'].includes(d.id),
       ).every((d) => d.sinceVersion === 1),
     ).toBe(true);
   });
@@ -67,10 +68,14 @@ describe('morph catalog', () => {
   });
 
   it('introduces the imported characters as Misk in catalog v5', () => {
-    expect(MORPH_CATALOG_VERSION).toBe(5);
     for (const id of ['griff', 'rabid', 'tiny_planet']) {
       expect(morphById(id)).toMatchObject({ tier: 'MISK', sinceVersion: 5, rollable: true });
     }
+  });
+
+  it('introduces the Pilot Rooster as Misk in catalog v6', () => {
+    expect(MORPH_CATALOG_VERSION).toBe(6);
+    expect(morphById('pilot_rooster')).toMatchObject({ tier: 'MISK', sinceVersion: 6, rollable: true });
   });
 
   it('tier odds sum to 10000 basis points', () => {

@@ -1,3 +1,5 @@
+import { GAMING_BOOKING_MONEY_SELECT,gamingBookingPayments } from './gaming/booking-gaming-money';
+import { assertActivityDuration, usesMinuteTiming } from '../../common/utils/activity-timing.util';
 import { rethrowConcurrentWrite } from '../../common/utils/transaction-error.util';
 import { isSafeReceiptUrl } from '../../common/utils/receipt-url.util';
 import { hasOpeningHours } from '../../common/utils/venue-readiness.util';
@@ -193,11 +195,12 @@ export class OwnerBookingsService {
       await assertStaffPermission(this.prisma, user, 'payments.record');
     }
     if (!Number.isSafeInteger(dto.priceAmount) || dto.priceAmount < 0 || dto.priceAmount > 10_000_000 ||
-        !Number.isInteger(dto.durationMinutes) || dto.durationMinutes < 15 || dto.durationMinutes > 720 ||
-        !Number.isFinite(new Date(dto.startsAt).getTime()) ||
+        !Number.isInteger(dto.durationMinutes) || dto.durationMinutes < 1 || dto.durationMinutes > 720 ||
+        (dto.startMode !== 'now' && !Number.isFinite(new Date(dto.startsAt).getTime())) ||
         (dto.paidAmount != null && (!Number.isSafeInteger(dto.paidAmount) || dto.paidAmount <= 0 || dto.paidAmount > dto.priceAmount))) {
       throw new BadRequestException('Invalid booking amount, time or duration');
     }
+    if (dto.startMode === 'now' && (dto.offlineGrant || !dto.requestKey)) throw new BadRequestException('Now requires an online idempotent request');
     const replay = await this.manualReplay(user, dto);
     if (replay) return replay;
     if (dto.offlineGrant) {
@@ -229,9 +232,6 @@ export class OwnerBookingsService {
         'Set the venue opening hours before adding bookings',
       );
     }
-    if (dto.durationMinutes % 15 !== 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
-    }
     const court = await this.prisma.court.findUnique({
       where: { id: dto.courtId },
       include: { sport: { select: { activityKind: true } } },
@@ -239,8 +239,10 @@ export class OwnerBookingsService {
     if (!court || court.venueId !== dto.venueId) {
       throw new BadRequestException('Court does not belong to this venue');
     }
-    const slotStart = new Date(dto.startsAt);
-    const slotEnd = new Date(slotStart.getTime() + dto.durationMinutes * 60_000);
+    assertActivityDuration(dto.durationMinutes, court.sport.activityKind);
+    if (dto.startMode === 'now' && (!usesMinuteTiming(court.sport.activityKind) || venue.status !== 'active' || !venue.approvedAt)) throw new BadRequestException('Now requires an approved gaming venue');
+    let slotStart = dto.startMode === 'now' ? new Date() : new Date(dto.startsAt);
+    let slotEnd = new Date(slotStart.getTime() + dto.durationMinutes * 60_000);
     if (!dto.offlineGrant) assertSlotNotInPast(slotStart);
     if (dto.paymentStatus === 'partial') {
       if (!dto.paidAmount || dto.paidAmount <= 0 || dto.paidAmount >= dto.priceAmount) {
@@ -263,7 +265,7 @@ export class OwnerBookingsService {
     const weeklyHours = venue.weeklyHours as WeeklyHours | null;
     const timeZone = await this.venueTz(dto.venueId);
     if (weeklyHours) {
-      for (let t = slotStart.getTime(); t < slotEnd.getTime(); t += 15 * 60_000) {
+      for (let t = slotStart.getTime(); t < slotEnd.getTime(); t += (usesMinuteTiming(court.sport.activityKind) ? 1 : 15) * 60_000) {
         const instant = new Date(t);
         const day = zonedWeekday(instant, timeZone);
         const hours = weeklyHours[String(day)] ?? weeklyHours[day as unknown as string];
@@ -277,6 +279,13 @@ export class OwnerBookingsService {
     try {
       const booking = await this.prisma.$transaction(
         async (tx) => {
+          if (dto.startMode === 'now') {
+            await tx.$queryRaw`SELECT "id" FROM "Court" WHERE "id" = ${dto.courtId} FOR UPDATE`;
+            const approved = await tx.venue.findUnique({ where: { id: dto.venueId } });
+            if (approved?.status !== 'active' || !approved.approvedAt) throw new BadRequestException('Venue must be approved');
+            slotStart = new Date();
+            slotEnd = new Date(slotStart.getTime() + dto.durationMinutes * 60_000);
+          }
           const created = await this.insertManualBooking(tx, {
             userId: user.id,
             requestKey: dto.requestKey,
@@ -321,7 +330,7 @@ export class OwnerBookingsService {
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
-      return { ...(await this.toOwnerBookingDto(booking, user)), warnings };
+      return { ...(await this.toOwnerBookingDto(booking, user)), warnings, serverNow: new Date().toISOString() };
     } catch (error) {
       if (dto.requestKey) {
         const replay = await this.manualReplay(user, dto);
@@ -489,9 +498,9 @@ export class OwnerBookingsService {
     const slotStart = dto.startsAt ? new Date(dto.startsAt) : booking.slotStart;
     const durationMinutes = dto.durationMinutes
       ?? Math.round((booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000);
-    if (durationMinutes % 15 !== 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
-    }
+    const timedCourt = await this.prisma.court.findUnique({ where: { id: courtId }, include: { sport: { select: { activityKind: true } } } });
+    if (!timedCourt || timedCourt.venueId !== booking.venueId) throw new BadRequestException('Court does not belong to this venue');
+    assertActivityDuration(durationMinutes, timedCourt.sport?.activityKind);
     const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
     // Money/notes on an old booking stay editable (e.g. recording a late payment);
     // moving it to a time that already passed is not.
@@ -1073,24 +1082,23 @@ export class OwnerBookingsService {
     durationMinutes: number,
   ) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
-    if (!durationMinutes || durationMinutes % 15 !== 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
-    }
     const court = await this.prisma.court.findUnique({
       where: { id: courtId },
-      include: { pricingRules: true, venue: { include: { country: true } } },
+      include: { sport: true, pricingRules: true, venue: { include: { country: true } } },
     });
     if (!court || court.venueId !== venueId) {
       throw new BadRequestException('Court does not belong to this venue');
     }
+    assertActivityDuration(durationMinutes, court.sport?.activityKind);
     const tz = court.venue.country.timezone;
     const start = new Date(startsAt);
-    const quote = quoteDurationPrice(court.pricingRules, start, durationMinutes, tz);
+    if (!Number.isFinite(start.getTime())) throw new BadRequestException('Invalid start time');
+    const quote = quoteDurationPrice(court.pricingRules, start, durationMinutes, tz, usesMinuteTiming(court.sport?.activityKind));
     const weeklyHours = court.venue.weeklyHours as WeeklyHours | null;
     const warnings: string[] = [];
     if (!hasOpeningHours(weeklyHours)) warnings.push('VENUE_HOURS_REQUIRED');
     else {
-      for (let elapsed = 0; elapsed < durationMinutes; elapsed += 15) {
+      for (let elapsed = 0; elapsed < durationMinutes; elapsed += (usesMinuteTiming(court.sport?.activityKind) ? 1 : 15)) {
         const instant = new Date(start.getTime() + elapsed * 60_000);
         const hours = weeklyHours![String(zonedWeekday(instant, tz))];
         if (!isTimeWithinDayHours(zonedHhmm(instant, tz), hours)) {
@@ -1189,6 +1197,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true, nameEn: true, nameAr: true } } } },
         user: { select: { id: true, name: true, phone: true } },
+        venue:{select:{gamingReceiptsEnabled:true}},usageSession:{select:GAMING_BOOKING_MONEY_SELECT},
         payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: scope === 'upcoming' || scope === 'today' ? [{ slotStart: 'asc' }, { id: 'asc' }] : [{ slotStart: 'desc' }, { id: 'desc' }],
@@ -1220,6 +1229,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
+        venue:{select:{gamingReceiptsEnabled:true}},usageSession:{select:GAMING_BOOKING_MONEY_SELECT},
         payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: { slotEnd: 'asc' },
@@ -1235,6 +1245,7 @@ export class OwnerBookingsService {
       include: {
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
+        venue:{select:{gamingReceiptsEnabled:true}},usageSession:{select:GAMING_BOOKING_MONEY_SELECT},
         payments: { where: { status: { in: COUNTED_PAYMENT_STATUSES } }, select: { amount: true } },
       },
       orderBy: { slotStart: 'asc' },
@@ -1360,6 +1371,7 @@ export class OwnerBookingsService {
     const loaded = await this.prisma.booking.findUniqueOrThrow({
       where: { id: booking.id },
       include: {
+        venue:{select:{gamingReceiptsEnabled:true}},usageSession:{select:GAMING_BOOKING_MONEY_SELECT},
         court: { include: { sport: { select: { activityKind: true } } } },
         user: { select: { id: true, name: true, phone: true } },
         payments: {
@@ -1390,7 +1402,8 @@ export class OwnerBookingsService {
     const manual = loaded.source === 'manual';
     const withPayments = {
       ...dto,
-      payments: loaded.payments.map((p) => ({
+      gamingOrderId:loaded.usageSession?.orderId??null,isLocked:!!loaded.usageSession||dto.isLocked,canEdit:!loaded.usageSession&&dto.canEdit,
+      payments: [...loaded.payments,...gamingBookingPayments(loaded.usageSession)].map((p) => ({
         id: p.id,
         kind: p.amount < 0 ? ('refund' as const) : ('payment' as const),
         amount: p.amount,
@@ -1402,7 +1415,7 @@ export class OwnerBookingsService {
         reversesPaymentId: p.reversesPaymentId,
         reversed: reversed.has(p.id),
         canVoid:
-          manual &&
+          !loaded.usageSession && manual &&
           p.amount > 0 &&
           !reversed.has(p.id) &&
           (canAll || (p.recordedByUserId === user.id && p.shiftId == null)),
@@ -1442,9 +1455,11 @@ export class OwnerBookingsService {
     currency: string;
     bundleId?: string | null;
     payments?: { amount: number }[];
+    venue?:{gamingReceiptsEnabled:boolean};
+    usageSession?: Parameters<typeof gamingBookingPayments>[0];
   }) {
     const durationMinutes = Math.round((b.slotEnd.getTime() - b.slotStart.getTime()) / 60_000);
-    const { received: paidAmount, refunded } = netOf(b.payments ?? []);
+    const { received: paidAmount, refunded } = netOf([...(b.payments ?? []),...gamingBookingPayments(b.usageSession)]);
     const statement = buildBookingStatement(b, paidAmount, refunded);
     const isLocked = b.source === 'platform';
     const tooOld = Date.now() - b.slotStart.getTime() > NINETY_DAYS_MS;
@@ -1493,8 +1508,10 @@ export class OwnerBookingsService {
       notes: b.notes,
       checkedInAt: b.checkedInAt?.toISOString() ?? null,
       bundleId: b.bundleId ?? null,
-      isLocked,
-      canEdit: !isLocked && !tooOld && b.status !== 'cancelled',
+      receiptsEnabled:b.venue?.gamingReceiptsEnabled??false,
+      gamingOrderId:b.usageSession?.orderId??null,
+      isLocked:isLocked||!!b.usageSession,
+      canEdit: !b.usageSession && !isLocked && !tooOld && b.status !== 'cancelled',
       needsAttention,
     };
   }
@@ -1519,6 +1536,8 @@ export class OwnerBookingsService {
       select: { id: true },
     });
     if (overlap) return 'SLOT_ALREADY_HELD';
+    const shared = await db.resourceOccupancy.findFirst({where:{OR:[{resourceId:courtId},{resource:{gamingRoom:{bookableCourtId:courtId,occupancy:'exclusive'}}}],startsAt:{lt:slotEnd},AND:[{OR:[{endsAt:null},{endsAt:{gt:slotStart}}]}],...(excludeId?{NOT:{bookingId:excludeId}}:{})}});
+    if(shared) return shared.blockId ? 'SLOT_BLOCKED' : 'SLOT_ALREADY_HELD';
     const blocked = await db.calendarBlock.findFirst({
       where: {
         venueId,

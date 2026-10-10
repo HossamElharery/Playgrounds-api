@@ -14,21 +14,33 @@ import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 export class PartnerRegisterDto {
   @ApiProperty({ example: 'Ahmed El-Malek' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MinLength(2)
   @MaxLength(80)
   name!: string;
 
-  @ApiProperty({ example: 'elmalek' })
+  @ApiPropertyOptional({
+    example: 'elmalek',
+    description: 'Optional; generated when omitted',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
   @IsString()
   @Matches(USERNAME_PATTERN, {
     message:
       'Username must start with a letter and be 4–30 letters, digits, dots or underscores',
   })
-  username!: string;
+  username?: string;
 
   @ApiProperty({ example: 'new.owner@matchena.com' })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail()
+  @MaxLength(150)
   email!: string;
 
   @ApiPropertyOptional({ example: '+201001112223' })
@@ -39,7 +51,7 @@ export class PartnerRegisterDto {
 
   @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @MinLength(10)
+  @MinLength(8)
   @MaxLength(128)
   @Matches(/^(?=.*[A-Za-z])(?=.*\d).+$/, {
     message: 'Password must contain letters and numbers',

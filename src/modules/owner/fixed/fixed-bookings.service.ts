@@ -1,3 +1,4 @@
+import { assertActivityDuration, usesMinuteTiming } from '../../../common/utils/activity-timing.util';
 import { BadRequestException, ConflictException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { hasOpeningHours } from '../../../common/utils/venue-readiness.util';
 import { Cron } from '@nestjs/schedule';
@@ -56,6 +57,7 @@ interface CourtCtx {
   id: string;
   venueId: string;
   timeZone: string;
+  activityKind?: string | null;
   pricingRules: Prisma.PricingRuleGetPayload<object>[];
 }
 
@@ -231,9 +233,7 @@ export class FixedBookingsService {
     const courtId = dto.courtId ?? series.courtId;
     const court = await this.loadCourt(courtId, venueId);
     const duration = dto.durationMinutes ?? series.durationMins;
-    if (duration % 15 !== 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
-    }
+    assertActivityDuration(duration, court.activityKind);
 
     const dates = seriesDates(dto.fromDate, { until: series.until }).filter((d) => !series.skippedDates.includes(d));
     const horizonEnd = addDays(zonedDate(new Date(), tz), FIXED_HORIZON_WEEKS * 7);
@@ -424,10 +424,8 @@ export class FixedBookingsService {
   }
 
   private async resolveShape(dto: FixedSeriesShapeDto): Promise<ResolvedShape> {
-    if (dto.durationMinutes % 15 !== 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_DURATION', 'Duration must be a multiple of 15 minutes');
-    }
     const court = await this.loadCourt(dto.courtId, dto.venueId);
+    assertActivityDuration(dto.durationMinutes, court.activityKind);
     const tz = await this.venueTz(dto.venueId);
     const first = new Date(dto.startsAt);
     const startDate = zonedDate(first, tz);
@@ -456,16 +454,16 @@ export class FixedBookingsService {
   private async loadCourt(courtId: string, venueId: string) {
     const court = await this.prisma.court.findUnique({
       where: { id: courtId },
-      include: { pricingRules: true },
+      include: { pricingRules: true, sport: true },
     });
     if (!court || court.venueId !== venueId) {
       throw new BadRequestException('Court does not belong to this venue');
     }
-    return { id: court.id, venueId: court.venueId, pricingRules: court.pricingRules };
+    return { id: court.id, venueId: court.venueId, activityKind: court.sport?.activityKind, pricingRules: court.pricingRules };
   }
 
   private quote(court: CourtCtx, start: Date, durationMins: number): number | null {
-    return quoteDurationPrice(court.pricingRules, start, durationMins, court.timeZone).priceAmount;
+    return quoteDurationPrice(court.pricingRules, start, durationMins, court.timeZone, usesMinuteTiming(court.activityKind)).priceAmount;
   }
 
   private async loadWritable(user: AuthenticatedUser, seriesId: string) {

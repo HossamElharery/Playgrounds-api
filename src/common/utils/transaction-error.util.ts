@@ -13,7 +13,8 @@ export function rethrowConcurrentWrite(error: unknown): never {
     }
   }
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('23P01') || message.includes('Booking_court_slot_range_excl')) {
+  if (message.includes('BOOKING_LINKED_TO_SESSION') || message.includes('GAMING_ORDER_REQUIRED')) throw new ApiException(HttpStatus.CONFLICT, 'BOOKING_LINKED_TO_SESSION', 'Use the linked gaming order to change or refund this booking');
+  if (message.includes('23P01') || message.includes('Booking_court_slot_range_excl') || message.includes('ResourceOccupancy_') || message.includes('RESOURCE_IN_USE')) {
     throw new ApiException(HttpStatus.CONFLICT, 'SLOT_ALREADY_HELD', 'This slot is already occupied');
   }
   throw error;

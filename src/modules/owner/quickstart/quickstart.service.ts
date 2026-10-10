@@ -90,7 +90,7 @@ export class QuickstartService {
     const text = (v?: string | null) => (v ?? '').trim();
     const readinessItems: ReadinessItem[] = [
       { key: 'photos', done: photos >= 1, level: 'required', have: photos, want: 3, route: section('details') },
-      { key: 'description', done: text(venue?.descriptionAr).length >= 20 || text(venue?.descriptionEn).length >= 20, level: 'required', route: section('details') },
+      { key: 'description', done: text(venue?.descriptionAr).length > 0 || text(venue?.descriptionEn).length > 0, level: 'recommended', route: section('details') },
       { key: 'address', done: text(venue?.address).length > 0 && !(venue?.lat === 0 && venue?.lng === 0), level: 'required', route: section('location') },
       { key: 'phone', done: text(venue?.contactPhone).length > 0, level: 'required', route: section('details') },
       { key: 'cancellation', done: text(venue?.cancellationPolicy).length > 0, level: 'recommended', route: section('details') },

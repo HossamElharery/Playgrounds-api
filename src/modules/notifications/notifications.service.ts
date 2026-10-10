@@ -14,6 +14,7 @@ import { WebPushService } from './web-push.service';
 import { FcmService } from './fcm.service';
 
 export interface CreateNotificationInput {
+  dedupKey?: string;
   userId: string;
   category: string;
   titleEn: string;
@@ -96,8 +97,10 @@ export class NotificationsService {
     const prefs = (user?.notificationPrefs ?? {}) as Record<string, boolean>;
     if (!this.categoryEnabled(prefs, input.category)) return null;
 
+    if(input.dedupKey){const previous=await this.prisma.notification.findUnique({where:{dedupKey:input.dedupKey}});if(previous)return previous;}
     const notification = await this.prisma.notification.create({
       data: {
+        ...(input.dedupKey?{dedupKey:input.dedupKey}:{}),
         userId: input.userId,
         category: input.category,
         titleEn: input.titleEn,
@@ -107,7 +110,8 @@ export class NotificationsService {
         deepLink: input.deepLink,
         payload: input.payload as object | undefined,
       },
-    });
+    }).catch(error=>{if(input.dedupKey&&error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return null;throw error;});
+    if(!notification)return this.prisma.notification.findUniqueOrThrow({where:{dedupKey:input.dedupKey!}});
     this.emitter.emitToUser(input.userId, {
       type: 'notification.created',
       notification,

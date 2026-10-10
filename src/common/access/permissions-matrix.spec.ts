@@ -1,3 +1,6 @@
+import { GamingSetupController } from '../../modules/owner/gaming/gaming-setup.controller';
+import { GamingOperationsController } from '../../modules/owner/gaming/gaming-operations.controller';
+import { GamingLayoutController } from '../../modules/owner/gaming/gaming-layout.controller';
 import { METHOD_METADATA } from '@nestjs/common/constants';
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -14,7 +17,7 @@ import { SubscriptionsController } from '../../modules/subscriptions/subscriptio
  * marked owner-only refuses staff no matter what they hold. New routes are covered
  * automatically — nobody has to remember to add a case.
  */
-const CONTROLLERS = [OwnerController, TeamController, SubscriptionsController];
+const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController, OwnerController, TeamController, SubscriptionsController];
 
 function handlers(controller: Function) {
   const proto = controller.prototype as Record<string, unknown>;

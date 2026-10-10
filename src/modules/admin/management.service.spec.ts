@@ -25,7 +25,9 @@ describe('Administrator management', () => {
         update: jest.fn(),
         aggregate: jest.fn(),
       },
-      venue: { update: jest.fn() },
+      venue: { update: jest.fn(), updateMany: jest.fn() },
+      venueSport: { findFirst: jest.fn().mockResolvedValue(null) },
+      court: { findFirst: jest.fn().mockResolvedValue(null) },
       district: { findUnique: jest.fn() },
       governorate: { findUnique: jest.fn() },
     };
@@ -174,6 +176,54 @@ describe('Administrator management', () => {
       expect(out.items).toHaveLength(1);
       expect(out.items[0]).toMatchObject({ text: 'بادل في المعادي', reply: 'لقيتلك 2 أماكن', outcome: 'venues' });
       expect(out.nextCursor).toBe('a');
+    });
+  });
+
+  describe('suspending and reactivating a venue', () => {
+    function wire(venueStatus: string, appStatus: string) {
+      db.venue = {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'v1', ownerId: 'o1', status: venueStatus, nameAr: 'س', nameEn: 'S',
+          countryCode: 'EG', governorateId: 'g', districtId: 'd', lat: 1, lng: 1,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'v1', updatedAt: new Date() }),
+      };
+      db.governorate.findUnique.mockResolvedValue({ id: 'g', countryCode: 'EG' });
+      db.district.findUnique.mockResolvedValue({ id: 'd', governorateId: 'g', governorate: { countryCode: 'EG' } });
+      db.partnerApplication = {
+        findMany: jest.fn().mockImplementation(({ where }: any) =>
+          Promise.resolve(where.status === appStatus ? [{ id: 'app-1' }] : []),
+        ),
+        update: jest.fn().mockResolvedValue({}),
+      };
+    }
+
+    it('moves the partner application to suspended with the admin\'s reason in its history', async () => {
+      wire('active', 'approved');
+      await service.updateVenue('admin-1', 'v1', { status: 'suspended', reason: 'Unpaid for two months' } as any);
+      expect(db.partnerApplication.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'app-1' },
+          data: expect.objectContaining({
+            status: 'suspended',
+            events: { create: expect.objectContaining({ fromStatus: 'approved', toStatus: 'suspended', note: 'Unpaid for two months' }) },
+          }),
+        }),
+      );
+    });
+
+    it('moves it back to approved when the venue is reactivated', async () => {
+      wire('suspended', 'suspended');
+      await service.updateVenue('admin-1', 'v1', { status: 'active', reason: 'Paid up', force: true } as any);
+      expect(db.partnerApplication.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) }),
+      );
+    });
+
+    it('leaves applications alone when the status did not change', async () => {
+      wire('active', 'approved');
+      await service.updateVenue('admin-1', 'v1', { status: 'active', reason: 'Edit', force: true } as any);
+      expect(db.partnerApplication.update).not.toHaveBeenCalled();
     });
   });
 });

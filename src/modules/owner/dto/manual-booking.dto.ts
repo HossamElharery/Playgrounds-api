@@ -9,6 +9,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -35,14 +36,19 @@ export class CreateManualBookingDto {
   @IsUUID()
   courtId!: string;
 
+  @IsOptional()
+  @IsIn(['manual', 'now'])
+  startMode?: 'manual' | 'now';
+
   @ApiProperty()
+  @ValidateIf(o => o.startMode !== 'now')
   @IsDateString()
   startsAt!: string;
 
-  @ApiProperty({ minimum: 15, maximum: 720 })
+  @ApiProperty({ minimum: 1, maximum: 720 })
   @Type(() => Number)
   @IsInt()
-  @Min(15)
+  @Min(1)
   @Max(720)
   durationMinutes!: number;
 
@@ -115,7 +121,7 @@ export class UpdateManualBookingDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(15)
+  @Min(1)
   @Max(720)
   durationMinutes?: number;
 

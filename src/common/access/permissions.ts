@@ -23,13 +23,27 @@ export const PERMISSION_KEYS = [
   'tournaments.manage',
   'reviews.reply',
   'team.manage',
+  'discounts.apply',
+  'refunds.issue',
+  'sessions.start',
+  'sessions.end',
+  'sessions.transfer',
+  'sessions.correct',
+  'products.view',
+  'products.manage',
+  'orders.manage',
+  'receipts.print',
+  'printer.manage',
+  'layout.view',
+  'layout.edit',
+  'layout.publish',
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 
 export interface PermissionDef {
   key: PermissionKey;
-  group: 'schedule' | 'money' | 'venue' | 'growth' | 'team';
+  group: 'schedule' | 'gaming' | 'commerce' | 'money' | 'venue' | 'growth' | 'team';
   labelAr: string;
   labelEn: string;
   hintAr: string;
@@ -39,6 +53,21 @@ export interface PermissionDef {
 }
 
 export const PERMISSION_CATALOG: PermissionDef[] = [
+  { key: 'discounts.apply', group: 'commerce', labelAr: 'خصم الحساب', labelEn: 'Discount bills', hintAr: 'تسجيل خصم بسبب موثق.', hintEn: 'Apply a discount with an audited reason.', requires: ['orders.manage','payments.record'] },
+  { key: 'refunds.issue', group: 'commerce', labelAr: 'استرداد مدفوعات الحساب', labelEn: 'Refund bill payments', hintAr: 'رد دفعة دون حذف أصلها.', hintEn: 'Return payments without deleting originals.', requires: ['payments.record'] },
+  { key: 'printer.manage', group: 'commerce', labelAr: 'إعداد الطباعة', labelEn: 'Manage printing', hintAr: 'إعداد الطباعة حسب نطاق المنشأة.', hintEn: 'Manage printing within assigned venues.', requires: ['receipts.print'] },
+  { key: 'receipts.print', group: 'commerce', labelAr: 'عرض وطباعة الإيصالات', labelEn: 'View and print receipts', hintAr: 'عرض وطباعة الإيصالات حسب نطاق المنشأة.', hintEn: 'View and print receipts within assigned venues.', requires: ['payments.record'] },
+  { key: 'orders.manage', group: 'commerce', labelAr: 'إدارة الحسابات', labelEn: 'Manage bills', hintAr: 'إدارة الحسابات حسب نطاق المنشأة.', hintEn: 'Manage bills within assigned venues.', requires: ['bookings.view', 'payments.record'] },
+  { key: 'products.manage', group: 'commerce', labelAr: 'إدارة المنتجات والمخزون', labelEn: 'Manage products and stock', hintAr: 'إدارة المنتجات والمخزون حسب نطاق المنشأة.', hintEn: 'Manage products and stock within assigned venues.', requires: ['products.view'] },
+  { key: 'products.view', group: 'commerce', labelAr: 'عرض المنتجات', labelEn: 'View products', hintAr: 'عرض المنتجات حسب نطاق المنشأة.', hintEn: 'View products within assigned venues.', requires: ['bookings.view'] },
+  { key: 'sessions.correct', group: 'gaming', labelAr: 'تصحيح وإلغاء الجلسة', labelEn: 'Correct and void sessions', hintAr: 'تصحيح وإلغاء الجلسة حسب نطاق المنشأة.', hintEn: 'Correct and void sessions within assigned venues.', requires: ['sessions.end'] },
+  { key: 'sessions.transfer', group: 'gaming', labelAr: 'نقل وتمديد الجلسة', labelEn: 'Transfer and extend sessions', hintAr: 'نقل وتمديد الجلسة حسب نطاق المنشأة.', hintEn: 'Transfer and extend sessions within assigned venues.', requires: ['sessions.start'] },
+  { key: 'sessions.end', group: 'gaming', labelAr: 'إنهاء جلسة', labelEn: 'End sessions', hintAr: 'إنهاء جلسة حسب نطاق المنشأة.', hintEn: 'End sessions within assigned venues.', requires: ['bookings.view'] },
+  { key: 'sessions.start', group: 'gaming', labelAr: 'بدء جلسة', labelEn: 'Start sessions', hintAr: 'بدء جلسة حسب نطاق المنشأة.', hintEn: 'Start sessions within assigned venues.', requires: ['bookings.view'] },
+  { key: 'layout.view', group: 'gaming', labelAr: 'عرض توزيع الأجهزة', labelEn: 'View station layout', hintAr: 'عرض الأدوار والأجهزة دون بيانات مالية.', hintEn: 'See floors and stations without financial data.', requires: ['bookings.view'] },
+  { key: 'layout.edit', group: 'gaming', labelAr: 'تعديل توزيع الأجهزة', labelEn: 'Edit station layout', hintAr: 'حفظ مسودة التوزيع دون تغيير الأسعار أو الحسابات.', hintEn: 'Save layout drafts without changing prices or bills.', requires: ['layout.view'] },
+  { key: 'layout.publish', group: 'gaming', labelAr: 'نشر توزيع الأجهزة', labelEn: 'Publish station layout', hintAr: 'اعتماد مسودة التوزيع للتشغيل.', hintEn: 'Publish a layout draft for operations.', requires: ['layout.edit'] },
+
   {
     key: 'bookings.view',
     group: 'schedule',
@@ -146,10 +175,10 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   {
     key: 'venue.manage',
     group: 'venue',
-    labelAr: 'يعدّل بيانات الملاعب',
-    labelEn: 'Edit venue & courts',
-    hintAr: 'الاسم والصور والوصف وإضافة وتعديل الملاعب.',
-    hintEn: 'Name, photos, description, add or edit courts.',
+    labelAr: 'يعدّل بيانات المكان',
+    labelEn: 'Edit venue details',
+    hintAr: 'الاسم والصور والوصف وإضافة وتعديل الملاعب والأجهزة والترابيزات.',
+    hintEn: 'Name, photos, description; add or edit courts, stations or tables.',
   },
   {
     key: 'pricing.manage',
@@ -232,6 +261,19 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
       'reports.view',
       'shifts.review',
     ],
+  },
+  // Gaming / PlayStation venues: floor operator, till, and a supervisor who can also fix mistakes.
+  {
+    key: 'gaming_floor', labelAr: 'مشغّل الصالة (ألعاب)', labelEn: 'Gaming floor operator',
+    permissions: ['bookings.view', 'sessions.start', 'sessions.end', 'sessions.transfer', 'layout.view', 'products.view', 'orders.manage', 'payments.record', 'receipts.print'],
+  },
+  {
+    key: 'gaming_cashier', labelAr: 'كاشير (ألعاب)', labelEn: 'Gaming cashier',
+    permissions: ['bookings.view', 'products.view', 'orders.manage', 'payments.record', 'receipts.print'],
+  },
+  {
+    key: 'gaming_supervisor', labelAr: 'مشرف الألعاب', labelEn: 'Gaming supervisor',
+    permissions: ['bookings.view', 'sessions.start', 'sessions.end', 'sessions.transfer', 'sessions.correct', 'layout.view', 'products.view', 'products.manage', 'orders.manage', 'payments.record', 'discounts.apply', 'refunds.issue', 'receipts.print', 'customers.view'],
   },
   {
     key: 'manager',

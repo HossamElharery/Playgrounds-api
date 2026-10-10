@@ -14,18 +14,23 @@ export function quoteDurationPrice(
   startsAt: Date,
   durationMinutes: number,
   timeZone: string,
+  minutePrecision = false,
 ): { priceAmount: number | null; currency: string; breakdown: PriceQuoteSegment[] } {
   if (!rules.length || durationMinutes <= 0) {
     return { priceAmount: null, currency: 'EGP', breakdown: [] };
   }
-  const step = 15;
+  const step = minutePrecision ? 1 : 15;
+  let weightedMinorMs = 0n;
   const breakdown: PriceQuoteSegment[] = [];
   let total = 0;
   let currency = rules[0].currency ?? 'EGP';
-  for (let elapsed = 0; elapsed < durationMinutes; elapsed += step) {
-    const segStart = new Date(startsAt.getTime() + elapsed * 60_000);
+  let elapsedMs = 0;
+  while (elapsedMs < durationMinutes * 60_000) {
+    const segStart = new Date(startsAt.getTime() + elapsedMs);
     const segEnd = new Date(
-      startsAt.getTime() + Math.min(elapsed + step, durationMinutes) * 60_000,
+      minutePrecision
+        ? Math.min(startsAt.getTime() + durationMinutes * 60_000, (Math.floor(segStart.getTime() / 60_000) + 1) * 60_000)
+        : startsAt.getTime() + Math.min(elapsedMs + step * 60_000, durationMinutes * 60_000),
     );
     const hhmm = zonedHhmm(segStart, timeZone);
     const day = zonedWeekday(segStart, timeZone);
@@ -41,9 +46,15 @@ export function quoteDurationPrice(
     }
     const rule = bestRule(candidates);
     const minutes = (segEnd.getTime() - segStart.getTime()) / 60_000;
-    const amount = Math.round((rule.priceAmount * minutes) / 60);
+    let amount = Math.round((rule.priceAmount * minutes) / 60);
+    if (minutePrecision) {
+      weightedMinorMs += BigInt(rule.priceAmount) * BigInt(segEnd.getTime() - segStart.getTime());
+      const roundedTotal = Number((weightedMinorMs + 1_800_000n) / 3_600_000n);
+      amount = roundedTotal - total;
+    }
     total += amount;
     currency = rule.currency ?? currency;
+    elapsedMs = segEnd.getTime() - startsAt.getTime();
     const last = breakdown[breakdown.length - 1];
     if (last && last.label === (rule.label ?? 'base') && last.amount / ((new Date(last.to).getTime() - new Date(last.from).getTime()) / 60_000) === amount / minutes) {
       last.to = segEnd.toISOString();

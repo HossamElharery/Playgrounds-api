@@ -13,6 +13,12 @@ export class HoldSlotDto {
   @IsDateString()
   slotStart!: string;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  durationMinutes?: number;
+
   @ApiPropertyOptional({ example: 1, minimum: 1, maximum: 3, description: 'Number of consecutive 60-min units' })
   @IsOptional()
   @IsInt()

@@ -1,3 +1,5 @@
+import { usesMinuteTiming, assertActivityDuration } from '../../common/utils/activity-timing.util';
+import { quoteDurationPrice } from '../../common/utils/price-quote.util';
 import {
   BadRequestException,
   ConflictException,
@@ -98,11 +100,13 @@ export class BookingsService {
     const court = await this.prisma.court.findUnique({
       where: { id: courtId },
       include: {
+        sport: true,
         pricingRules: true,
         venue: { include: { country: true } },
       },
     });
     if (!court) throw new NotFoundException('Court not found');
+    if (court.gamingPublished === false) return [];
 
     // No opening hours means "not set up yet", never "open all day".
     if (!hasOpeningHours(court.venue.weeklyHours)) return [];
@@ -129,6 +133,7 @@ export class BookingsService {
         endsAt: { gt: dayStart },
       },
     });
+    const shared = await this.prisma.resourceOccupancy.findMany({where:{OR:[{resourceId:courtId},{resource:{gamingRoom:{bookableCourtId:courtId,occupancy:'exclusive'}}}],startsAt:{lt:dayEnd},AND:[{OR:[{endsAt:null},{endsAt:{gt:dayStart}}]}]}});
     const weeklyHours = court.venue.weeklyHours as WeeklyHours | null;
     const dayHours = weeklyHours
       ? (weeklyHours[String(dayOfWeek)] ??
@@ -164,6 +169,7 @@ export class BookingsService {
       let state: SlotCell['state'] = 'available';
       if (start < now) state = 'past';
       else if (blocked) state = 'blocked';
+      else if (shared.some(r=>r.startsAt<end&&(!r.endsAt||r.endsAt>start||(r.running&&r.endsAt<=now)))) state = overlapping?.status==='held'?'held':'booked';
       else if (overlapping?.status === 'confirmed') state = 'booked';
       else if (overlapping?.status === 'held') state = 'held';
       else if (!rule || !hasPricingCoverage(court.pricingRules, start, end, timeZone)) state = 'unpriced';
@@ -185,9 +191,17 @@ export class BookingsService {
   async holdSlot(userId: string, dto: HoldSlotDto): Promise<Booking> {
     const court = await this.prisma.court.findUnique({
       where: { id: dto.courtId },
-      include: { pricingRules: true, venue: { include: { country: true } } },
+      include: { sport: true, pricingRules: true, venue: { include: { country: true } } },
     });
     if (!court) throw new NotFoundException('Court not found');
+    // A suspended or still-pending venue is off discovery; knowing a court id
+    // (a cached page, a direct API call) must not let a player book it anyway.
+    if (court.venue.status !== 'active') {
+      throw new ConflictException({
+        code: 'VENUE_UNAVAILABLE',
+        message: 'This venue is not accepting bookings right now',
+      });
+    }
     if (!hasOpeningHours(court.venue.weeklyHours)) {
       throw new ConflictException({
         code: 'VENUE_NOT_READY',
@@ -209,8 +223,12 @@ export class BookingsService {
     if (!rule)
       throw new BadRequestException('This court has no pricing configured');
     const units = dto.units ?? 1;
+    const minuteTiming = usesMinuteTiming(court.sport?.activityKind);
+    if(dto.durationMinutes !== undefined && !minuteTiming) throw new BadRequestException('INVALID_DURATION');
+    const duration = dto.durationMinutes ?? court.slotDurationMins * units;
+    assertActivityDuration(duration,court.sport?.activityKind);
     const slotEnd = new Date(
-      slotStart.getTime() + court.slotDurationMins * units * 60_000,
+      slotStart.getTime() + duration * 60_000,
     );
 
     if (!hasPricingCoverage(court.pricingRules, slotStart, slotEnd, timeZone)) {
@@ -232,7 +250,7 @@ export class BookingsService {
     });
     const feePct =
       court.venue.country.serviceFeePct ?? platformSetting?.serviceFeePct ?? 5;
-    const baseAmount = rule.priceAmount * units;
+    const baseAmount = minuteTiming ? quoteDurationPrice(court.pricingRules,slotStart,duration,timeZone,true).priceAmount! : rule.priceAmount * units;
     const feeAmount = Math.round(baseAmount * (feePct / 100));
 
     let discountAmount = 0;

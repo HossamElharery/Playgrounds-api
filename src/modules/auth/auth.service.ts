@@ -16,7 +16,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
 import { generateOtp } from '../../common/utils/otp.util';
@@ -158,7 +158,8 @@ export class AuthService {
         where: { code: fromDto, active: true },
         select: { code: true },
       });
-      if (!country) throw new BadRequestException('Unknown or inactive country');
+      if (!country)
+        throw new ApiException(HttpStatus.BAD_REQUEST, 'COUNTRY_INACTIVE', 'Unknown or inactive country');
       return country.code;
     }
     const countries = await this.prisma.countryConfig.findMany({
@@ -169,7 +170,9 @@ export class AuthService {
       .sort((a, b) => b.phoneCallingCode.length - a.phoneCallingCode.length)
       .find((c) => phone.startsWith(c.phoneCallingCode));
     if (!match) {
-      throw new BadRequestException(
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'PHONE_MARKET_UNSUPPORTED',
         'countryCode is required — phone prefix did not match an active market',
       );
     }
@@ -518,8 +521,8 @@ export class AuthService {
   async registerPartner(
     dto: PartnerRegisterDto,
   ): Promise<TokenPair & { user: Partial<User> }> {
-    const username = normalizeUsername(dto.username);
-    if (!isValidUsername(dto.username)) {
+    const username = dto.username ? normalizeUsername(dto.username) : `owner_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    if (dto.username && !isValidUsername(dto.username)) {
       throw new ApiException(
         HttpStatus.BAD_REQUEST,
         'USERNAME_INVALID',

@@ -88,6 +88,8 @@ export const envValidationSchema = Joi.object({
   LOBBY_BALL_ENABLED: Joi.string().allow('').optional(),
   /** Booking kiosk in the lobby: exactly `true` enables it. Independent of movement. */
   LOBBY_KIOSK_ENABLED: Joi.string().allow('').optional(),
+  LOBBY_SOCIAL_ENABLED: Joi.string().valid('true', 'false', '').default('false'),
+  LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT: Joi.string().valid('true', 'false', '').default('false'),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),

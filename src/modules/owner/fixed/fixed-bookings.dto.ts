@@ -31,10 +31,10 @@ export class FixedSeriesShapeDto {
   @IsDateString()
   startsAt!: string;
 
-  @ApiProperty({ minimum: 15, maximum: 720 })
+  @ApiProperty({ minimum: 1, maximum: 720 })
   @Type(() => Number)
   @IsInt()
-  @Min(15)
+  @Min(1)
   @Max(720)
   durationMinutes!: number;
 
@@ -131,11 +131,11 @@ export class RescheduleSeriesDto {
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   startTime!: string;
 
-  @ApiPropertyOptional({ minimum: 15, maximum: 720 })
+  @ApiPropertyOptional({ minimum: 1, maximum: 720 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(15)
+  @Min(1)
   @Max(720)
   durationMinutes?: number;
 

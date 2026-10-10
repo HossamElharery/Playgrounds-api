@@ -45,6 +45,8 @@ describe('assertVenueAccess matrix', () => {
     { name: 'owner read', roles: ['owner'], id: 'owner-1', write: false, ok: true },
     { name: 'owner write', roles: ['owner'], id: 'owner-1', write: true, ok: true },
     { name: 'staff read', roles: ['staff'], id: 'staff-1', write: false, assignment: true, ok: true },
+    { name: 'owner plus staff cannot borrow owner privileges on an assigned foreign venue', roles: ['owner','staff'], id: 'staff-1', write: true, assignment: true, error: ForbiddenException },
+    { name: 'owner plus staff can access their own venue', roles: ['owner','staff'], id: 'owner-1', write: true, ok: true },
     { name: 'staff write', roles: ['staff'], id: 'staff-1', write: true, assignment: true, ok: true },
     { name: 'admin read', roles: ['admin'], id: 'admin-1', write: false, ok: true },
     { name: 'admin write', roles: ['admin'], id: 'admin-1', write: true, code: 'ADMIN_READ_ONLY' },

@@ -1,3 +1,4 @@
+import { activateGamingDefaults } from '../owner/gaming/gaming-activation';
 import {
   ForbiddenException,
   HttpException,
@@ -5,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { PartnerApplicationStatus, Prisma, VenueStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
@@ -118,8 +120,8 @@ export class PartnersService {
         countryCode: normalizeCountryCode(payload.countryCode) ?? 'EG',
         governorateId: payload.governorateId,
         districtId: payload.districtId,
-        lat: payload.lat ?? undefined,
-        lng: payload.lng ?? undefined,
+        lat: payload.lat ?? null,
+        lng: payload.lng ?? null,
         events: {
           create: {
             actorUserId: ownerId,
@@ -156,6 +158,22 @@ export class PartnersService {
     });
     const names = this.namesFrom(payload);
     const editingLive = app.status === 'approved';
+    // A live listing saved with nothing changed must stay live. Without this a
+    // stray "send" on an already-approved venue pulled it off discovery and put
+    // a second, empty-looking review in the admin queue.
+    if (
+      editingLive &&
+      isDeepStrictEqual(
+        JSON.parse(JSON.stringify(sanitizePayload(app.payload as PartnerApplicationPayload))),
+        JSON.parse(JSON.stringify(payload)),
+      )
+    ) {
+      const current = await this.prisma.partnerApplication.findUniqueOrThrow({
+        where: { id },
+        include: { events: { orderBy: { createdAt: 'desc' }, take: 20 } },
+      });
+      return this.toOwnerDto(current);
+    }
     const nextStatus: PartnerApplicationStatus = editingLive
       ? 'draft'
       : app.status;
@@ -173,13 +191,13 @@ export class PartnersService {
           payload: payload as Prisma.InputJsonValue,
           publicNameEn: names.publicNameEn,
           publicNameAr: names.publicNameAr,
-          contactPhone: payload.contactPhone || app.contactPhone,
+          contactPhone: payload.contactPhone || '',
           countryCode:
             normalizeCountryCode(payload.countryCode) ?? app.countryCode,
           governorateId: payload.governorateId,
           districtId: payload.districtId,
-          lat: payload.lat ?? undefined,
-          lng: payload.lng ?? undefined,
+          lat: payload.lat ?? null,
+          lng: payload.lng ?? null,
           status: nextStatus,
           version: { increment: 1 },
           events: editingLive
@@ -355,13 +373,13 @@ export class PartnersService {
           payload: payload as Prisma.InputJsonValue,
           publicNameEn: payload.publicNameEn || app.publicNameEn,
           publicNameAr: payload.publicNameAr || app.publicNameAr,
-          contactPhone: payload.contactPhone || app.contactPhone,
+          contactPhone: payload.contactPhone || '',
           countryCode:
             normalizeCountryCode(payload.countryCode) ?? app.countryCode,
           governorateId: payload.governorateId ?? app.governorateId,
           districtId: payload.districtId ?? app.districtId,
-          lat: payload.lat ?? undefined,
-          lng: payload.lng ?? undefined,
+          lat: payload.lat ?? null,
+          lng: payload.lng ?? null,
           version: { increment: 1 },
           events: {
             create: {
@@ -411,6 +429,20 @@ export class PartnersService {
    * Safe to run repeatedly: scalars are overwritten, gallery/sports/amenities
    * are rebuilt from the payload.
    */
+  private async replacePhotos(tx:Prisma.TransactionClient,venueId:string,photos:{url?:string;isCover?:boolean}[]){
+    const existing=await tx.venuePhoto.findMany({where:{venueId}});
+    const incoming=[...new Map(photos.filter(p=>p.url).map(p=>[p.url!,p])).values()];
+    const urls=incoming.map(p=>p.url!);
+    await tx.venuePhoto.deleteMany({where:{venueId,url:{notIn:urls}}});
+    const added:{venueId:string;url:string;position:number}[]=[];
+    for(const [index,photo]of incoming.entries()){
+      const position=photo.isCover?0:index+1;const old=existing.find(p=>p.url===photo.url);
+      if(old)await tx.venuePhoto.update({where:{id:old.id},data:{position}});
+      else added.push({venueId,url:photo.url!,position});
+    }
+    if(added.length)await tx.venuePhoto.createMany({data:added});
+  }
+
   private async syncVenueContent(
     tx: Prisma.TransactionClient,
     venueId: string,
@@ -448,17 +480,7 @@ export class PartnersService {
       },
     });
 
-    const photos = payload.photos ?? [];
-    await tx.venuePhoto.deleteMany({ where: { venueId } });
-    if (photos.length) {
-      await tx.venuePhoto.createMany({
-        data: photos.map((photo, position) => ({
-          venueId,
-          url: photo.url!,
-          position: photo.isCover ? 0 : position + 1,
-        })),
-      });
-    }
+    await this.replacePhotos(tx,venueId,payload.photos??[]);
 
     const sportIds = Array.from(
       new Set((payload.courts ?? []).map((c) => c.sportId).filter(Boolean)),
@@ -627,7 +649,13 @@ export class PartnersService {
       await this.venues.refreshVenuePriceFrom(updated.venueId);
     }
 
-    await this.notifyDecision(app.ownerId, id, dto.action, dto.note);
+    await this.notifyDecision(
+      app.ownerId,
+      id,
+      dto.action,
+      dto.note,
+      updated.venueId,
+    );
     return this.toAdminDto(updated);
   }
 
@@ -735,9 +763,18 @@ export class PartnersService {
     };
 
     let venueId = existingVenueId;
+    // Once a hall is configured or used, its operational inventory is authoritative.
+    // A stale registration application must never remove/duplicate stations or overwrite tariffs.
+    const existingCourts = venueId ? await tx.court.findMany({where:{venueId},include:{sport:{select:{activityKind:true}}}}) : [];
+    const gamingCourts=existingCourts.filter(c=>['gaming-station','table-game'].includes(c.sport.activityKind??''));
+    let preserveGaming=false;
+    if(venueId&&gamingCourts.length){
+      const hall=await tx.gamingLayout.findUnique({where:{venueId}});
+      preserveGaming=!!hall?.revision||gamingCourts.some(c=>!!c.gamingRoomId||c.gamingHourlyRateMinor!=null||(c.gamingConfig as {multiHourlyRateMinor?:number}|null)?.multiHourlyRateMinor!==undefined)||!!(await tx.usageSession.findFirst({where:{venueId},select:{id:true}}));
+    }
+    const protectedIds=new Set(preserveGaming?gamingCourts.map(c=>c.id):[]);
     if (venueId) {
       await tx.venue.update({ where: { id: venueId }, data: venueData });
-      await tx.venuePhoto.deleteMany({ where: { venueId } });
       await tx.venueSport.deleteMany({ where: { venueId } });
       await tx.venueAmenity.deleteMany({ where: { venueId } });
     } else {
@@ -752,13 +789,16 @@ export class PartnersService {
       venueId = venue.id;
     }
 
-    const sportIds = Array.from(
-      new Set(
-        (payload.courts ?? [])
-          .map((c) => this.normalizeSportId(c.sportId))
-          .filter(Boolean),
-      ),
-    ) as string[];
+    const resolvedSports = await Promise.all((payload.courts ?? []).map(async (draft, index) => {
+      const rawId = draft.sportId?.trim();
+      const normalized = this.normalizeSportId(rawId);
+      const sport = rawId ? ((await tx.sportCategory.findUnique({where:{id:rawId},select:{id:true,activityKind:true}})) ??
+        (normalized && normalized !== rawId ? await tx.sportCategory.findUnique({where:{id:normalized},select:{id:true,activityKind:true}}) : null) ??
+        await tx.sportCategory.findUnique({where:{slug:rawId.replace(/^sport-/, '')},select:{id:true,activityKind:true}})) : null;
+      if (!sport) throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_SPORT', `Unknown sport on court ${index + 1}`);
+      return sport;
+    }));
+    const sportIds = [...new Set(resolvedSports.map(sport => sport.id))];
     if (sportIds.length) {
       await tx.venueSport.createMany({
         data: sportIds.map((sportId) => ({ venueId: venueId, sportId })),
@@ -781,14 +821,13 @@ export class PartnersService {
       }
     }
 
-    const existingCourts = await tx.court.findMany({ where: { venueId } });
-    const keepIds = new Set(
-      (payload.courts ?? []).map((c) => c.id).filter(Boolean) as string[],
-    );
+    const resolvedCourtIds = (payload.courts ?? []).map((draft,index) => draft.id ??
+      existingCourts.find(c => c.name === (draft.name || `Court ${index+1}`) && c.sportId === resolvedSports[index].id)?.id);
+    const keepIds = new Set(resolvedCourtIds.filter(Boolean) as string[]);
     for (const court of existingCourts) {
-      if (!keepIds.has(court.id)) {
+      if (!keepIds.has(court.id)&&!protectedIds.has(court.id)) {
         const live = await tx.booking.count({
-          where: { courtId: court.id, status: { in: ['held', 'confirmed'] } },
+          where: { courtId: court.id },
         });
         if (live === 0) {
           await tx.pricingRule.deleteMany({ where: { courtId: court.id } });
@@ -804,30 +843,15 @@ export class PartnersService {
       };
       const currency = country.currency;
 
-      const sportId = this.normalizeSportId(draft.sportId);
-      const sportCategory = sportId
-        ? ((await tx.sportCategory.findUnique({
-            where: { id: sportId },
-            select: { id: true, activityKind: true },
-          })) ??
-          (await tx.sportCategory.findUnique({
-            where: { slug: sportId.replace(/^sport-/, '') },
-            select: { id: true, activityKind: true },
-          })))
-        : null;
-      if (!sportCategory) {
-        throw new ApiException(
-          HttpStatus.BAD_REQUEST,
-          'INVALID_SPORT',
-          `Unknown sport on court ${index + 1}`,
-        );
-      }
+      const sportCategory = resolvedSports[index];
+      if(preserveGaming&&['gaming-station','table-game'].includes(sportCategory.activityKind??''))continue;
       const { gamingConfig, tableConfig, ageRating } = buildActivityFields(
         sportCategory.activityKind,
         draft.spec,
       );
 
-      let courtId = draft.id;
+      let courtId = resolvedCourtIds[index];
+      if(courtId&&protectedIds.has(courtId))continue;
       if (courtId && existingCourts.some((c) => c.id === courtId)) {
         await tx.court.update({
           where: { id: courtId },
@@ -875,7 +899,7 @@ export class PartnersService {
             label: 'base',
             daysOfWeek: [],
             startTime: '00:00',
-            endTime: '23:59',
+            endTime: '24:00',
             priceAmount: pricing.base,
             currency,
             priority: 0,
@@ -898,17 +922,10 @@ export class PartnersService {
       });
     }
 
-    const photos = payload.photos ?? [];
-    if (photos.length) {
-      await tx.venuePhoto.createMany({
-        data: photos.map((photo, position) => ({
-          venueId: venueId,
-          url: photo.url!,
-          position: photo.isCover ? 0 : position + 1,
-        })),
-      });
-    }
+    if(protectedIds.size)await tx.venueSport.createMany({data:[...new Set(gamingCourts.map(c=>c.sportId))].map(sportId=>({venueId:venueId!,sportId})),skipDuplicates:true});
+    await this.replacePhotos(tx,venueId,payload.photos??[]);
 
+    await activateGamingDefaults(tx, venueId);
     return venueId;
   }
 
@@ -940,6 +957,7 @@ export class PartnersService {
     applicationId: string,
     action: PartnerDecisionDto['action'],
     note?: string,
+    venueId?: string | null,
   ) {
     const copy: Record<
       PartnerDecisionDto['action'],
@@ -960,7 +978,14 @@ export class PartnersService {
       titleAr: copy[action].ar,
       bodyEn: note,
       bodyAr: note,
-      deepLink: `/partners/join?application=${applicationId}`,
+      // Approval / suspension have nothing to resubmit: send the owner to the
+      // live venue, not back into the application wizard's "submit" step.
+      deepLink:
+        action === 'approve' || action === 'suspend'
+          ? venueId
+            ? `/owner/venues/${venueId}`
+            : '/owner/venues'
+          : `/partners/join?application=${applicationId}`,
     });
   }
 

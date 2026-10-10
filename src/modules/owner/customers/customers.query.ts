@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AMOUNT_SQL, NET_PAID_SQL } from '../owner-summary.service';
 
 export interface OwnerCustomerItem {
+  customerId?: string;
   key: string;
   name: string | null;
   phone: string | null;
@@ -119,6 +120,7 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
     const rawName = r.key.startsWith('n:') ? r.key.slice(2) : (names.get(r.key) ?? null);
     return {
       key: r.key,
+      customerId: profile?.id,
       name: platform ? (u?.name ?? null) : (profile?.name ?? rawName),
       phone: r.key.startsWith('m:') ? r.key.slice(2) : null,
       phoneMasked: platform ? maskPlayerPhone(u?.phone) : null,
@@ -141,6 +143,7 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
     if (seen.has(p.key)) continue;
     items.push({
       key: p.key,
+      customerId: p.id,
       name: p.name,
       phone: p.phone,
       phoneMasked: null,

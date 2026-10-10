@@ -85,10 +85,11 @@ describe('PartnersService admin decisions', () => {
         update: jest.fn(),
         findUnique: jest.fn().mockResolvedValue(null),
       },
-      venuePhoto: { deleteMany: jest.fn(), createMany: jest.fn() },
-      venueSport: { deleteMany: jest.fn(), createMany: jest.fn() },
+      venuePhoto: { findMany:jest.fn().mockResolvedValue([]),update:jest.fn(),deleteMany: jest.fn(), createMany: jest.fn() },
+      gamingLayout:{findUnique:jest.fn().mockResolvedValue(null)},usageSession:{findFirst:jest.fn().mockResolvedValue(null)},
+      venueSport: { deleteMany: jest.fn(), createMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
       venueAmenity: { deleteMany: jest.fn(), createMany: jest.fn() },
-      court: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockResolvedValue({ id: 'c1' }), update: jest.fn() },
+      court: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'c1' }), update: jest.fn() },
       pricingRule: { deleteMany: jest.fn(), createMany: jest.fn() },
       amenity: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((fn: any) => fn(prisma)),
@@ -107,6 +108,9 @@ describe('PartnersService admin decisions', () => {
       venues as any,
       subscriptions as any,
     );
+    prisma.partnerApplication.findUniqueOrThrow = jest
+      .fn()
+      .mockImplementation(() => Promise.resolve({ ...app, ...overrides.app, events: [] }));
     return { svc, prisma, notifications, subscriptions };
   }
 
@@ -140,5 +144,50 @@ describe('PartnersService admin decisions', () => {
     await expect(
       svc.decide('admin-1', 'app-1', { action: 'request_changes', version: 1 }),
     ).rejects.toBeInstanceOf(ApiException);
+  });
+
+  it('sends the owner to the live venue, not the submit wizard, when a venue is approved', async () => {
+    const { svc, notifications } = serviceWith();
+    await svc.decide('admin-1', 'app-1', { action: 'approve', version: 1, subscriptionDays: 90 });
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ deepLink: '/owner/venues/venue-1' }),
+    );
+  });
+
+  it('keeps the application wizard link for decisions the owner must act on', async () => {
+    const { svc, notifications } = serviceWith();
+    await svc.decide('admin-1', 'app-1', { action: 'request_changes', version: 1, note: 'Please fix the photos' });
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ deepLink: '/partners/join?application=app-1' }),
+    );
+  });
+
+  it('clears a removed contact and map pin instead of retaining stale application columns', async () => {
+    const { svc, prisma } = serviceWith({ app: { status: 'draft', contactPhone: '+201001234567' } });
+    await svc.patchOwned('owner-1', 'app-1', { payload: { contactPhone: '', lat: null, lng: null, locationConfirmed: false } as any, version: 1 });
+    expect(prisma.partnerApplication.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ contactPhone: '', lat: null, lng: null }),
+    }));
+  });
+
+  describe('owner edits of an approved listing', () => {
+    const approved = { status: 'approved', venueId: 'venue-1' };
+
+    it('leaves a live venue live when the save changes nothing', async () => {
+      const { svc, prisma } = serviceWith({ app: approved });
+      const out = await svc.patchOwned('owner-1', 'app-1', { payload: {} as any });
+      expect(out.status).toBe('approved');
+      expect(prisma.venue.update).not.toHaveBeenCalled();
+      expect(prisma.partnerApplication.update).not.toHaveBeenCalled();
+    });
+
+    it('still takes a live venue back to review when something really changed', async () => {
+      const { svc, prisma } = serviceWith({ app: approved });
+      const out = await svc.patchOwned('owner-1', 'app-1', { payload: { address: 'Street 2' } as any });
+      expect(out.status).toBe('draft');
+      expect(prisma.venue.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'pending' } }),
+      );
+    });
   });
 });

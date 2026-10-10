@@ -1,12 +1,16 @@
+import { activateGamingDefaults } from '../owner/gaming/gaming-activation';
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma, VenueStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { VenueTextService } from './venue-text.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { SearchVenuesDto } from './dto/search-venues.dto';
@@ -39,7 +43,11 @@ function assertRuleWindow(dto: { startTime: string; endTime: string }): void {
 
 @Injectable()
 export class VenuesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly texts?: VenueTextService,
+  ) {}
 
   private stripSeoOverrides<T extends Record<string, unknown>>(venue: T) {
     const {
@@ -90,7 +98,7 @@ export class VenuesService {
       slug = `${baseSlug}-${++suffix}`;
     }
 
-    return this.prisma.venue.create({
+    const created = await this.prisma.venue.create({
       data: {
         ownerId,
         slug,
@@ -123,6 +131,38 @@ export class VenuesService {
       },
       include: { sports: true, amenities: { include: { amenity: true } } },
     });
+    void this.notifyAdminsOfNewVenue(created);
+    return created;
+  }
+
+  /** One deduplicated review request per venue; a notification failure never blocks onboarding. */
+  private async notifyAdminsOfNewVenue(venue: { id: string; nameAr: string; nameEn: string }) {
+    if (!this.notifications) return;
+    try {
+      const admins = await this.prisma.user.findMany({
+        where: { roles: { has: 'admin' }, status: 'active' },
+        select: { id: true },
+      });
+      await Promise.all(
+        admins.map((admin) =>
+          this.notifications!
+            .create({
+              dedupKey: `venue-review:${venue.id}:${admin.id}`,
+              userId: admin.id,
+              category: 'system',
+              titleEn: `New venue ready for review: ${venue.nameEn}`,
+              titleAr: `منشأة جديدة بانتظار المراجعة: ${venue.nameAr}`,
+              bodyEn: 'Review the details and approve it so the owner can start operating.',
+              bodyAr: 'راجع البيانات واعتمد المنشأة ليبدأ المالك التشغيل.',
+              deepLink: '/admin/venues',
+              payload: { kind: 'venue_review', venueId: venue.id },
+            })
+            .catch(() => undefined),
+        ),
+      );
+    } catch {
+      /* best effort */
+    }
   }
 
   private async assertOwnership(
@@ -147,6 +187,23 @@ export class VenuesService {
     dto: UpdateVenueDto & { contactPhone?: string | null },
   ) {
     await this.assertOwnership(venueId, ownerId, isPrivileged);
+    if (dto.sportIds && !isPrivileged) {
+      // What a venue IS (courts vs a PlayStation lounge) is decided at approval; an owner who needs
+      // another kind adds a unit of it or asks support. Re-sending the same set is harmless.
+      const have = new Set((await this.prisma.venueSport.findMany({ where: { venueId }, select: { sportId: true } })).map((s) => s.sportId));
+      const same = dto.sportIds.length === have.size && dto.sportIds.every((id) => have.has(id));
+      if (!same) throw new ForbiddenException({ code: 'ACTIVITIES_LOCKED', message: 'Venue activities are set at approval' });
+    }
+    // One text in the owner's language → both languages for the public pages.
+    if (this.texts && dto.name !== undefined) {
+      const name = await this.texts.both(dto.name, 'name');
+      if (name.ar || name.en) { dto.nameAr = name.ar; dto.nameEn = name.en; }
+    }
+    if (this.texts && dto.description !== undefined) {
+      const description = await this.texts.both(dto.description, 'description');
+      dto.descriptionAr = description.ar;
+      dto.descriptionEn = description.en;
+    }
     if (dto.weeklyHours) {
       const errors = validateWeeklyHours(dto.weeklyHours);
       if (errors.length) throw new BadRequestException(errors.join('; '));
@@ -213,9 +270,13 @@ export class VenuesService {
         });
       }
     }
-    return this.prisma.venue.update({
-      where: { id: venueId },
-      data: { status: 'active', approvedById: adminId, approvedAt: new Date() },
+    return this.prisma.$transaction(async (tx) => {
+      const approved = await tx.venue.update({
+        where: { id: venueId },
+        data: { status: 'active', approvedById: adminId, approvedAt: new Date() },
+      });
+      await activateGamingDefaults(tx, venueId);
+      return approved;
     });
   }
 

@@ -5,7 +5,8 @@ export const offlineTokenHash = (token: string) => createHash('sha256').update(t
 /** Explicit fields keep key order and omitted defaults stable across HTTP retries. */
 export function manualBookingHash(dto: CreateManualBookingDto): string {
   return offlineTokenHash(JSON.stringify({
-    venueId: dto.venueId, courtId: dto.courtId, startsAt: new Date(dto.startsAt).toISOString(),
+    venueId: dto.venueId, courtId: dto.courtId, startsAt: dto.startMode === 'now' ? 'server-now' : new Date(dto.startsAt).toISOString(),
+    ...(dto.startMode === 'now' ? { startMode: 'now' } : {}),
     durationMinutes: dto.durationMinutes, priceAmount: dto.priceAmount,
     paymentStatus: dto.paymentStatus ?? 'unpaid', paidAmount: dto.paidAmount ?? null,
     paymentMethod: dto.paymentMethod ?? 'cash', customerName: dto.customerName?.trim() || null,

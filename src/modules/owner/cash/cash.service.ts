@@ -1,3 +1,4 @@
+import { isoMoneyScale,legacyMoney,rescaleMoney } from '../../../common/money/money-scale';
 import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { CashHandover, CashShift, Prisma } from '@prisma/client';
 import { assertVenueAccess } from '../../../common/access/owner-access';
@@ -38,6 +39,7 @@ export interface Tally {
 interface PaymentRow {
   id: string;
   amount: number;
+  moneyScale?:number;
   currency: string;
   method: string;
   createdAt: Date;
@@ -65,7 +67,8 @@ export function tally(payments: PaymentRow[], expenses: ExpenseRow[]): Tally {
   const touch = (d: Date) => {
     if (!since || d < since) since = d;
   };
-  for (const p of payments) {
+  for (const row of payments) {
+    const p={...row,amount:legacyMoney(row)};
     const m = methods.get(p.method) ?? { method: p.method, in: 0, out: 0, count: 0 };
     if (p.amount >= 0) {
       m.in += p.amount;
@@ -127,9 +130,9 @@ export class CashService {
           shiftId: null,
           status: { in: COUNTED_PAYMENT_STATUSES },
           recordedByUserId: userIds ? { in: userIds } : { not: null },
-          booking: { venueId },
+          OR: [{ booking: { venueId } }, { gamingOrder: { venueId } }],
         },
-        select: { id: true, amount: true, currency: true, method: true, createdAt: true, recordedByUserId: true },
+        select: { id: true, amount: true, moneyScale:true,currency: true, method: true, createdAt: true, recordedByUserId: true },
         orderBy: { createdAt: 'asc' },
       }),
       db.venueExpense.findMany({
@@ -151,9 +154,9 @@ export class CashService {
     const last = await db.cashShift.findFirst({
       where: { venueId, drawerUserId },
       orderBy: { closedAt: 'desc' },
-      select: { carryOver: true, closedAt: true },
+      select: { carryOver: true,moneyScale:true, closedAt: true },
     });
-    return { float: last?.carryOver ?? 0, lastClosedAt: last?.closedAt ?? null };
+    return { float: last?rescaleMoney(last.carryOver,last.moneyScale??100,100):0, lastClosedAt: last?.closedAt ?? null };
   }
 
   private toTallyDto(t: Tally, float: number) {
@@ -190,7 +193,7 @@ export class CashService {
       me: { userId: user.id, name: user.name ?? null },
       canReview: reviewer,
       mine: {
-        ...this.toTallyDto(tally(mine.payments, mine.expenses), myHandover?.countedFloat ?? myFloat.float),
+        ...this.toTallyDto(tally(mine.payments, mine.expenses), myHandover?rescaleMoney(myHandover.countedFloat,myHandover.moneyScale??100,100):myFloat.float),
         lastClosedAt: myFloat.lastClosedAt?.toISOString() ?? null,
         /** What the last close left — the number a taking-over count is compared with. */
         suggestedFloat: myFloat.float,
@@ -221,7 +224,7 @@ export class CashService {
           userId: id,
           name: names.get(id) ?? null,
           isMe: id === user.id,
-          ...this.toTallyDto(tally(bucket.payments, bucket.expenses), h?.countedFloat ?? f.float),
+          ...this.toTallyDto(tally(bucket.payments, bucket.expenses), h?rescaleMoney(h.countedFloat,h.moneyScale??100,100):f.float),
           handover: h ? this.handoverDto(h, new Map([[h.openedByUserId, names.get(h.openedByUserId) ?? null]])) : null,
         });
       }
@@ -230,7 +233,7 @@ export class CashService {
       const sharedFloat = await this.suggestedFloat(this.prisma, venueId, null);
       const sharedHandover = await this.openHandover(this.prisma, venueId, null);
       result.shared = {
-        ...this.toTallyDto(tally(all.payments, all.expenses), sharedHandover?.countedFloat ?? sharedFloat.float),
+        ...this.toTallyDto(tally(all.payments, all.expenses), sharedHandover?rescaleMoney(sharedHandover.countedFloat,sharedHandover.moneyScale??100,100):sharedFloat.float),
         lastClosedAt: sharedFloat.lastClosedAt?.toISOString() ?? null,
         suggestedFloat: sharedFloat.float,
         handover: sharedHandover
@@ -276,6 +279,7 @@ export class CashService {
   async openShift(user: AuthenticatedUser, dto: OpenShiftDto) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
     const { drawerUserId } = await this.resolveDrawer(user, dto, 'open');
+    const scale=isoMoneyScale(venue.currency);const encode=(v:number)=>this.encodeCash(v,scale);
     const handover = await this.prisma.$transaction(
       async (tx) => {
         if (await this.openHandover(tx, dto.venueId, drawerUserId)) {
@@ -287,9 +291,9 @@ export class CashService {
             venueId: dto.venueId,
             drawerUserId,
             openedByUserId: user.id,
-            expectedFloat: suggested.float,
-            countedFloat: dto.countedFloat,
-            difference: dto.countedFloat - suggested.float,
+            moneyScale:scale,expectedFloat: encode(suggested.float),
+            countedFloat: encode(dto.countedFloat),
+            difference: encode(dto.countedFloat-suggested.float),
             currency: venue.currency,
             note: dto.note?.trim() || null,
           },
@@ -323,9 +327,9 @@ export class CashService {
       openedAt: h.openedAt.toISOString(),
       openedByUserId: h.openedByUserId,
       openedByName: names.get(h.openedByUserId) ?? null,
-      expectedFloat: h.expectedFloat,
-      countedFloat: h.countedFloat,
-      difference: h.difference,
+      expectedFloat: rescaleMoney(h.expectedFloat,h.moneyScale??100,100),
+      countedFloat: rescaleMoney(h.countedFloat,h.moneyScale??100,100),
+      difference: rescaleMoney(h.difference,h.moneyScale??100,100),
       note: h.note,
     };
   }
@@ -339,7 +343,7 @@ export class CashService {
   ) {
     if (!this.notifications || handover.difference === 0 || opener.id === ownerId) return;
     const less = handover.difference < 0;
-    const amount = Math.abs(handover.difference);
+    const amount = rescaleMoney(Math.abs(handover.difference),handover.moneyScale??100,100);
     const who = opener.name ?? '—';
     await this.notifications.create({
       userId: ownerId,
@@ -358,7 +362,7 @@ export class CashService {
   async closeShift(user: AuthenticatedUser, dto: CloseShiftDto) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
     const { drawerUserId, userIds } = await this.resolveDrawer(user, dto, 'close');
-    const currency = venue.currency;
+    const currency = venue.currency,scale=isoMoneyScale(currency);const encode=(v:number)=>this.encodeCash(v,scale);
 
     const shift = await this.prisma.$transaction(
       async (tx) => {
@@ -379,7 +383,7 @@ export class CashService {
         }
         const suggested = await this.suggestedFloat(tx, dto.venueId, drawerUserId);
         // The float the incoming person actually counted beats a guessed one.
-        const openingFloat = dto.openingFloat ?? handover?.countedFloat ?? suggested.float;
+        const openingFloat = dto.openingFloat ?? (handover?rescaleMoney(handover.countedFloat,handover.moneyScale??100,100):suggested.float);
         const carryOver = dto.carryOver ?? 0;
         if (carryOver > dto.countedCash) {
           throw new ApiException(HttpStatus.BAD_REQUEST, 'CARRY_OVER_TOO_HIGH', 'You cannot leave more in the drawer than you counted');
@@ -391,16 +395,16 @@ export class CashService {
             drawerUserId,
             closedByUserId: user.id,
             periodStart: handover?.openedAt ?? t.since ?? new Date(),
-            openingFloat,
-            cashIn: t.cashIn,
-            cashRefunds: t.cashRefunds,
-            cashExpenses: t.cashExpenses,
-            expectedCash,
-            countedCash: dto.countedCash,
-            difference,
-            carryOver,
+            moneyScale:scale,openingFloat:encode(openingFloat),
+            cashIn: encode(t.cashIn),
+            cashRefunds: encode(t.cashRefunds),
+            cashExpenses: encode(t.cashExpenses),
+            expectedCash: encode(expectedCash),
+            countedCash: encode(dto.countedCash),
+            difference: encode(difference),
+            carryOver: encode(carryOver),
             currency,
-            breakdown: t.byMethod as unknown as Prisma.InputJsonValue,
+            breakdown: t.byMethod.map(m=>({...m,in:encode(m.in),out:encode(m.out)})) as unknown as Prisma.InputJsonValue,
             note: dto.note?.trim() || null,
           },
         });
@@ -453,7 +457,7 @@ export class CashService {
   ) {
     if (!this.notifications || shift.difference === 0 || closer.id === ownerId) return;
     const short = shift.difference < 0;
-    const amount = Math.abs(shift.difference);
+    const amount = rescaleMoney(Math.abs(shift.difference),shift.moneyScale??100,100);
     const who = closer.name ?? '—';
     await this.notifications.create({
       userId: ownerId,
@@ -489,15 +493,11 @@ export class CashService {
     });
     const hasMore = rows.length > SHIFT_LIST_LIMIT;
     const page = hasMore ? rows.slice(0, SHIFT_LIST_LIMIT) : rows;
-    const totals = await this.prisma.cashShift.aggregate({
-      where,
-      _sum: { difference: true },
-      _count: { _all: true },
-    });
+    const totals = await this.prisma.cashShift.groupBy({by:['moneyScale'],where,_sum:{difference:true},_count:{_all:true}});
     return {
       items: await this.dtos(page),
       nextCursor: hasMore ? page[page.length - 1].id : undefined,
-      summary: { shifts: totals._count._all, difference: totals._sum.difference ?? 0 },
+      summary: { shifts: totals.reduce((n,g)=>n+g._count._all,0), difference: totals.reduce((n,g)=>n+rescaleMoney(g._sum.difference??0,g.moneyScale,100),0) },
     };
   }
 
@@ -513,7 +513,7 @@ export class CashService {
       this.prisma.payment.findMany({
         where: { shiftId },
         orderBy: { createdAt: 'asc' },
-        include: { booking: { select: { id: true, code: true, guestName: true, slotStart: true, source: true, user: { select: { name: true } } } } },
+        include: { booking: { select: { id: true, code: true, guestName: true, slotStart: true, source: true, user: { select: { name: true } } } }, gamingOrder: { select: { id: true, guestName: true, createdAt: true } } },
       }),
       this.prisma.venueExpense.findMany({ where: { shiftId }, orderBy: { createdAt: 'asc' } }),
     ]);
@@ -522,15 +522,16 @@ export class CashService {
       ...(await this.dtos([shift]))[0],
       payments: payments.map((p) => ({
         id: p.id,
-        amount: p.amount,
+        amount: legacyMoney(p),
         method: p.method,
         at: p.createdAt.toISOString(),
         byName: p.recordedByUserId ? (names.get(p.recordedByUserId) ?? null) : null,
         note: p.note,
-        bookingId: p.booking.id,
-        bookingCode: p.booking.code,
-        customer: p.booking.source === 'manual' ? p.booking.guestName : (p.booking.user?.name ?? null),
-        slotStart: p.booking.slotStart.toISOString(),
+        bookingId: p.booking?.id ?? null,
+        orderId: p.gamingOrder?.id ?? null,
+        bookingCode: p.booking?.code ?? p.gamingOrder?.id ?? null,
+        customer: p.booking ? (p.booking.source === 'manual' ? p.booking.guestName : p.booking.user?.name ?? null) : p.gamingOrder?.guestName ?? null,
+        slotStart: (p.booking?.slotStart ?? p.gamingOrder?.createdAt)?.toISOString() ?? null,
       })),
       expenses: expenses.map((e) => ({ id: e.id, amount: e.amount, category: e.category, categoryLabel: e.categoryLabel, note: e.note, at: e.createdAt.toISOString() })),
     };
@@ -558,6 +559,7 @@ export class CashService {
 
   // ---- shaping ---------------------------------------------------------------------------------
 
+  private encodeCash(value:number,scale:number){const amount=rescaleMoney(value,100,scale);if(!Number.isFinite(amount)||Math.abs(amount-Math.round(amount))>.00001||Math.abs(amount)>2147483647)throw new ApiException(HttpStatus.BAD_REQUEST,'CASH_PRECISION_INVALID','Amount has more digits than the venue currency allows');return Math.round(amount);}
   private async names(ids: string[]): Promise<Map<string, string | null>> {
     const unique = [...new Set(ids.filter(Boolean))];
     if (!unique.length) return new Map();
@@ -582,17 +584,17 @@ export class CashService {
       closedByName: names.get(r.closedByUserId) ?? null,
       periodStart: r.periodStart.toISOString(),
       closedAt: r.closedAt.toISOString(),
-      openingFloat: r.openingFloat,
-      cashIn: r.cashIn,
-      cashRefunds: r.cashRefunds,
-      cashExpenses: r.cashExpenses,
-      expectedCash: r.expectedCash,
-      countedCash: r.countedCash,
-      difference: r.difference,
-      carryOver: r.carryOver,
-      handedOver: r.countedCash - r.carryOver,
+      openingFloat: rescaleMoney(r.openingFloat,r.moneyScale??100,100),
+      cashIn: rescaleMoney(r.cashIn,r.moneyScale??100,100),
+      cashRefunds: rescaleMoney(r.cashRefunds,r.moneyScale??100,100),
+      cashExpenses: rescaleMoney(r.cashExpenses,r.moneyScale??100,100),
+      expectedCash: rescaleMoney(r.expectedCash,r.moneyScale??100,100),
+      countedCash: rescaleMoney(r.countedCash,r.moneyScale??100,100),
+      difference: rescaleMoney(r.difference,r.moneyScale??100,100),
+      carryOver: rescaleMoney(r.carryOver,r.moneyScale??100,100),
+      handedOver: rescaleMoney(r.countedCash-r.carryOver,r.moneyScale??100,100),
       currency: r.currency,
-      breakdown: r.breakdown as unknown as MethodTally[],
+      breakdown: (r.breakdown as unknown as MethodTally[]).map(m=>({...m,in:rescaleMoney(m.in,r.moneyScale??100,100),out:rescaleMoney(m.out,r.moneyScale??100,100)})),
       note: r.note,
       reviewedAt: r.reviewedAt?.toISOString() ?? null,
       reviewedByName: r.reviewedById ? (names.get(r.reviewedById) ?? null) : null,

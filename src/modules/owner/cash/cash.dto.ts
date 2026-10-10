@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export const SHIFT_SCOPES = ['mine', 'user', 'shared'] as const;
@@ -31,7 +31,7 @@ export class CloseShiftDto {
 
   @ApiProperty({ description: 'Cash counted by hand, minor units.' })
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({maxDecimalPlaces:3})
   @Min(0)
   @Max(1_000_000_000)
   countedCash!: number;
@@ -39,7 +39,7 @@ export class CloseShiftDto {
   @ApiPropertyOptional({ description: 'Cash that was in the drawer when the shift started. Defaults to what the last close left.' })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({maxDecimalPlaces:3})
   @Min(0)
   @Max(1_000_000_000)
   openingFloat?: number;
@@ -47,7 +47,7 @@ export class CloseShiftDto {
   @ApiPropertyOptional({ description: 'Cash left in the drawer for the next shift (the rest is handed to the owner). Defaults to 0.' })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({maxDecimalPlaces:3})
   @Min(0)
   @Max(1_000_000_000)
   carryOver?: number;
@@ -75,7 +75,7 @@ export class OpenShiftDto {
 
   @ApiProperty({ description: 'Cash the incoming person counted in the drawer, minor units.' })
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({maxDecimalPlaces:3})
   @Min(0)
   @Max(1_000_000_000)
   countedFloat!: number;

@@ -1,3 +1,15 @@
+import { GamingSetupController } from './gaming/gaming-setup.controller';
+import { GamingSetupService } from './gaming/gaming-setup.service';
+import { GamingOutboxService } from './gaming/gaming-outbox.service';
+import { GamingAlertsService } from './gaming/gaming-alerts.service';
+import { RealtimeModule } from '../realtime/realtime.module';
+import { GamingOperationsController } from './gaming/gaming-operations.controller';
+import { GamingReceiptsService } from './gaming/gaming-receipts.service';
+import { GamingCommerceService } from './gaming/gaming-commerce.service';
+import { GamingSessionsService } from './gaming/gaming-sessions.service';
+import { GamingCommandService } from './gaming/gaming-command.service';
+import { GamingLayoutController } from './gaming/gaming-layout.controller';
+import { GamingLayoutService } from './gaming/gaming-layout.service';
 import { Module } from '@nestjs/common';
 import { OwnerService } from './owner.service';
 import { OwnerController } from './owner.controller';
@@ -29,8 +41,10 @@ import { CommandCentreService } from './command/command-centre.service';
 import { ActivityService } from './activity/activity.service';
 
 @Module({
-  imports: [BookingsModule, AiModule, FinanceModule, NotificationsModule],
+  imports: [RealtimeModule, BookingsModule, AiModule, FinanceModule, NotificationsModule],
   providers: [
+    GamingLayoutService, GamingSetupService,
+    GamingOutboxService, GamingAlertsService, GamingCommandService, GamingSessionsService, GamingCommerceService, GamingReceiptsService,
     OwnerService,
     GeminiNluService,
     AssistantNluService,
@@ -52,6 +66,7 @@ import { ActivityService } from './activity/activity.service';
     VenueHealthService,
   ],
   controllers: [
+    GamingLayoutController, GamingOperationsController, GamingSetupController,
     OwnerController,
     PlatformRequestsController,
     VenueHealthController,

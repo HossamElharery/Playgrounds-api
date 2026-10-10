@@ -259,4 +259,35 @@ describe('AuthService', () => {
       passkeys: { enabled: true },
     });
   });
+
+  describe('partner registration markets', () => {
+    const dto = { name: 'QA Owner', username: 'qa.owner', email: 'qa@example.com', password: 'Password12345' };
+
+    it('generates a valid username for a minimal partner account without changing existing custom usernames', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockImplementation(async ({ data }: any) => ({ id: 'new-owner', ...data }));
+      jest.spyOn(service, 'issueTokenPair' as any).mockResolvedValue({ accessToken: 'access', refreshToken: 'refresh' } as never);
+      const { username, ...minimal } = dto;
+      await service.registerPartner(minimal);
+      expect(prisma.user.create.mock.calls[0][0].data.username).toMatch(/^owner_[a-f0-9]{20}$/);
+      await service.registerPartner(dto);
+      expect(prisma.user.create.mock.calls[1][0].data.username).toBe('qa.owner');
+    });
+
+    it('rejects a phone from a country with no active market using a typed 400', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.countryConfig = {
+        findMany: jest.fn().mockResolvedValue([
+          { code: 'EG', phoneCallingCode: '+20' },
+          { code: 'SA', phoneCallingCode: '+966' },
+        ]),
+        findFirst: jest.fn(),
+      };
+      await expect(service.registerPartner({ ...dto, phone: '+16092757733' } as never)).rejects.toMatchObject({
+        status: 400,
+        response: expect.objectContaining({ code: 'PHONE_MARKET_UNSUPPORTED' }),
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+  });
 });

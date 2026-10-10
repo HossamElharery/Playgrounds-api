@@ -121,7 +121,7 @@ export class CommandCentreService {
     const [openPeople, handovers, toReview] = await Promise.all([
       this.prisma.payment.groupBy({
         by: ['recordedByUserId'],
-        where: { shiftId: null, status: { in: COUNTED_PAYMENT_STATUSES }, recordedByUserId: { not: null }, booking: { venueId } },
+        where: { shiftId: null, status: { in: COUNTED_PAYMENT_STATUSES }, recordedByUserId: { not: null }, OR: [{ booking: { venueId } }, { gamingOrder: { venueId } }] },
       }),
       this.prisma.cashHandover.count({ where: { venueId, shiftId: null } }),
       this.prisma.cashShift.count({ where: { venueId, reviewedAt: null, difference: { not: 0 } } }),

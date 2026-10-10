@@ -1,0 +1,7 @@
+CREATE TABLE "LobbySocialQuestion" (
+  "id" TEXT PRIMARY KEY,
+  "data" JSONB NOT NULL,
+  "version" INTEGER NOT NULL DEFAULT 1,
+  "updatedBy" TEXT NOT NULL,
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

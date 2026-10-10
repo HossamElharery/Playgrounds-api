@@ -27,8 +27,11 @@ export async function assertVenueAccess(
     return venue;
   }
 
-  if (user.roles.includes('owner') && venue.ownerId === user.id) {
-    return venue;
+  if (user.roles.includes('owner')) {
+    if(venue.ownerId===user.id)return venue;
+    // Owner permissions are global in AuthGuard; never use a secondary staff role
+    // to acquire those privileges on another owner's venue.
+    throw new ForbiddenException('Not your venue');
   }
 
   if (user.roles.includes('staff')) {

@@ -38,6 +38,7 @@ function setup(opts: { tz?: string; rules?: any[] } = {}) {
   const db: any = {
     venue: { findUnique: jest.fn(async () => ({ id: 'v1', ownerId: 'o1', weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:45' }])), country: { timezone: tz } })) },
     court: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'c1' || where.id === 'c2' ? { id: where.id, venueId: 'v1', pricingRules: rules } : null)) },
+    resourceOccupancy: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
     calendarBlock: { findFirst: jest.fn(async ({ where }: any) => blocks.find((b) => b.startsAt < where.startsAt.lt && b.endsAt > where.endsAt.gt) ?? null) },
     booking: {
       findFirst: jest.fn(async ({ where }: any) => bookings.find((b) => matches(b, where)) ?? null),

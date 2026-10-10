@@ -237,7 +237,7 @@ describe('MorphsService', () => {
         morphId: res.morphId,
         wasNew: true,
         quotaKind: 'FREE',
-        catalogVersion: 5,
+        catalogVersion: 6,
       });
       expect(prisma.$executeRaw).toHaveBeenCalled();
     });

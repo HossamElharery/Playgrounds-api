@@ -1,3 +1,6 @@
+import { rescaleMoney,paymentLegacySql } from '../../common/money/money-scale';
+import { GAMING_BOOKING_MONEY_SELECT,gamingBookingPayments } from './gaming/booking-gaming-money';
+import { calculateUsageCharge } from './gaming/session-billing';
 import { createHash } from 'crypto';
 import { buildBookingStatement } from '../../common/money/booking-statement';
 import { netOf } from './cash/payment-trail';
@@ -174,8 +177,8 @@ const MANUAL_SQL = Prisma.sql`"source" = 'manual'`;
  * Net money actually received on ONE booking: every counted payment minus the refunds.
  * A deposit counts the moment it is taken, so a part-paid booking shows what it really holds.
  */
-export const NET_PAID_SQL = `COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded')), 0)`;
-const NET_CASH_SQL = `COALESCE((SELECT SUM(p."amount") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded') AND p."method" = 'cash'), 0)`;
+export const NET_PAID_SQL = `(COALESCE((SELECT SUM(p."amount"::numeric*100/p."moneyScale") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded')), 0) + COALESCE((SELECT SUM(a."amountMinor"::numeric*100/(SELECT go."moneyScale" FROM "GamingOrder" go WHERE go.id=l."orderId")) FROM "GamingPaymentAllocation" a JOIN "GamingOrderLine" l ON l.id=a."lineId" JOIN "UsageSession" s ON s.id=l."sourceId" JOIN "Payment" p ON p.id=a."paymentId" WHERE s."bookingId"="Booking".id AND l.kind='booking-time' AND p."bookingId" IS NULL AND p.status IN ('paid','refunded')),0))::double precision`;
+const NET_CASH_SQL = `(COALESCE((SELECT SUM(p."amount"::numeric*100/p."moneyScale") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded') AND p."method" = 'cash'), 0) + COALESCE((SELECT SUM(a."amountMinor"::numeric*100/(SELECT go."moneyScale" FROM "GamingOrder" go WHERE go.id=l."orderId")) FROM "GamingPaymentAllocation" a JOIN "GamingOrderLine" l ON l.id=a."lineId" JOIN "UsageSession" s ON s.id=l."sourceId" JOIN "Payment" p ON p.id=a."paymentId" WHERE s."bookingId"="Booking".id AND l.kind='booking-time' AND p."bookingId" IS NULL AND p.status IN ('paid','refunded') AND p.method='cash'),0))::double precision`;
 
 /** A manual booking's revenue is what was received on it (a fully paid one is its whole price). */
 export const MANUAL_RECEIVED_SQL = `(CASE WHEN "paymentStatus" = 'paid' THEN "totalAmount" ELSE GREATEST(0, LEAST("totalAmount", ${NET_PAID_SQL})) END)`;
@@ -271,7 +274,7 @@ export class OwnerSummaryService {
             status: { not: 'cancelled' },
             paymentStatus: { in: ['pending', 'partial'] },
           },
-          select: { id: true, totalAmount: true, payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } } },
+          select: {usageSession:{select:GAMING_BOOKING_MONEY_SELECT}, id: true, totalAmount: true, payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } } },
         }),
         this.prisma.booking.aggregate({
           where: { venueId, slotStart: { gt: new Date(Math.max(now.getTime(), range.start.getTime())), lt: range.end }, status: 'confirmed' },
@@ -294,9 +297,9 @@ export class OwnerSummaryService {
         }),
       ]);
 
-    const collectedRevenue = totalsRow.matchena + totalsRow.own;
-    const outstanding = outstandingRows.reduce((sum, b) => {
-      const paid = b.payments.reduce((p, x) => p + x.amount, 0);
+    let collectedRevenue = totalsRow.matchena + totalsRow.own;
+    let outstanding = outstandingRows.reduce((sum, b) => {
+      const paid = [...b.payments,...gamingBookingPayments(b.usageSession)].reduce((p, x) => p + x.amount, 0);
       return sum + Math.max(0, b.totalAmount - paid);
     }, 0);
     const expected = Math.max(
@@ -354,14 +357,30 @@ export class OwnerSummaryService {
     const cashbook = await this.cashbook(venueId, range.start, range.end);
     const retained = await this.retainedFromCancelled(venueId, range.start, range.end);
 
+    const gaming = venue.gamingSessionsEnabled || venue.gamingProductsEnabled
+      ? await this.gamingIncome(venueId, range.start, range.end)
+      : { received: 0, cash: 0, time: 0, products: 0, byDay: [] as {date:string; revenue:number}[] };
+    const gamingOrders=venue.gamingSessionsEnabled||venue.gamingProductsEnabled?await this.prisma.gamingOrder.findMany({where:{venueId,currency:venue.currency,state:'open',createdAt:{gte:range.start,lt:range.end}},include:{lines:{include:{allocations:true}},sessions:{include:{segments:{orderBy:{startedAt:'asc'}}}}}}):[];
+    let gamingOutstanding=0, gamingCredit=0;
+    for(const o of gamingOrders){
+      const eligible=o.lines.filter(l=>l.kind!=='booking-time');
+      const charge=eligible.reduce((sum,l)=>sum+(l.kind==='discount'?-1:1)*(l.kind==='time'?calculateUsageCharge(o.sessions.find(x=>x.id===l.sourceId)!,now):l.amountMinor),0);
+      const received=eligible.reduce((sum,l)=>sum+l.allocations.reduce((n,a)=>n+a.amountMinor,0),0);
+      gamingOutstanding+=rescaleMoney(Math.max(0,charge-received),o.moneyScale,100);gamingCredit+=rescaleMoney(Math.max(0,received-charge),o.moneyScale,100);
+    }
+    outstanding+=gamingOutstanding;
+    collectedRevenue += gaming.received;
+    for (const row of gaming.byDay) { const day = byDay.find(d => d.date === row.date); if(day) day.revenue += row.revenue; }
+    if (gaming.received) bySourceRows.push({source:'manual',sourceKey:'gaming-operations',sourceLabel:null,bookings:0,revenue:gaming.received});
     return {
+      gaming: { timeRevenue: gaming.time, productRevenue: gaming.products, received: gaming.received, outstanding:gamingOutstanding, credit:gamingCredit, revenueBasis:'payment-received-at' },
       range: { from: range.from, to: range.to, timezone: tz, key: range.range },
       currency: venue.currency,
       totals: {
         bookings: totalsRow.bookings,
         collectedRevenue,
         matchenaRevenue: totalsRow.matchena,
-        ownRevenue: totalsRow.own,
+        ownRevenue: totalsRow.own + gaming.received,
         commission: totalsRow.commission,
         takeHome: collectedRevenue - totalsRow.commission,
         expenses: spent.total,
@@ -371,8 +390,8 @@ export class OwnerSummaryService {
         netProfit: collectedRevenue + retained - totalsRow.commission - spent.total,
         outstanding,
         expected,
-        cashCollected: totalsRow.cash,
-        onlineCollected: collectedRevenue - totalsRow.cash,
+        cashCollected: totalsRow.cash + gaming.cash,
+        onlineCollected: collectedRevenue - totalsRow.cash - gaming.cash,
       },
       bySource: bySourceRows.map((row) => {
         const display = sourceDisplay(row.source, row.sourceKey, row.sourceLabel);
@@ -410,6 +429,26 @@ export class OwnerSummaryService {
     };
   }
 
+  /** Order money uses existing Payment rows, by receipt date. Linked legacy payments
+   * stay counted by Booking; products never contribute platform commission. */
+  async gamingIncome(venueId:string,start:Date,end:Date) {
+    const rows = await this.prisma.$queryRaw<{kind:string; method:string; date:string; amount:number}[]>(Prisma.sql`
+      SELECT l.kind, p.method::text AS method, TO_CHAR(p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE c.timezone,'YYYY-MM-DD') AS date,
+             SUM(a."amountMinor"::numeric*100/o."moneyScale")::double precision AS amount
+      FROM "GamingPaymentAllocation" a JOIN "Payment" p ON p.id=a."paymentId"
+      JOIN "GamingOrderLine" l ON l.id=a."lineId" JOIN "GamingOrder" o ON o.id=l."orderId"
+      JOIN "Venue" v ON v.id=o."venueId" JOIN "CountryConfig" c ON c.code=v."countryCode"
+      LEFT JOIN "UsageSession" s ON s.id=l."sourceId" LEFT JOIN "Booking" b ON b.id=s."bookingId"
+      WHERE o."venueId"=${venueId} AND p."bookingId" IS NULL AND p.status IN ('paid','refunded')
+        AND l.kind<>'booking-time'
+        AND p."createdAt">=${start} AND p."createdAt"<${end}
+      GROUP BY 1,2,3
+    `);
+    const byDay = new Map<string,number>();
+    for(const r of rows) byDay.set(r.date,(byDay.get(r.date)??0)+r.amount);
+    return {received:rows.reduce((n,r)=>n+r.amount,0),cash:rows.filter(r=>r.method==='cash').reduce((n,r)=>n+r.amount,0),time:rows.filter(r=>r.kind!=='product').reduce((n,r)=>n+r.amount,0),products:rows.filter(r=>r.kind==='product').reduce((n,r)=>n+r.amount,0),byDay:[...byDay].map(([date,revenue])=>({date,revenue}))};
+  }
+
   /**
    * Money that came IN during a period, by the day it was received — the other way to read the
    * books. The play-date numbers answer "what did my bookings in this period earn"; this answers
@@ -430,14 +469,15 @@ export class OwnerSummaryService {
                   WHEN b."slotStart" >= (${end}::timestamptz AT TIME ZONE 'UTC') THEN 'advance'
                   WHEN b."slotStart" <  (${start}::timestamptz AT TIME ZONE 'UTC') THEN 'late'
                   ELSE 'period' END AS bucket,
-             COALESCE(SUM(p."amount"), 0)::int AS amount,
+             COALESCE(SUM(p."amount"::numeric*100/p."moneyScale"), 0)::double precision AS amount,
              (COUNT(*) FILTER (WHERE p."amount" > 0))::int AS count,
-             COALESCE(SUM(-p."amount") FILTER (WHERE p."amount" < 0), 0)::int AS refunded
+             COALESCE(SUM(-p."amount"::numeric*100/p."moneyScale") FILTER (WHERE p."amount" < 0), 0)::double precision AS refunded
       FROM "Payment" p
-      JOIN "Booking" b ON b."id" = p."bookingId"
-      WHERE b."venueId" = ${venueId}
+      LEFT JOIN "Booking" b ON b."id" = p."bookingId"
+      LEFT JOIN "GamingOrder" o ON o."id" = p."gamingOrderId"
+      WHERE COALESCE(b."venueId",o."venueId") = ${venueId}
         AND p."status" IN ('paid', 'refunded')
-        AND (b."source" = 'manual' OR p."recordedByUserId" IS NOT NULL)
+        AND (o.id IS NOT NULL OR b."source" = 'manual' OR p."recordedByUserId" IS NOT NULL)
         AND p."createdAt" >= (${start}::timestamptz AT TIME ZONE 'UTC')
         AND p."createdAt" <  (${end}::timestamptz AT TIME ZONE 'UTC')
       GROUP BY 1, 2
@@ -473,9 +513,9 @@ export class OwnerSummaryService {
    */
   async retainedFromCancelled(venueId: string, start: Date, end: Date): Promise<number> {
     const [row] = await this.prisma.$queryRaw<{ retained: number }[]>(Prisma.sql`
-      SELECT COALESCE(SUM(GREATEST(net, 0)), 0)::int AS retained
+      SELECT COALESCE(SUM(GREATEST(net, 0)), 0)::double precision AS retained
       FROM (
-        SELECT b."id", SUM(p."amount") AS net
+        SELECT b."id", SUM(p."amount"::numeric*100/p."moneyScale") AS net
         FROM "Booking" b
         JOIN "Payment" p ON p."bookingId" = b."id"
         WHERE b."venueId" = ${venueId}
@@ -614,10 +654,10 @@ export class OwnerSummaryService {
       { bookings: number; matchena: number; own: number; commission: number; cash: number }[]
     >(Prisma.sql`
       SELECT COUNT(*)::int AS bookings,
-             COALESCE(SUM(CASE WHEN ${PLATFORM_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::int AS matchena,
-             COALESCE(SUM(CASE WHEN ${MANUAL_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::int AS own,
+             COALESCE(SUM(CASE WHEN ${PLATFORM_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::double precision AS matchena,
+             COALESCE(SUM(CASE WHEN ${MANUAL_SQL} THEN ${AMOUNT_SQL} ELSE 0 END), 0)::double precision AS own,
              COALESCE(SUM(CASE WHEN ${Prisma.raw(PLATFORM_COLLECTED_SQL)} THEN COALESCE("commissionAmount", 0) ELSE 0 END), 0)::int AS commission,
-             COALESCE(SUM(${CASH_AMOUNT_SQL}), 0)::int AS cash
+             COALESCE(SUM(${CASH_AMOUNT_SQL}), 0)::double precision AS cash
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
     `);
@@ -628,7 +668,7 @@ export class OwnerSummaryService {
     return this.prisma.$queryRaw<{ date: string; revenue: number; bookings: number }[]>(Prisma.sql`
       SELECT to_char(${localTs(tz)}::date, 'YYYY-MM-DD') AS date,
              COUNT(*)::int AS bookings,
-             COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue
+             COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
       GROUP BY 1
@@ -640,7 +680,7 @@ export class OwnerSummaryService {
     return this.prisma.$queryRaw<{ hour: number; bookings: number; revenue: number }[]>(Prisma.sql`
       SELECT EXTRACT(HOUR FROM ${localTs(tz)})::int AS hour,
              COUNT(*)::int AS bookings,
-             COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue
+             COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
       GROUP BY 1
@@ -654,7 +694,7 @@ export class OwnerSummaryService {
     >(Prisma.sql`
       SELECT "courtId",
              COUNT(*)::int AS bookings,
-             COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue,
+             COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue,
              COALESCE(SUM(EXTRACT(EPOCH FROM ("slotEnd" - "slotStart")) / 60), 0)::int AS occupied
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
@@ -669,7 +709,7 @@ export class OwnerSummaryService {
     >(Prisma.sql`
       SELECT "source"::text AS source, "sourceKey", "sourceLabel",
              COUNT(*)::int AS bookings,
-             COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue
+             COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
       GROUP BY 1, 2, 3
@@ -679,7 +719,7 @@ export class OwnerSummaryService {
 
   private topPlatformCustomers(venueId: string, start: Date, end: Date, ownerId: string) {
     return this.prisma.$queryRaw<{ userId: string; bookings: number; revenue: number }[]>(Prisma.sql`
-      SELECT "userId", COUNT(*)::int AS bookings, COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue
+      SELECT "userId", COUNT(*)::int AS bookings, COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
         AND ${PLATFORM_SQL}
@@ -695,7 +735,7 @@ export class OwnerSummaryService {
       { guestName: string | null; guestPhone: string | null; bookings: number; revenue: number }[]
     >(Prisma.sql`
       SELECT "guestName", "guestPhone", COUNT(*)::int AS bookings,
-             COALESCE(SUM(${AMOUNT_SQL}), 0)::int AS revenue
+             COALESCE(SUM(${AMOUNT_SQL}), 0)::double precision AS revenue
       FROM "Booking"
       WHERE ${this.rangeWhere(venueId, start, end)}
         AND ${MANUAL_SQL}

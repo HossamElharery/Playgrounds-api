@@ -85,6 +85,7 @@ function makePrisma(opts: { overlap?: boolean; booking?: ReturnType<typeof booki
       findFirst: jest.fn(),
     },
     venue: { findUnique: jest.fn().mockResolvedValue({ currency: 'EGP' }) },
+    resourceOccupancy: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
     calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
     venueBookingSource: { upsert: jest.fn().mockResolvedValue({}) },
     auditLogEntry: { create: jest.fn().mockResolvedValue({}) },

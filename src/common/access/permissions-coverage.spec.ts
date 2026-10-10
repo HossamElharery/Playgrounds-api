@@ -1,3 +1,6 @@
+import { GamingSetupController } from '../../modules/owner/gaming/gaming-setup.controller';
+import { GamingOperationsController } from '../../modules/owner/gaming/gaming-operations.controller';
+import { GamingLayoutController } from '../../modules/owner/gaming/gaming-layout.controller';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import {
@@ -16,7 +19,7 @@ import { TeamController } from '../../modules/team/team.controller';
 import { SubscriptionsController } from '../../modules/subscriptions/subscriptions.controller';
 import { ReviewsController } from '../../modules/reviews/reviews.controller';
 
-const CONTROLLERS = [
+const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController,
   OwnerController,
   VenuesController,
   BookingsController,
@@ -115,5 +118,27 @@ describe('staff permission coverage', () => {
     for (const action of ['skip', 'cancel-from', 'reschedule']) {
       expect(need(perm(`fixed-bookings/:id/${action}`, 1))).toEqual(['bookings.edit']);
     }
+  });
+
+  describe('gaming permission dependencies (least privilege)', () => {
+    it('ending or starting a session does not hand out booking edit/create or revenue reports', () => {
+      expect(normalizePermissions(['sessions.end'])).toEqual(['bookings.view', 'sessions.end']);
+      expect(normalizePermissions(['sessions.start'])).toEqual(['bookings.view', 'sessions.start']);
+      expect(normalizePermissions(['sessions.correct'])).toEqual(['bookings.view', 'sessions.end', 'sessions.correct']);
+    });
+    it('printing receipts needs money handling, not the revenue reports', () => {
+      const saved = normalizePermissions(['receipts.print']);
+      expect(saved).toContain('payments.record');
+      expect(saved).not.toContain('reports.view');
+      expect(normalizePermissions(['printer.manage'])).not.toContain('reports.view');
+    });
+    it('managing bills pulls in what the API needs to open a bill (payments.record or reports.view)', () => {
+      expect(normalizePermissions(['orders.manage'])).toEqual(['bookings.view', 'payments.record', 'orders.manage']);
+    });
+    it('every preset is already coherent (normalising it changes nothing) and the gaming presets exist', () => {
+      for (const preset of PERMISSION_PRESETS) expect(normalizePermissions(preset.permissions)).toEqual(PERMISSION_KEYS.filter((k) => preset.permissions.includes(k)));
+      for (const key of ['gaming_floor', 'gaming_cashier', 'gaming_supervisor']) expect(PERMISSION_PRESETS.some((p) => p.key === key)).toBe(true);
+      expect(PERMISSION_PRESETS.find((p) => p.key === 'gaming_floor')!.permissions).not.toContain('reports.view');
+    });
   });
 });
