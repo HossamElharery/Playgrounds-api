@@ -3,6 +3,8 @@ import * as bcrypt from 'bcrypt';
 import * as ngeohash from 'ngeohash';
 import { HELP_FAQS } from './data/help-faqs';
 import { EGYPT_GEO } from './data/egypt-geo';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const prisma = new PrismaClient();
 
@@ -246,6 +248,13 @@ async function main() {
       });
     }
   }
+
+  // The same additive catalog is installed by 20261010090000_egypt_full_area_catalog.
+  const codAreas = JSON.parse(readFileSync(join(__dirname, 'data/egypt-cod-areas.json'), 'utf8'));
+  await prisma.district.createMany({
+    data: codAreas.map(({ sourceCode, level, ...area }) => area),
+    skipDuplicates: true,
+  });
 
   const riyadh = await prisma.governorate.upsert({
     where: { id: 'gov-riyadh' },

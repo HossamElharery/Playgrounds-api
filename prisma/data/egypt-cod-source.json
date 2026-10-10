@@ -1,0 +1,9 @@
+{
+  "source": "https://data.humdata.org/dataset/cod-ab-egy",
+  "license": "CC-BY-IGO",
+  "validOn": "2017-04-21",
+  "retrievedOn": "2026-10-10",
+  "admin2Count": 365,
+  "admin3Count": 5716,
+  "notes": "Administrative units, villages and urban localities from OCHA COD. Existing product districts are retained for newer towns and familiar neighborhood aliases. Names at level 3 include the parent district for disambiguation. This source is dated and is not a guarantee of current exhaustive informal neighborhoods. No synthetic polygons are created."
+}
