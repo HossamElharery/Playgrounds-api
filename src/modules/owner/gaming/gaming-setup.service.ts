@@ -6,9 +6,16 @@ import { AuthenticatedUser } from '../../../common/types/authenticated-user.inte
 import { isoMoneyScale,rescaleMoney } from '../../../common/money/money-scale';
 import { GamingCommandService } from './gaming-command.service';
 import { GamingLayoutService } from './gaming-layout.service';
-import { GamingSetupDto, SetupKind } from './gaming-setup.dto';
+import { GamingSetupDto, SetupKind, SETUP_KINDS } from './gaming-setup.dto';
 import { buildSetupLayout, PlannedUnit, validateSetupPlan } from './setup-plan';
 import { gamingConfigObject } from './gaming-tariff';
+function existingKind(unit: {sport:{activityKind:string|null;slug?:string};tableConfig:unknown;gamingConfig:unknown}):SetupKind|null {
+ if(unit.sport.activityKind==='table-game')return unit.sport.slug==='table-tennis'?'table-tennis':unit.sport.slug==='billiards'?'billiards':null;
+ const raw=unit.sport.activityKind==='table-game'?gamingConfigObject(unit.tableConfig).tableType:gamingConfigObject(unit.gamingConfig).consoleType;
+ const key=typeof raw==='string'?raw.toLowerCase().trim():'';
+ const table=unit.sport.activityKind==='table-game';
+ return SETUP_KINDS.includes(key as SetupKind)&&table===['billiards','table-tennis'].includes(key)?key as SetupKind:null;
+}
 @Injectable()
 export class GamingSetupService {
  constructor(private readonly commands:GamingCommandService,private readonly layouts:GamingLayoutService){}
@@ -21,7 +28,7 @@ export class GamingSetupService {
   const db=this.commands.prisma;
   const [layout,units,dependencies]=await Promise.all([
    db.gamingLayout.findUnique({where:{venueId}}),
-   db.court.findMany({where:{venueId,sport:{activityKind:{in:['gaming-station','table-game']}}},include:{sport:{select:{activityKind:true}}},orderBy:{name:'asc'}}),
+   db.court.findMany({where:{venueId,sport:{activityKind:{in:['gaming-station','table-game']}}},include:{sport:{select:{activityKind:true,slug:true}}},orderBy:{name:'asc'}}),
    db.resourceOccupancy.count({where:{resource:{venueId},OR:[{running:true},{endsAt:{gt:new Date()}}]}})
   ]);
   const revision=layout?.revision??0;
@@ -29,7 +36,7 @@ export class GamingSetupService {
   const used=await db.usageSession.count({where:{venueId}});
   const bookings=await db.booking.count({where:{venueId}});
   const eligible=!layout?.draft&&(!revision||published?.requestHash==='auto-default')&&!dependencies&&!used&&!bookings;
-  return {eligible,revision,units:units.map(u=>({id:u.id,name:u.name,assetKey:u.sport.activityKind==='table-game'?gamingConfigObject(u.tableConfig).tableType??'billiards':gamingConfigObject(u.gamingConfig).consoleType??'ps5',hourlyRateMinor:u.gamingHourlyRateMinor,multiHourlyRateMinor:gamingConfigObject(u.gamingConfig).multiHourlyRateMinor??null}))};
+  return {eligible,revision,units:units.map(u=>({id:u.id,name:u.name,assetKey:existingKind(u),family:u.sport.activityKind==='table-game'?'table':'station',hourlyRateMinor:u.gamingHourlyRateMinor,multiHourlyRateMinor:gamingConfigObject(u.gamingConfig).multiHourlyRateMinor??null}))};
  }
  async setup(user:AuthenticatedUser,d:GamingSetupDto){
   try{validateSetupPlan(d);}catch{throw new BadRequestException({code:'SETUP_INVALID'});}
@@ -45,8 +52,15 @@ export class GamingSetupService {
    if(await tx.usageSession.count({where:{venueId:d.venueId}})||await tx.booking.count({where:{venueId:d.venueId}})||await tx.resourceOccupancy.count({where:{resource:{venueId:d.venueId},OR:[{running:true},{endsAt:{gt:new Date()}}]}}))throw new ConflictException({code:'RESOURCE_HAS_DEPENDENCIES'});
    const existing=await tx.court.findMany({where:{venueId:d.venueId,sport:{activityKind:{in:['gaming-station','table-game']}}},include:{sport:true},orderBy:{name:'asc'}});
    if(existing.length&&!d.reuseExisting)throw new ConflictException({code:'SETUP_EXISTING_UNITS'});
-   const kind=(u:typeof existing[number])=>u.sport.activityKind==='table-game'?gamingConfigObject(u.tableConfig).tableType??'billiards':gamingConfigObject(u.gamingConfig).consoleType??'ps5';
-   for(const u of existing)if(existing.filter(x=>kind(x)===kind(u)).length>(d.groups.find(g=>g.assetKey===kind(u))?.count??0))throw new ConflictException({code:'SETUP_EXISTING_UNITS'});
+   const assignments=new Map((d.existingUnits??[]).map(u=>[u.unitId,u.assetKey]));
+   if(d.existingUnits&&(assignments.size!==d.existingUnits.length||assignments.size!==existing.length||existing.some(u=>!assignments.has(u.id))))throw new ConflictException({code:'SETUP_EXISTING_UNITS',reason:'inventory_changed'});
+   const kind=(u:typeof existing[number])=>assignments.get(u.id)??existingKind(u);
+   for(const u of existing){
+    const asset=kind(u),table=u.sport.activityKind==='table-game';
+    if(!asset||table!==['billiards','table-tennis'].includes(asset))throw new BadRequestException({code:'SETUP_EXISTING_TYPE_REQUIRED',unitId:u.id});
+    const required=existing.filter(x=>kind(x)===asset).length;
+    if(required>(d.groups.find(g=>g.assetKey===asset)?.count??0))throw new ConflictException({code:'SETUP_EXISTING_UNITS',assetKey:asset,requiredCount:required});
+   }
    const venue=await tx.venue.findUniqueOrThrow({where:{id:d.venueId}});
    const sports=await tx.sportCategory.findMany({where:{activityKind:{in:['gaming-station','table-game']}}});
    const planned:PlannedUnit[]=[],used=new Set<string>();
@@ -58,7 +72,7 @@ export class GamingSetupService {
     const source=!parent?existing.find(u=>kind(u)===assetKey&&!used.has(u.id)):undefined;
     const config={...gamingConfigObject(source?.gamingConfig),consoleType:assetKey,seats:multi?4:2,roomTier:roomIndex===undefined?'standard':'vip-big-screen',setupWholeRoomOnly:roomIndex!==undefined&&!parent&&d.rooms[roomIndex].occupancy==='exclusive',...(multi!==undefined?{multiHourlyRateMinor:multi}:{})};
     if(multi===undefined)delete (config as Record<string,unknown>).multiHourlyRateMinor;
-    const data={gamingHourlyRateMinor:rate,gamingPublished:true,...(table?{tableConfig:{...gamingConfigObject(source?.tableConfig),tableType:assetKey,rentalAvailable:false,setupWholeRoomOnly:roomIndex!==undefined&&!parent&&d.rooms[roomIndex].occupancy==='exclusive'}}:{gamingConfig:config as Prisma.InputJsonValue})};
+    const data={gamingHourlyRateMinor:rate,gamingPublished:true,...(table?{sportId:sport.id,tableConfig:{...gamingConfigObject(source?.tableConfig),tableType:source&&existingKind(source)===assetKey?(gamingConfigObject(source.tableConfig).tableType??assetKey):assetKey,rentalAvailable:false,setupWholeRoomOnly:roomIndex!==undefined&&!parent&&d.rooms[roomIndex].occupancy==='exclusive'}}:{gamingConfig:config as Prisma.InputJsonValue})};
     const pricing={label:'base',daysOfWeek:[] as number[],startTime:'00:00',endTime:'24:00',priceAmount:Math.round(rescaleMoney(rate,isoMoneyScale(venue.currency),100)),currency:venue.currency};
     const u=source?await tx.court.update({where:{id:source.id},data}):await tx.court.create({data:{...data,venueId:d.venueId,sportId:sport.id,name,slotDurationMins:60,pricingRules:{create:pricing}}});
     used.add(u.id);

@@ -35,6 +35,7 @@ export class GamingSessionsService {
   }
   createUnits(user:AuthenticatedUser,dto:CreateGamingUnitsDto) {
     return this.commands.command(user,'venue.manage','units.create',dto,async tx=>{
+      if(dto.multiHourlyRateMinor!==undefined)selectGamingTariff({consoleType:dto.assetKey,multiHourlyRateMinor:dto.multiHourlyRateMinor},dto.hourlyRateMinor,'multi');
       const table=['billiards','table-tennis'].includes(dto.assetKey);
       const sport=await tx.sportCategory.findFirst({where:table?{slug:dto.assetKey,activityKind:'table-game'}:{activityKind:'gaming-station'}});
       if(!sport)throw new BadRequestException({code:'ACTIVITY_NOT_CONFIGURED'});
@@ -42,7 +43,7 @@ export class GamingSessionsService {
       const venue=await tx.venue.findUniqueOrThrow({where:{id:dto.venueId}});
       const offset=await tx.court.count({where:{venueId:dto.venueId,sportId:sport.id}});
       const units: Court[]=[];
-      for(let i=0;i<dto.count;i++)units.push(await tx.court.create({data:{venueId:dto.venueId,sportId:sport.id,name:`${dto.namePrefix.trim()} ${offset+i+1}`,gamingPublished:false,gamingHourlyRateMinor:dto.hourlyRateMinor,slotDurationMins:60,...(table?{tableConfig:{tableType:dto.assetKey,rentalAvailable:false}}:{gamingConfig:{consoleType:dto.assetKey,seats:2,roomTier:'standard'}}),pricingRules:{create:{label:'base',daysOfWeek:[],startTime:'00:00',endTime:'24:00',priceAmount:Math.round(rescaleMoney(dto.hourlyRateMinor,isoMoneyScale(venue.currency),100)),currency:venue.currency}}}}));
+      for(let i=0;i<dto.count;i++)units.push(await tx.court.create({data:{venueId:dto.venueId,sportId:sport.id,name:`${dto.namePrefix.trim()} ${offset+i+1}`,gamingPublished:false,gamingHourlyRateMinor:dto.hourlyRateMinor,slotDurationMins:60,...(table?{tableConfig:{tableType:dto.assetKey,rentalAvailable:false}}:{gamingConfig:{consoleType:dto.assetKey,seats:dto.multiHourlyRateMinor?4:2,roomTier:'standard',...(dto.multiHourlyRateMinor!==undefined?{multiHourlyRateMinor:dto.multiHourlyRateMinor}:{})}}),pricingRules:{create:{label:'base',daysOfWeek:[],startTime:'00:00',endTime:'24:00',priceAmount:Math.round(rescaleMoney(dto.hourlyRateMinor,isoMoneyScale(venue.currency),100)),currency:venue.currency}}}}));
       return {units};
     });
   }

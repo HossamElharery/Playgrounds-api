@@ -1,4 +1,7 @@
 import { activateGamingDefaults } from '../owner/gaming/gaming-activation';
+import { publishRegistrationGamingPlan } from './registration-gaming-setup';
+import { GamingLayoutService } from '../owner/gaming/gaming-layout.service';
+import type { SetupKind } from '../owner/gaming/gaming-setup.dto';
 import {
   ForbiddenException,
   HttpException,
@@ -792,12 +795,13 @@ export class PartnersService {
     const resolvedSports = await Promise.all((payload.courts ?? []).map(async (draft, index) => {
       const rawId = draft.sportId?.trim();
       const normalized = this.normalizeSportId(rawId);
-      const sport = rawId ? ((await tx.sportCategory.findUnique({where:{id:rawId},select:{id:true,activityKind:true}})) ??
-        (normalized && normalized !== rawId ? await tx.sportCategory.findUnique({where:{id:normalized},select:{id:true,activityKind:true}}) : null) ??
-        await tx.sportCategory.findUnique({where:{slug:rawId.replace(/^sport-/, '')},select:{id:true,activityKind:true}})) : null;
+      const sport = rawId ? ((await tx.sportCategory.findUnique({where:{id:rawId},select:{id:true,slug:true,activityKind:true}})) ??
+        (normalized && normalized !== rawId ? await tx.sportCategory.findUnique({where:{id:normalized},select:{id:true,slug:true,activityKind:true}}) : null) ??
+        await tx.sportCategory.findUnique({where:{slug:rawId.replace(/^sport-/, '')},select:{id:true,slug:true,activityKind:true}})) : null;
       if (!sport) throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_SPORT', `Unknown sport on court ${index + 1}`);
       return sport;
     }));
+    if(payload.gamingSetup&&resolvedSports.filter(s=>!['gaming-station','table-game'].includes(s.activityKind??'')).length>20)throw new ApiException(HttpStatus.BAD_REQUEST,'TOO_MANY_COURTS','At most 20 sports courts are allowed');
     const sportIds = [...new Set(resolvedSports.map(sport => sport.id))];
     if (sportIds.length) {
       await tx.venueSport.createMany({
@@ -836,6 +840,7 @@ export class PartnersService {
       }
     }
 
+    const registrationUnits:{id:string;assetKey:SetupKind}[]=[];
     for (const [index, draft] of (payload.courts ?? []).entries()) {
       const pricing = {
         base: draft.basePriceAmount ?? 0,
@@ -892,6 +897,10 @@ export class PartnersService {
         courtId = created.id;
       }
 
+      if(payload.gamingSetup&&['gaming-station','table-game'].includes(sportCategory.activityKind??'')){
+        const asset=sportCategory.activityKind==='table-game'?sportCategory.slug:(gamingConfig?.consoleType as string);
+        registrationUnits.push({id:courtId,assetKey:asset as SetupKind});
+      }
       await tx.pricingRule.createMany({
         data: [
           {
@@ -925,6 +934,7 @@ export class PartnersService {
     if(protectedIds.size)await tx.venueSport.createMany({data:[...new Set(gamingCourts.map(c=>c.sportId))].map(sportId=>({venueId:venueId!,sportId})),skipDuplicates:true});
     await this.replacePhotos(tx,venueId,payload.photos??[]);
 
+    if(payload.gamingSetup&&!preserveGaming)await publishRegistrationGamingPlan(tx,venueId,country.currency,adminId,payload.gamingSetup,registrationUnits,new GamingLayoutService(this.prisma));
     await activateGamingDefaults(tx, venueId);
     return venueId;
   }

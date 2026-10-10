@@ -8,6 +8,8 @@ import {
   IsLatitude,
   IsLongitude,
   IsObject,
+  IsArray,
+  ArrayMaxSize,
   IsOptional,
   IsPhoneNumber,
   IsString,
@@ -188,9 +190,16 @@ export class PartnerApplicationPayloadDto {
 
   @ApiPropertyOptional({ type: [PartnerCourtDraftDto] })
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(120)
   @ValidateNested({ each: true })
   @Type(() => PartnerCourtDraftDto)
   courts?: PartnerCourtDraftDto[];
+
+  @ApiPropertyOptional({description:'Validated quick gaming setup plan; applied atomically on approval.'})
+  @IsOptional()
+  @IsObject()
+  gamingSetup?: import('../registration-gaming-setup').RegistrationGamingPlan | null;
 
   @ApiPropertyOptional({
     description: 'Weekday 0=Sun .. 6=Sat → { closed, open, close }',

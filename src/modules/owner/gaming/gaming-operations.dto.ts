@@ -91,6 +91,7 @@ export class CreateGamingUnitsDto extends GamingCommandDto {
  @IsInt() @Min(1) @Max(100) count!: number;
  @IsString() @MaxLength(80) namePrefix!: string;
  @IsInt() @Min(0) @Max(10000000) hourlyRateMinor!: number;
+ @IsOptional() @IsInt() @Min(1) @Max(10000000) multiHourlyRateMinor?: number;
 }
 
 export class CorrectSessionEndDto extends ReasonCommandDto { @IsDateString() endedAt!: string; }

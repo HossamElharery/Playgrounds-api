@@ -1,4 +1,5 @@
 import type { WeeklyHours } from '../../common/utils/weekly-hours.util';
+import type { RegistrationGamingPlan } from './registration-gaming-setup';
 
 export const SLOT_DURATIONS = [30, 45, 60, 90, 120, 180] as const;
 
@@ -22,6 +23,7 @@ export interface PartnerPhotoDraft {
 }
 
 export interface PartnerApplicationPayload {
+  gamingSetup?: RegistrationGamingPlan | null;
   publicNameEn?: string;
   publicNameAr?: string;
   contactPhone?: string;

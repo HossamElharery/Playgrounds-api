@@ -1,8 +1,9 @@
-import { isValidHhmm, validateWeeklyHours } from '../../common/utils/weekly-hours.util';
 import {
-  PartnerApplicationPayload,
-  SLOT_DURATIONS,
-} from './partner.types';
+  isValidHhmm,
+  validateWeeklyHours,
+} from '../../common/utils/weekly-hours.util';
+import { validateRegistrationGamingPlan } from './registration-gaming-setup';
+import { PartnerApplicationPayload, SLOT_DURATIONS } from './partner.types';
 
 const MAX_NAME = 120;
 const MAX_DESC = 2000;
@@ -37,7 +38,10 @@ export function validatePartnerSubmission(
 
   if (!trimmed(payload.governorateId)) errors.push('Governorate is required');
   if (!trimmed(payload.districtId)) errors.push('District is required');
-  if (!trimmed(payload.address) || trimmed(payload.address).length > MAX_ADDRESS) {
+  if (
+    !trimmed(payload.address) ||
+    trimmed(payload.address).length > MAX_ADDRESS
+  ) {
     errors.push('Street address is required');
   }
 
@@ -68,16 +72,54 @@ export function validatePartnerSubmission(
 
   const courts = payload.courts ?? [];
   if (courts.length < 1) errors.push('At least one court is required');
-  if (courts.length > MAX_COURTS) errors.push('A venue may have at most 20 courts');
+  if (courts.length > (payload.gamingSetup ? 120 : MAX_COURTS))
+    errors.push('Too many venue units');
+  if (payload.gamingSetup) {
+    try {
+      validateRegistrationGamingPlan(payload.gamingSetup);
+      const inventory = courts.filter((c) =>
+        ['playstation', 'billiards', 'table-tennis'].includes(
+          (c.sportId ?? '').replace(/^sport-/, ''),
+        ),
+      );
+      // IDs can be UUIDs: resolved sports are checked again during approval.
+      if (inventory.length) {
+        if (courts.length - inventory.length > 20)
+          errors.push('Too many sports courts');
+        for (const g of payload.gamingSetup.groups) {
+          const count = inventory.filter((c) => {
+            const sport = (c.sportId ?? '').replace(/^sport-/, '');
+            return (
+              (sport === 'playstation' ? c.spec?.consoleType : sport) ===
+              g.assetKey
+            );
+          }).length;
+          if (count !== g.count)
+            errors.push('Gaming inventory does not match quick setup');
+        }
+        if (
+          inventory.length !==
+          payload.gamingSetup.groups.reduce((n, g) => n + g.count, 0)
+        )
+          errors.push('Gaming inventory does not match quick setup');
+      }
+    } catch {
+      errors.push('Quick gaming setup is invalid');
+    }
+  }
   courts.forEach((court, index) => {
     const label = `Court ${index + 1}`;
     if (!trimmed(court.name)) errors.push(`${label}: name is required`);
     if (!trimmed(court.sportId)) errors.push(`${label}: sport is required`);
     if (
       !court.slotDurationMins ||
-      !SLOT_DURATIONS.includes(court.slotDurationMins as (typeof SLOT_DURATIONS)[number])
+      !SLOT_DURATIONS.includes(
+        court.slotDurationMins as (typeof SLOT_DURATIONS)[number],
+      )
     ) {
-      errors.push(`${label}: duration must be 30, 45, 60, 90, 120 or 180 minutes`);
+      errors.push(
+        `${label}: duration must be 30, 45, 60, 90, 120 or 180 minutes`,
+      );
     }
     if (!court.basePriceAmount || court.basePriceAmount < 1) {
       errors.push(`${label}: base price must be a positive amount`);
@@ -92,7 +134,8 @@ export function validatePartnerSubmission(
 
   const photos = (payload.photos ?? []).filter((p) => trimmed(p.url));
   if (photos.length < 1) errors.push('At least one gallery photo is required');
-  if (photos.length > 8) errors.push('A venue may have at most 8 gallery photos');
+  if (photos.length > 8)
+    errors.push('A venue may have at most 8 gallery photos');
 
   if (payload.consent !== true) {
     errors.push('Accuracy and authorization consent is required');
@@ -118,6 +161,7 @@ export function validatePartnerSubmission(
 export function sanitizePayload(
   payload: PartnerApplicationPayload,
 ): PartnerApplicationPayload {
+  if (payload.gamingSetup) validateRegistrationGamingPlan(payload.gamingSetup);
   return {
     ...payload,
     publicNameEn: trimmed(payload.publicNameEn),
@@ -129,7 +173,10 @@ export function sanitizePayload(
     registrationNumber: trimmed(payload.registrationNumber) || undefined,
     address: trimmed(payload.address) || undefined,
     houseRules: trimmed(payload.houseRules) || undefined,
-    courts: (payload.courts ?? []).slice(0, MAX_COURTS),
+    courts: (payload.courts ?? []).slice(
+      0,
+      payload.gamingSetup ? 120 : MAX_COURTS,
+    ),
     photos: (payload.photos ?? []).filter((p) => trimmed(p.url)).slice(0, 8),
   };
 }

@@ -3,6 +3,10 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional
 import { GamingCommandDto } from './gaming-operations.dto';
 export const SETUP_KINDS = ['ps5','ps4','xbox-series','pc','vr','billiards','table-tennis'] as const;
 export type SetupKind = typeof SETUP_KINDS[number];
+export class SetupExistingUnitDto {
+ @IsString() @MaxLength(80) unitId!: string;
+ @IsIn(SETUP_KINDS) assetKey!: SetupKind;
+}
 export class SetupGroupDto {
  @IsIn(SETUP_KINDS) assetKey!: SetupKind;
  @IsInt() @Min(1) @Max(100) count!: number;
@@ -27,6 +31,7 @@ export class SetupRoomDto {
  @IsOptional() @IsInt() @Min(1) @Max(10000000) multiHourlyRateMinor?: number;
 }
 export class GamingSetupDto extends GamingCommandDto {
+ @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({each:true}) @Type(()=>SetupExistingUnitDto) existingUnits?: SetupExistingUnitDto[];
  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(7) @ValidateNested({each:true}) @Type(()=>SetupGroupDto) groups!: SetupGroupDto[];
  @IsArray() @ArrayMaxSize(20) @ValidateNested({each:true}) @Type(()=>SetupRoomDto) rooms!: SetupRoomDto[];
  @IsInt() @Min(1) @Max(20) floorCount!: number;
