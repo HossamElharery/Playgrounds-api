@@ -28,15 +28,23 @@ const CATALOG_TTL_MS = 60_000;
 export class GeoService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private readonly pending = new Map<string, Promise<unknown>>();
   private cache = new Map<string, { exp: number; value: unknown }>();
 
   private cached<T>(key: string, loader: () => Promise<T>): Promise<T> {
     const hit = this.cache.get(key);
     if (hit && hit.exp > Date.now()) return Promise.resolve(hit.value as T);
-    return loader().then((value) => {
-      this.cache.set(key, { exp: Date.now() + CATALOG_TTL_MS, value });
+    const pending = this.pending.get(key);
+    if (pending) return pending as Promise<T>;
+    const request = Promise.resolve().then(loader).then(value => {
+      for (const [cachedKey, entry] of this.cache) if (entry.exp <= Date.now()) this.cache.delete(cachedKey);
+      if (this.cache.size < 256 || this.cache.has(key)) {
+        this.cache.set(key, { exp: Date.now() + CATALOG_TTL_MS, value });
+      }
       return value;
-    });
+    }).finally(() => { this.pending.delete(key); });
+    this.pending.set(key, request);
+    return request;
   }
 
   listCountries() {
@@ -114,40 +122,43 @@ export class GeoService {
         'governorateId, gov, or country is required',
       );
     }
-    const items = await this.prisma.district.findMany({
-      where: {
-        ...(governorateId ? { governorateId } : {}),
-        ...(govSlug
-          ? {
-              governorate: {
-                slug: govSlug,
-                ...(countryCode ? { countryCode } : {}),
-              },
-            }
-          : {}),
-        ...(!governorateId && !govSlug && countryCode
-          ? { governorate: { countryCode } }
-          : {}),
-      },
-      select: {
-        id: true,
-        slug: true,
-        nameEn: true,
-        nameAr: true,
-        lat: true,
-        lng: true,
-        polygon: true,
-        governorateId: true,
-        governorate: {
-          select: { id: true, slug: true, nameEn: true, nameAr: true, countryCode: true },
+    const key = `districts:${JSON.stringify([governorateId ?? '', govSlug ?? '', countryCode ?? ''])}`;
+    return this.cached(key, async () => {
+      const items = await this.prisma.district.findMany({
+        where: {
+          ...(governorateId ? { governorateId } : {}),
+          ...(govSlug
+            ? {
+                governorate: {
+                  slug: govSlug,
+                  ...(countryCode ? { countryCode } : {}),
+                },
+              }
+            : {}),
+          ...(!governorateId && !govSlug && countryCode
+            ? { governorate: { countryCode } }
+            : {}),
         },
-      },
-      orderBy: { nameEn: 'asc' },
+        select: {
+          id: true,
+          slug: true,
+          nameEn: true,
+          nameAr: true,
+          lat: true,
+          lng: true,
+          polygon: true,
+          governorateId: true,
+          governorate: {
+            select: { id: true, slug: true, nameEn: true, nameAr: true, countryCode: true },
+          },
+        },
+        orderBy: { nameEn: 'asc' },
+      });
+      return items.map((d) => ({
+        ...d,
+        polygon: toSearchBoundary(d.polygon),
+      }));
     });
-    return items.map((d) => ({
-      ...d,
-      polygon: toSearchBoundary(d.polygon),
-    }));
   }
 
   /**

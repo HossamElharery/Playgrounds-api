@@ -7,6 +7,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = configureApp(app);
   setupSwagger(app);
+  app.enableShutdownHooks();
 
   const port = config.get<number>('PORT', 3000);
   await app.listen(port);

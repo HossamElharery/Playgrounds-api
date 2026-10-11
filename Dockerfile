@@ -22,4 +22,5 @@ RUN mkdir -p uploads && chown -R node:node /app
 
 USER node
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/api/v1/ready', {signal: AbortSignal.timeout(4000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/src/main.js"]

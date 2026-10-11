@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
 import * as express from 'express';
 import helmet from 'helmet';
+import { randomUUID } from 'node:crypto';
 import * as path from 'path';
 import { SocketIoAdapter } from './common/adapters/socket-io.adapter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -25,6 +26,20 @@ export function configureApp(app: INestApplication): ConfigService {
   if (config.get<string>('NODE_ENV') === 'production') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
+
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const supplied = req.get('x-request-id');
+    const requestId = supplied && /^[a-zA-Z0-9_-]{1,64}$/.test(supplied) ? supplied : randomUUID();
+    req.headers['x-request-id'] = requestId;
+    res.setHeader('X-Request-ID', requestId);
+    const started = Date.now();
+    res.once('finish', () => {
+      if (res.statusCode >= 500) console.error('[http-error]', JSON.stringify({
+        requestId, method: req.method, path: req.path, status: res.statusCode, durationMs: Date.now() - started,
+      }));
+    });
+    next();
+  });
 
   app.use(
     helmet({
