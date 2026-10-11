@@ -290,4 +290,21 @@ describe('AuthService', () => {
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
   });
+  it('promotes the same guest identity atomically without replacing profile or squad',async()=>{
+    const guest={id:'guest-1',isGuest:true,name:'Guest',avatarUrl:'existing-avatar',roles:['player'],status:'active'};
+    prisma.oAuthIdentity={findUnique:jest.fn().mockResolvedValue(null),create:jest.fn().mockResolvedValue({})};
+    prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(guest);
+    prisma.user.update=jest.fn().mockImplementation(async({data})=>({...guest,...data}));prisma.$queryRaw=jest.fn().mockResolvedValue([]);prisma.$transaction.mockImplementation(async fn=>fn(prisma));
+    const result=await (service as any).findOrCreateOAuthUser({provider:'google',providerUserId:'google-1',guestUserId:'guest-1',email:'player@example.com',name:'Player',avatarUrl:'new-avatar'});
+    expect(result.id).toBe('guest-1');expect(result.isGuest).toBe(false);expect(result.avatarUrl).toBe('existing-avatar');expect(prisma.user.create).not.toHaveBeenCalled();expect(prisma.oAuthIdentity.create).toHaveBeenCalledWith({data:{userId:'guest-1',provider:'google',providerUserId:'google-1',email:'player@example.com'}});
+  });
+  it('refuses to replace a guest with an already linked social account',async()=>{
+    prisma.oAuthIdentity={findUnique:jest.fn().mockResolvedValue({user:{id:'existing-player'}})};
+    await expect((service as any).findOrCreateOAuthUser({provider:'facebook',providerUserId:'fb-1',guestUserId:'guest-1',name:'Player'})).rejects.toMatchObject({status:409});expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  it('does not promote an expired or already completed guest',async()=>{
+    prisma.oAuthIdentity={findUnique:jest.fn().mockResolvedValue(null)};prisma.$queryRaw=jest.fn();prisma.$transaction.mockImplementation(async fn=>fn(prisma));prisma.user.findUnique.mockResolvedValue({id:'guest-1',isGuest:false});
+    await expect((service as any).findOrCreateOAuthUser({provider:'facebook',providerUserId:'fb-1',guestUserId:'guest-1',name:'Player'})).rejects.toMatchObject({status:403});expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
 });

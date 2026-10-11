@@ -23,7 +23,7 @@ import { PrismaService } from '../../modules/prisma/prisma.service';
 /** API paths a guest identity may call (after the global prefix). */
 const GUEST_ALLOWED = /^\/api\/v1\/(squad|realtime|presence|morphs|lobby)(\/|\?|$)/;
 const GUEST_SQUAD_WRITE = /^\/api\/v1\/squad\/(start|invite-link(?:\/reset)?|invites|join-requests\/[^/]+\/(approve|decline)|[^/]+\/(kick|make-leader|mute)\/[^/]+)(\?|$)/;
-const GUEST_AUTH = /^\/api\/v1\/auth\/(guest\/(email\/otp|complete)|logout-all)(\?|$)/;
+const GUEST_AUTH = /^\/api\/v1\/auth\/(guest\/(email\/otp|complete|oauth\/(google|facebook|apple))|logout-all)(\?|$)/;
 const GUEST_SELF = /^\/api\/v1\/users\/me(\?|$)/;
 /** Read-only extras the player shell polls on boot; empty for a fresh guest. */
 const GUEST_READ_ONLY = /^\/api\/v1\/(friends|friend-requests|notifications)(\/|\?|$)/;

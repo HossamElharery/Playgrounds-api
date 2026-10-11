@@ -136,6 +136,30 @@ export class AuthController {
     return { message: 'authenticated', result };
   }
 
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('guest/oauth/google')
+  async guestGoogle(@CurrentUser() user: AuthenticatedUser,@Body() dto:OAuthGoogleDto){
+    const result=await this.authService.oauthGoogle(dto,user.id);return {message:'account completed',result};
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('guest/oauth/facebook')
+  async guestFacebook(@CurrentUser() user: AuthenticatedUser,@Body() dto:OAuthFacebookDto){
+    const result=await this.authService.oauthFacebook(dto,user.id);return {message:'account completed',result};
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('guest/oauth/apple')
+  async guestApple(@CurrentUser() user: AuthenticatedUser,@Body() dto:OAuthAppleDto){
+    const result=await this.authService.oauthApple(dto,user.id);return {message:'account completed',result};
+  }
+
   @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('oauth/google')

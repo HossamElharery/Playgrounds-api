@@ -12,6 +12,8 @@ async function main() {
   if (!Number.isInteger(port) || port < 3102 || port > 3199) throw new Error('Reserved social QA API port required');
   const userCount = Number(process.env.SOCIAL_QA_USER_COUNT ?? 7);
   if (!Number.isInteger(userCount) || userCount < 2 || userCount > 7) throw new Error('Two to seven synthetic QA members required');
+  const imported = process.env.SOCIAL_QA_IMPORTED_MORPHS ?? 'false';
+  if (!['true','false'].includes(imported)) throw new Error('Explicit boolean imported-morph QA profile required');
   const site = new URL(process.env.SOCIAL_QA_SITE ?? 'http://127.0.0.1:4204');
   if (!['localhost','127.0.0.1'].includes(site.hostname) || site.protocol !== 'http:' || !site.port || [3000,4200].includes(Number(site.port))) throw new Error('Isolated loopback QA frontend required');
   const local = dotenv.parse(readFileSync('.env','utf8'));
@@ -31,7 +33,7 @@ async function main() {
     QR_SIGNING_SECRET:'social-preview-only-qr-signing-secret-20261008',STORAGE_PROVIDER:'local',OTP_PROVIDER:'console',SMTP_PORT:'587',
     CORS_ORIGINS:`http://127.0.0.1:4203,http://localhost:4203,http://127.0.0.1:4204,http://localhost:4204,${site.origin}`,SITE_URL:site.origin,
     LOBBY_SOCIAL_ENABLED:'true',LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT:'true',LOBBY_MOVEMENT_ENABLED:'true',
-    LOBBY_BALL_ENABLED:'true',LOBBY_KIOSK_ENABLED:'true',LOBBY_MORPHS_ENABLED:'false'});
+    LOBBY_BALL_ENABLED:'true',LOBBY_KIOSK_ENABLED:'true',LOBBY_MORPHS_ENABLED:imported});
   stage = 'isolated schema';
   const push=spawnSync('npx',['prisma','db','push','--skip-generate'],{env,encoding:'utf8'});
   if(push.status!==0) {
@@ -56,6 +58,11 @@ async function main() {
     const letter=String.fromCharCode(97+i),id=`social-${letter}`;
     await db.user.upsert({where:{id},create:{id,name:names[i],email:`social-${letter}@example.test`,emailVerifiedAt:new Date(),passwordHash,roles:['player'],status:'active',lastSeenAt:new Date()},update:{passwordHash,status:'active',lastSeenAt:new Date()}});
     await db.squadMember.upsert({where:{squadId_userId:{squadId:'social-room',userId:id}},create:{id:`social-member-${letter}`,squadId:'social-room',userId:id,isLeader:i===0,micMuted:false},update:{isLeader:i===0,micMuted:false}});
+    if (imported === 'true') {
+      const morphId = ['griff','rabid','tiny_planet','pilot_rooster'][i % 4];
+      await db.userMorph.upsert({where:{userId_morphId:{userId:id,morphId}},create:{userId:id,morphId,source:'GRANT',seenAt:new Date()},update:{seenAt:new Date()}});
+      await db.userMorphProfile.upsert({where:{userId:id},create:{userId:id,equippedMorphId:morphId},update:{equippedMorphId:morphId}});
+    }
   }
   if (process.argv.includes('--include-admin')) {
     await db.user.upsert({where:{id:'social-admin'},create:{id:'social-admin',name:'Social QA Admin',email:'social-admin@example.test',emailVerifiedAt:new Date(),passwordHash,roles:['admin'],status:'active'},update:{passwordHash,roles:['admin'],status:'active'}});

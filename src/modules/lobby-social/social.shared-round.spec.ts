@@ -38,6 +38,17 @@ describe('Shared question rounds', () => {
   it('does not skip uncompleted participants when the host asks for the next question',()=>{
     reveal();expect(()=>act('a','advance')).toThrow();expect(s.completed).toBe(0);
   });
+  it('withholds advance after players leave and restores it without automatically advancing on rejoin',()=>{
+    reveal();for(const id of ['a','b','c'])act(id,'finish');act('b','leave');act('c','leave');
+    const round=s.roundId;
+    expect(s.phase).toBe('discussion');
+    expect(socialSnapshot(s,'room','a',now).personal.allowed).not.toContain('advance');
+    expect(()=>act('a','advance')).toThrow('need_players');
+    act('b','join',{role:'player'});
+    expect(s.phase).toBe('discussion');expect(s.roundId).toBe(round);
+    expect(socialSnapshot(s,'room','a',now).personal.allowed).toContain('advance');
+    act('a','advance');expect(s.roundId).not.toBe(round);
+  });
   it('leaves late joiners watching the current question and includes them next round',()=>{
     reveal();act('e','join',{role:'player'});expect(s.cardRound!.order).not.toContain('e');
     expect(socialSnapshot(s,'room','e',now).session!.members.find(m=>m.userId==='e')!.waiting).toBe(true);

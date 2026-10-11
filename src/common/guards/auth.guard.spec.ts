@@ -230,6 +230,9 @@ describe('AuthGuard guest confinement', () => {
     ['/api/v1/users/me', 'GET'],
     ['/api/v1/auth/guest/email/otp', 'POST'],
     ['/api/v1/auth/guest/complete', 'POST'],
+    ['/api/v1/auth/guest/oauth/google', 'POST'],
+    ['/api/v1/auth/guest/oauth/facebook', 'POST'],
+    ['/api/v1/auth/guest/oauth/apple', 'POST'],
     ['/api/v1/squad/s1/mic', 'PATCH'],
     ['/api/v1/squad/s1/leave', 'POST'],
   ])('allows the guest lifecycle %s %s', async (url, method) => {
@@ -247,6 +250,8 @@ describe('AuthGuard guest confinement', () => {
     ['/api/v1/squad/invites', 'POST'],
     ['/api/v1/squad/s1/make-leader/u2', 'POST'],
     ['/api/v1/auth/guest/complete/extra', 'POST'],
+    ['/api/v1/auth/guest/oauth/google', 'GET'],
+    ['/api/v1/auth/guest/oauth/google/extra', 'POST'],
   ])('blocks guest privilege escalation %s %s', async (url, method) => {
     const { guard, ctx } = guestRequest(url, method);
     await expect(guard.canActivate(ctx)).rejects.toMatchObject({ status: 403 });

@@ -13,6 +13,8 @@ const requireRule = (condition: unknown, code = 'not_allowed'): void => {
   if (!condition) throw new SocialRuleError(code);
 };
 
+const reactionsAvailable = (s: SocialState, now: number) => !['preparing', 'paused_insufficient_players', 'ended', 'no_eligible_content'].includes(s.phase) && s.members.filter(m => connected(m, now)).length >= 2;
+
 export function createSocialState(squadId: string, userId: string, cmd: SocialCommand, now: number): SocialState {
   requireRule(cmd.game === 'cards' || cmd.game === 'truth', 'invalid_game');
   const mode = cmd.mode ?? 'light';
@@ -142,7 +144,7 @@ export function applySocialCommand(s: SocialState, userId: string, cmd: SocialCo
     return;
   }
   if (cmd.action === 'react') {
-    requireRule(s.phase !== 'ended');
+    requireRule(reactionsAvailable(s, now), 'not_allowed');
     requireRule(['حصل!', 'كمّل', 'ضحكتني'].includes(cmd.text ?? ''), 'invalid_reaction');
     requireRule(now - (s.cooldowns[`reaction:${userId}`] ?? 0) >= 1500, 'cooldown');
     s.cooldowns[`reaction:${userId}`] = now;
@@ -325,7 +327,7 @@ export function socialSnapshot(s: SocialState | null, squadId: string, userId: s
   const managing = ['preparing', 'between_rounds', 'paused_insufficient_players', 'no_eligible_content', 'discussion'].includes(s.phase);
   const live = s.phase !== 'ended';
   const outcomeVisible = s.phase === 'discussion';
-  const allowed = live ? ['join', 'react'] : host ? ['restart'] : [];
+  const allowed = live ? ['join', ...(reactionsAvailable(s, now) ? ['react'] : [])] : host ? ['restart'] : [];
   if (me && live && connected(me, now)) {
     allowed.push('leave', 'listen');
     if (host) allowed.push('end');
@@ -344,7 +346,7 @@ export function socialSnapshot(s: SocialState | null, squadId: string, userId: s
       if ((actor || host) && s.phase === 'storytelling') allowed.push('finishStory');
       if ((actor || host) && s.phase === 'questions') allowed.push('openVoting');
       if (me.role === 'player' && s.phase === 'voting' && now < s.voteDeadline! && s.voterIds.includes(userId)) allowed.push('vote');
-      if (s.phase === 'discussion' && ((actor && me.role === 'player') || host) && !s.proposedGame) allowed.push('advance');
+      if (s.phase === 'discussion' && ((actor && me.role === 'player') || host) && !s.proposedGame && players(s, now, s.roundIndex + 1).length >= 2) allowed.push('advance');
     }
   }
   return { ...empty,

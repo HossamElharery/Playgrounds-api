@@ -895,6 +895,7 @@ export class AuthService {
 
   async oauthGoogle(
     dto: OAuthGoogleDto,
+    guestUserId?: string,
   ): Promise<TokenPair & { user: Partial<User> }> {
     const clientId = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim();
     if (!clientId) {
@@ -939,12 +940,14 @@ export class AuthService {
 
     const user = await this.findOrCreateOAuthUser({
       provider: 'google',
+      guestUserId,
       providerUserId: claims.sub,
       email: claims.email,
       name: claims.name ?? 'Player',
       avatarUrl: claims.picture,
     });
     const tokens = await this.issueTokenPair(user);
+    if(guestUserId)await this.squad.accountCompleted(user.id).catch(()=>this.logger.warn('Social account completed; lobby refresh notification failed'));
     return { ...tokens, user: this.sanitize(user) };
   }
 
@@ -955,6 +958,7 @@ export class AuthService {
    */
   async oauthApple(
     dto: OAuthAppleDto,
+    guestUserId?: string,
   ): Promise<TokenPair & { user: Partial<User> }> {
     const audiences = (this.config.get<string>('APPLE_CLIENT_IDS') || 'com.matchena.app')
       .split(',')
@@ -972,17 +976,20 @@ export class AuthService {
     const verified = claims.email_verified === true || claims.email_verified === 'true';
     const user = await this.findOrCreateOAuthUser({
       provider: 'apple',
+      guestUserId,
       providerUserId: claims.sub,
       // Only a verified address may link to an existing account.
       email: verified ? claims.email : undefined,
       name: dto.name?.trim() || 'Player',
     });
     const tokens = await this.issueTokenPair(user);
+    if(guestUserId)await this.squad.accountCompleted(user.id).catch(()=>this.logger.warn('Social account completed; lobby refresh notification failed'));
     return { ...tokens, user: this.sanitize(user) };
   }
 
   async oauthFacebook(
     dto: OAuthFacebookDto,
+    guestUserId?: string,
   ): Promise<TokenPair & { user: Partial<User> }> {
     const appId = this.config.get<string>('FACEBOOK_APP_ID')?.trim();
     const appSecret = this.config.get<string>('FACEBOOK_APP_SECRET')?.trim();
@@ -1018,17 +1025,20 @@ export class AuthService {
 
     const user = await this.findOrCreateOAuthUser({
       provider: 'facebook',
+      guestUserId,
       providerUserId: me.id,
       email: me.email,
       name: me.name ?? 'Player',
       avatarUrl: me.picture?.data?.url,
     });
     const tokens = await this.issueTokenPair(user);
+    if(guestUserId)await this.squad.accountCompleted(user.id).catch(()=>this.logger.warn('Social account completed; lobby refresh notification failed'));
     return { ...tokens, user: this.sanitize(user) };
   }
 
   private async findOrCreateOAuthUser(input: {
     provider: OAuthProvider;
+    guestUserId?: string;
     providerUserId: string;
     email?: string;
     name: string;
@@ -1044,6 +1054,7 @@ export class AuthService {
       include: { user: true },
     });
     if (linked?.user) {
+      if(input.guestUserId&&linked.user.id!==input.guestUserId)throw new ConflictException({code:'SOCIAL_ACCOUNT_EXISTS',message:'This social account already has an account. Sign in to it instead.'});
       this.assertActive(linked.user);
       if (
         (input.avatarUrl && !linked.user.avatarUrl) ||
@@ -1070,6 +1081,7 @@ export class AuthService {
       : null;
 
     if (existing) {
+      if(input.guestUserId&&existing.id!==input.guestUserId)throw new ConflictException({code:'SOCIAL_ACCOUNT_EXISTS',message:'This email already has an account. Sign in to it instead.'});
       this.assertActive(existing);
       await this.prisma.oAuthIdentity.create({
         data: {
@@ -1096,6 +1108,18 @@ export class AuthService {
         });
       }
       return existing;
+    }
+
+    if(input.guestUserId){
+      return this.prisma.$transaction(async tx=>{
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.guestUserId} FOR UPDATE`;
+        const guest=await tx.user.findUnique({where:{id:input.guestUserId}});
+        if(!guest?.isGuest || guest.email || guest.passwordHash)throw new ForbiddenException('This session is not a guest account');
+        this.assertActive(guest);
+        const user=await tx.user.update({where:{id:guest.id},data:{isGuest:false,name:input.name,email:email??`${input.provider}-${input.providerUserId}@oauth.matchena.local`,emailVerifiedAt:email?new Date():null,avatarUrl:guest.avatarUrl??input.avatarUrl}});
+        await tx.oAuthIdentity.create({data:{userId:user.id,provider:input.provider,providerUserId:input.providerUserId,email}});
+        return user;
+      });
     }
 
     return this.prisma.$transaction(async (tx) => {

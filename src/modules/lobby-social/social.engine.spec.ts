@@ -20,6 +20,7 @@ describe('Social games authoritative rules', () => {
   beforeEach(() => setup());
 
   it('keeps overlapping room reactions bounded and expires them without losing earlier senders',()=>{
+    revealCard();
     act('a','react',{text:'حصل!'});act('b','react',{text:'ضحكتني'});
     expect(socialSnapshot(s,'room','c',now).session!.reactions?.map(r=>r.userId)).toEqual(['a','b']);
     for(let i=0;i<8;i++)act(`spectator-${i}`,'react',{text:'كمّل'});
@@ -30,12 +31,21 @@ describe('Social games authoritative rules', () => {
   });
 
   it('lets an authenticated room spectator react without enrolling or gaining player controls', () => {
+    revealCard();
     expect(socialSnapshot(s,'room','spectator',now).personal.allowed).toContain('react');
     act('spectator','react',{text:'ضحكتني'});
     expect(s.reaction?.userId).toBe('spectator');
     expect(s.members.some(m=>m.userId==='spectator')).toBe(false);
     expect(()=>act('spectator','start')).toThrow('not_joined');
     expect(()=>act('spectator','react',{text:'حصل!'})).toThrow('cooldown');
+  });
+
+  it('rejects reactions while gathering or when only one connected member remains', () => {
+    expect(socialSnapshot(s,'room','a',now).personal.allowed).not.toContain('react');
+    expect(()=>act('a','react',{text:'كمّل'})).toThrow('not_allowed');
+    revealCard(); s.members=s.members.filter(m=>m.userId==='a');
+    expect(socialSnapshot(s,'room','a',now).personal.allowed).not.toContain('react');
+    expect(()=>act('a','react',{text:'ضحكتني'})).toThrow('not_allowed');
   });
 
   it('requires two players, listeners do not count', () => {

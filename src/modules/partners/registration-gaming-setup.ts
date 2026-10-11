@@ -98,7 +98,7 @@ export async function publishRegistrationGamingPlan(
           : { gamingConfig: config as Prisma.InputJsonValue }),
       },
     });
-    await tx.pricingRule.deleteMany({ where: { courtId: id, label: 'base' } });
+    await tx.pricingRule.deleteMany({ where: { courtId: id } });
     await tx.pricingRule.create({
       data: {
         courtId: id,
