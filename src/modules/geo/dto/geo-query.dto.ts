@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 
 export class GeoGovernoratesQueryDto {
   @ApiPropertyOptional({
@@ -29,4 +29,13 @@ export class GeoDistrictsQueryDto {
   @IsOptional()
   @IsString()
   country?: string;
+
+  @ApiPropertyOptional({
+    enum: ['true'],
+    description:
+      'Send "true" for the slim catalog: no GeoJSON polygon and no nested governorate object (governorateId is still there). About a quarter smaller.',
+  })
+  @IsOptional()
+  @IsIn(['true'])
+  slim?: 'true';
 }

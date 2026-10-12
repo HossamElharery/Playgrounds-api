@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
+/** Same rule the post page uses to decide `noindex`: emoji-only / hashtag-only posts are thin content. */
+export function isIndexablePost(text: string, mediaCount: number): boolean {
+  if (mediaCount > 0) return true;
+  const letters = text.replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[#@]\S+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+  return letters.length >= 12;
+}
+
 const escapeXml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -49,14 +56,14 @@ export class SitemapService {
   private static readonly MIN_HASHTAG_POSTS = 3;
 
   async index(): Promise<string> {
-    const [venue, blog, post, hashtag, sport] = await Promise.all([
+    const [venue, blog, post, hashtag, hashtagCount, sport] = await Promise.all([
       this.prisma.venue.aggregate({ where: { status: 'active' }, _max: { updatedAt: true } }),
       this.prisma.blogPost.aggregate({ where: { status: 'published' }, _max: { updatedAt: true } }),
       this.prisma.post.aggregate({ where: this.publicPostWhere, _max: { updatedAt: true } }),
-      this.prisma.hashtag.aggregate({ _max: { updatedAt: true } }),
+      this.prisma.hashtag.aggregate({ where: { postCount: { gte: SitemapService.MIN_HASHTAG_POSTS } }, _max: { updatedAt: true } }),
+      this.prisma.hashtag.count({ where: { postCount: { gte: SitemapService.MIN_HASHTAG_POSTS } } }),
       this.prisma.sportCategory.aggregate({ _max: { createdAt: true } }),
     ]);
-    const now = new Date();
     const entries: [string, Date | null | undefined][] = [
       ['static', null],
       ['sports', sport._max.createdAt],
@@ -64,11 +71,13 @@ export class SitemapService {
       ['landings', venue._max.updatedAt],
       ['blog', blog._max.updatedAt],
       ['posts', post._max.updatedAt],
-      ['hashtags', hashtag._max.updatedAt],
     ];
+    // Never advertise an empty child sitemap; and never invent a lastmod ("now" on every
+    // request tells crawlers nothing changed-or-everything changed, so they learn to ignore it).
+    if (hashtagCount > 0) entries.push(['hashtags', hashtag._max.updatedAt]);
     const items = entries
       .map(([name, date]) =>
-        `  <sitemap><loc>${this.siteUrl}/sitemaps/${name}.xml</loc><lastmod>${(date ?? now).toISOString()}</lastmod></sitemap>`,
+        `  <sitemap><loc>${this.siteUrl}/sitemaps/${name}.xml</loc>${date ? `<lastmod>${date.toISOString()}</lastmod>` : ''}</sitemap>`,
       )
       .join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -155,12 +164,13 @@ ${items}
   async posts(): Promise<string> {
     const posts = await this.prisma.post.findMany({
       where: this.publicPostWhere,
-      select: { id: true, slug: true, updatedAt: true },
+      select: { id: true, slug: true, updatedAt: true, text: true, _count: { select: { media: true } } },
       orderBy: { createdAt: 'desc' },
       take: SitemapService.MAX_POSTS,
     });
     return this.urlset(
       posts
+        .filter((post) => isIndexablePost(post.text, post._count?.media ?? 0))
         .map((post) => this.localizedEntry(`/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`, post.updatedAt))
         .join(''),
     );

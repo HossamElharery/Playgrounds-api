@@ -32,6 +32,16 @@ describe('Geo catalog resilience', () => {
     await service.listDistricts(undefined, undefined, 'EG');
     expect(findMany).toHaveBeenCalledTimes(3);
   });
+  it('slim catalog skips polygon and nested governorate, and is cached separately', async () => {
+    await service.listDistricts(undefined, undefined, 'EG', true);
+    const select = findMany.mock.calls[0][0].select;
+    expect('polygon' in select).toBe(false);
+    expect('governorate' in select).toBe(false);
+    expect(select.governorateId).toBe(true);
+    await service.listDistricts(undefined, undefined, 'EG');
+    expect('polygon' in findMany.mock.calls[1][0].select).toBe(true);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
   it('rejects an unscoped request without accessing the database', async () => {
     await expect(service.listDistricts()).rejects.toThrow('required');
     expect(findMany).not.toHaveBeenCalled();

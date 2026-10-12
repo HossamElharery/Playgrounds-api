@@ -115,14 +115,14 @@ export class GeoService {
     );
   }
 
-  async listDistricts(governorateId?: string, govSlug?: string, country?: string) {
+  async listDistricts(governorateId?: string, govSlug?: string, country?: string, slim = false) {
     const countryCode = normalizeCountryCode(country);
     if (!governorateId && !govSlug && !countryCode) {
       throw new BadRequestException(
         'governorateId, gov, or country is required',
       );
     }
-    const key = `districts:${JSON.stringify([governorateId ?? '', govSlug ?? '', countryCode ?? ''])}`;
+    const key = `districts:${JSON.stringify([governorateId ?? '', govSlug ?? '', countryCode ?? ''])}${slim ? ':slim' : ''}`;
     return this.cached(key, async () => {
       const items = await this.prisma.district.findMany({
         where: {
@@ -146,17 +146,21 @@ export class GeoService {
           nameAr: true,
           lat: true,
           lng: true,
-          polygon: true,
+          ...(slim ? {} : { polygon: true }),
           governorateId: true,
-          governorate: {
-            select: { id: true, slug: true, nameEn: true, nameAr: true, countryCode: true },
-          },
+          ...(slim
+            ? {}
+            : {
+                governorate: {
+                  select: { id: true, slug: true, nameEn: true, nameAr: true, countryCode: true },
+                },
+              }),
         },
         orderBy: { nameEn: 'asc' },
       });
       return items.map((d) => ({
         ...d,
-        polygon: toSearchBoundary(d.polygon),
+        polygon: 'polygon' in d ? toSearchBoundary(d.polygon) : null,
       }));
     });
   }

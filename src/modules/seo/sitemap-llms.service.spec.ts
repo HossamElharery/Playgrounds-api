@@ -25,10 +25,14 @@ function prismaMock() {
     },
     post: {
       aggregate: async () => ({ _max: { updatedAt: date } }),
-      findMany: async () => [{ id: 'abc', slug: 'hello', updatedAt: date }],
+      findMany: async () => [
+        { id: 'abc', slug: 'hello', updatedAt: date, text: 'مباراة بادل الليلة في مدينة نصر', _count: { media: 0 } },
+        { id: 'thin', slug: 'heart', updatedAt: date, text: '❤️', _count: { media: 0 } },
+      ],
     },
     hashtag: {
       aggregate: async () => ({ _max: { updatedAt: date } }),
+      count: async () => 1,
       findMany: async () => [{ tag: 'كورة', updatedAt: date }],
     },
     sportCategory: {
@@ -56,6 +60,14 @@ describe('SitemapService', () => {
     expect(xml).toContain('https://matchena.com/ar/blog/how-to');
     expect(xml).toContain('https://matchena.com/en/blog/how-to');
     expect(xml).toContain('hreflang="x-default"');
+  });
+
+  it('keeps emoji-only posts out of the posts sitemap and never invents a static lastmod', async () => {
+    const posts = await svc.posts();
+    expect(posts).toContain('hello-abc');
+    expect(posts).not.toContain('heart-thin');
+    const index = await svc.index();
+    expect(index).toMatch(/sitemaps\/static\.xml<\/loc><\/sitemap>/);
   });
 
   it('posts and hashtags use the frontend url shapes', async () => {

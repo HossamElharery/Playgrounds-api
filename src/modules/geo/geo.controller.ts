@@ -38,6 +38,6 @@ export class GeoController {
     summary: 'Districts (governorateId or gov slug). Includes GeoJSON polygon.',
   })
   listDistricts(@Query() q: GeoDistrictsQueryDto) {
-    return this.geo.listDistricts(q.governorateId, q.gov, q.country);
+    return this.geo.listDistricts(q.governorateId, q.gov, q.country, q.slim === 'true');
   }
 }
