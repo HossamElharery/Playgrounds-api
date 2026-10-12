@@ -49,7 +49,10 @@ export function configureApp(app: INestApplication): ConfigService {
   app.use(cookieParser());
   // Thumbnail URLs are immutable derivatives; avoid downloading them on each visit.
   app.use('/uploads/posts/thumbnails', express.static(path.join(process.cwd(), 'uploads/posts/thumbnails'), { maxAge: '1y', immutable: true }));
-  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+  // Upload keys are UUID-based and never overwritten. Let browsers/CDNs keep
+  // media locally so returning to a feed video does not revalidate multi-MB
+  // files on every scroll.
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), { maxAge: '1y', immutable: true }));
 
   const corsOrigins = config
     .get<string>('CORS_ORIGINS', 'http://localhost:4200')
