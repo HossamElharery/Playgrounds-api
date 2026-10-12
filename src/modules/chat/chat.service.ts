@@ -362,7 +362,9 @@ export class ChatService {
       (args) =>
         this.prisma.chatMessage.findMany({
           where: { threadId },
-          orderBy: { id: 'desc' },
+          // UUID ids are random and cannot represent chronology. Keep newest
+          // first for cursor pages and use id only to make equal timestamps stable.
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           include: { sender: { select: PUBLIC_SENDER } },
           ...args,
         }),

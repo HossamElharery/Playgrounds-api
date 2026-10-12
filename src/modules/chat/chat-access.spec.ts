@@ -7,7 +7,7 @@ describe('Existing direct-chat privacy', () => {
     userBlock: { findFirst: jest.fn() },
     user: { findUnique: jest.fn() },
     friendship: { findFirst: jest.fn() },
-    chatMessage: { findUnique: jest.fn(), create: jest.fn() },
+    chatMessage: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
   };
   const service = new ChatService(prisma as never, {} as never, {} as never, {} as never);
   beforeEach(() => {
@@ -37,5 +37,12 @@ describe('Existing direct-chat privacy', () => {
     prisma.chatThreadParticipant.findUnique.mockResolvedValue(null);
     await expect(send()).rejects.toThrow('Not a participant');
     expect(prisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+  it('reads messages by timestamp rather than random UUID order', async () => {
+    prisma.chatMessage.findMany.mockResolvedValue([]);
+    await service.listMessages('me', 'old-thread');
+    expect(prisma.chatMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+    );
   });
 });
