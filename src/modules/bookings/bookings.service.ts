@@ -1118,11 +1118,20 @@ export class BookingsService {
       // The player's own booking list renders the venue's name and cover photo,
       // so ship them with the booking instead of making the client hunt for the
       // venue in a separate paginated search (where it may not even appear).
+      // `reviews` (the player's own, at most one) lets the card show "reviewed"
+      // on any device instead of offering a review the API will reject.
       include: {
         court: true,
         venue: {
-          include: { photos: { orderBy: { position: 'asc' }, take: 1 } },
+          select: {
+            id: true,
+            slug: true,
+            nameAr: true,
+            nameEn: true,
+            photos: { orderBy: { position: 'asc' }, take: 1 },
+          },
         },
+        reviews: { where: { userId }, select: { id: true }, take: 1 },
       },
       orderBy: { slotStart: scope === 'past' ? 'desc' : 'asc' },
       take: 100,

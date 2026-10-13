@@ -749,6 +749,44 @@ export class AuthService {
     }
   }
 
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<TokenPair> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+    this.assertActive(user);
+    // Accounts created with Google/Apple/Facebook or phone OTP have no password to change.
+    if (!user.passwordHash) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'NO_PASSWORD', 'This account signs in without a password');
+    }
+    if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'WRONG_PASSWORD', 'Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'SAME_PASSWORD', 'New password must be different');
+    }
+
+    const passwordHash = await this.hashPassword(newPassword);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    if (user.email) {
+      await this.email.sendPasswordChanged(user.email).catch((error: unknown) => {
+        this.logger.warn(
+          `Password changed but security email failed for ${user.email}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      });
+    }
+    return this.issueTokenPair(user);
+  }
+
   private passwordResetTarget(identifier: ForgotPasswordDto): string {
     if (!!identifier.phone === !!identifier.email) {
       throw new BadRequestException('Provide exactly one of phone or email');
@@ -851,9 +889,9 @@ export class AuthService {
     }
   }
 
-  private sanitize(user: User): Partial<User> {
-    const { passwordHash: _passwordHash, ...rest } = user;
-    return rest;
+  private sanitize(user: User): Partial<User> & { hasPassword: boolean } {
+    const { passwordHash, ...rest } = user;
+    return { ...rest, hasPassword: !!passwordHash };
   }
 
   /** Used by WebAuthn and other sibling auth flows. */

@@ -260,6 +260,51 @@ describe('AuthService', () => {
     });
   });
 
+  describe('changePassword', () => {
+    const activeUser = async (password: string) => ({
+      id: 'u1',
+      email: 'player@matchena.com',
+      phone: null,
+      name: 'Player',
+      roles: ['player'],
+      countryCode: 'EG',
+      status: 'active',
+      passwordHash: await bcrypt.hash(password, 4),
+    });
+
+    beforeEach(() => {
+      prisma.user.update = jest.fn().mockResolvedValue({});
+      prisma.refreshToken.updateMany = jest.fn().mockResolvedValue({ count: 2 });
+    });
+
+    it('rejects a wrong current password without touching the account', async () => {
+      prisma.user.findUnique.mockResolvedValue(await activeUser('Correct123!'));
+
+      await expect(service.changePassword('u1', 'Wrong123!', 'NewPass123!')).rejects.toThrow(/incorrect/i);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses accounts that sign in without a password', async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...(await activeUser('x')), passwordHash: null });
+
+      await expect(service.changePassword('u1', 'anything', 'NewPass123!')).rejects.toThrow(/without a password/i);
+    });
+
+    it('stores the new hash, signs out other sessions and returns fresh tokens', async () => {
+      prisma.user.findUnique.mockResolvedValue(await activeUser('Correct123!'));
+
+      const tokens = await service.changePassword('u1', 'Correct123!', 'NewPass123!');
+
+      const saved = prisma.user.update.mock.calls[0][0].data.passwordHash as string;
+      expect(await bcrypt.compare('NewPass123!', saved)).toBe(true);
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'u1', revokedAt: null } }),
+      );
+      expect(email.sendPasswordChanged).toHaveBeenCalledWith('player@matchena.com');
+      expect(tokens.accessToken).toBeTruthy();
+    });
+  });
+
   describe('partner registration markets', () => {
     const dto = { name: 'QA Owner', username: 'qa.owner', email: 'qa@example.com', password: 'Password12345' };
 

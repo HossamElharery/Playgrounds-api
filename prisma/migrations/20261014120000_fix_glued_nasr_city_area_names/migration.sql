@@ -1,0 +1,6 @@
+-- The Egypt area catalog (20261010090000) imported some Nasr City names with
+-- words glued together ("المنطقةالعاشرة", "قسم ثانمدينةنصر"). Players see these
+-- on their profile and in area pickers. Text-only fix; ids and slugs are untouched.
+UPDATE "District"
+SET "nameAr" = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace("nameAr", 'ثانمدينةنصر', 'ثان مدينة نصر'), 'الحيالسابع', 'الحي السابع'), 'الحيالسادس', 'الحي السادس'), 'الحيالعاشر', 'الحي العاشر'), 'السراياتالشرقية', 'السرايات الشرقية'), 'جامعةالأزهر', 'جامعة الأزهر'), 'عزبةالعرب', 'عزبة العرب'), 'ناديالسكةالحديد', 'نادي السكة الحديد'), 'المنطقةالأولي', 'المنطقة الأولى'), 'المنطقةالتاسعة', 'المنطقة التاسعة'), 'المنطقةالثامنة', 'المنطقة الثامنة'), 'المنطقةالسابعة', 'المنطقة السابعة'), 'المنطقةالعاشرة', 'المنطقة العاشرة')
+WHERE "nameAr" LIKE '%ثانمدينةنصر%' OR "nameAr" LIKE '%الحيالسابع%' OR "nameAr" LIKE '%الحيالسادس%' OR "nameAr" LIKE '%الحيالعاشر%' OR "nameAr" LIKE '%السراياتالشرقية%' OR "nameAr" LIKE '%جامعةالأزهر%' OR "nameAr" LIKE '%عزبةالعرب%' OR "nameAr" LIKE '%ناديالسكةالحديد%' OR "nameAr" LIKE '%المنطقةالأولي%' OR "nameAr" LIKE '%المنطقةالتاسعة%' OR "nameAr" LIKE '%المنطقةالثامنة%' OR "nameAr" LIKE '%المنطقةالسابعة%' OR "nameAr" LIKE '%المنطقةالعاشرة%';

@@ -545,7 +545,8 @@ export class UsersService {
   }
 
   private sanitize<T extends { passwordHash?: string | null }>(user: T) {
-    const { passwordHash: _passwordHash, ...rest } = user;
-    return rest;
+    const { passwordHash, ...rest } = user;
+    // Lets Settings offer "change password" only to accounts that have one.
+    return { ...rest, hasPassword: !!passwordHash };
   }
 }

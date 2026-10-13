@@ -348,7 +348,18 @@ export class VenuesService {
       }));
     if (!venue || venue.status !== 'active')
       throw new NotFoundException('Venue not found');
-    return venue;
+    // Public page: the owner's legal/registration details and internal review
+    // bookkeeping are not for players.
+    const {
+      legalBusinessName: _legalBusinessName,
+      registrationNumber: _registrationNumber,
+      approvedById: _approvedById,
+      ...publicVenue
+    } = venue;
+    return {
+      ...publicVenue,
+      reviews: venue.reviews.map(({ bookingId: _bookingId, ...review }) => review),
+    };
   }
 
   async listMine(ownerId: string, onlyVenueIds?: string[]) {

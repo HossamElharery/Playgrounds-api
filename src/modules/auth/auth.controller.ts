@@ -27,6 +27,7 @@ import { OAuthFacebookDto } from './dto/oauth-facebook.dto';
 import { WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -267,6 +268,16 @@ export class AuthController {
   @Post('password/forgot')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.requestPasswordReset(dto);
+  }
+
+  /** Signed-in password change; other devices are signed out, this one gets fresh tokens. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post('password/change')
+  changePassword(@CurrentUser() user: AuthenticatedUser, @Body() dto: ChangePasswordDto) {
+    return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
   @Public()
