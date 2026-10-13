@@ -24,12 +24,13 @@ import { CreateCallDto, DoNotDisturbDto, MuteCallsDto } from './dto/calls.dto';
 /**
  * Owner <-> team calls. Open to the venue owner and every staff account of that owner (no permission
  * key: the team can always reach each other); the service enforces "same organisation" on every call.
- * Players, guests and the platform admin are refused by role.
+ * The platform admin may start calls to any owner or staff member (and look them up to do so).
+ * Players and guests are refused by role.
  */
 @ApiTags('calls')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)
-@Roles('owner', 'staff')
+@Roles('owner', 'staff', 'admin')
 @AnyStaff()
 @Controller('calls')
 export class CallsController {
@@ -38,6 +39,21 @@ export class CallsController {
   @Get('directory')
   directory(@CurrentUser() user: AuthenticatedUser) {
     return this.calls.directory(user.id);
+  }
+
+  @Get('admin/search')
+  @Roles('admin')
+  adminSearch(@CurrentUser() user: AuthenticatedUser, @Query('q') q?: string) {
+    return this.calls.adminSearch(user.id, q ?? '');
+  }
+
+  @Get('admin/venues/:venueId')
+  @Roles('admin')
+  adminVenue(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('venueId') venueId: string,
+  ) {
+    return this.calls.adminVenue(user.id, venueId);
   }
 
   @Get('active')

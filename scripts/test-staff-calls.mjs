@@ -131,6 +131,62 @@ r = await owner('POST', '/calls', { calleeId: reception.id });
 ok(r.body.call.status === 'unavailable', 'DND -> unavailable');
 await rec('PUT', '/calls/dnd', { minutes: 0 });
 
-for (const x of [O, R, P]) x.s.close();
+// ---- platform admin: may call any owner / staff member, nobody may call the admin ----
+const adminTok = await login('admin@matchena.com');
+const admin = api(adminTok);
+const A = socket(adminTok); await sleep(500);
+r = await admin('GET', '/calls/directory');
+ok(r.status === 200 && r.body.enabled === true && r.body.admin === true && r.body.members.length === 0, 'admin directory: enabled, no team list');
+r = await owner('GET', '/calls/admin/search?q=reception');
+ok(r.status === 403, `owner cannot use the admin lookup (${r.status})`);
+r = await rec('GET', '/calls/admin/search?q=reception');
+ok(r.status === 403, `staff cannot use the admin lookup (${r.status})`);
+r = await player('GET', '/calls/admin/search?q=reception');
+ok(r.status === 403, `player cannot use the admin lookup (${r.status})`);
+r = await admin('GET', '/calls/admin/search?q=a');
+ok(r.status === 200 && r.body.length === 0, 'lookup needs two letters');
+r = await admin('GET', '/calls/admin/search?q=reception');
+const recTarget = r.body.find((t) => t.id === reception.id);
+ok(r.status === 200 && !!recTarget && recTarget.role === 'staff' && recTarget.ownerName, 'admin finds the staff member, with who they work for');
+ok(!r.body.some((t) => t.role === 'admin' || t.role === 'player'), 'lookup never returns admins or players');
+const venueName = (recTarget.venues[0]?.nameEn ?? '').split(' ')[0];
+if (venueName.length >= 2) {
+  r = await admin('GET', `/calls/admin/search?q=${encodeURIComponent(venueName)}`);
+  ok(r.body.some((t) => t.role === 'owner') && r.body.some((t) => t.id === reception.id), `searching the venue "${venueName}" lists its owner and team`);
+  const venueId = recTarget.venues[0].id;
+  r = await admin('GET', `/calls/admin/venues/${venueId}`);
+  ok(r.status === 200 && r.body.venue.id === venueId && r.body.targets.some((t) => t.role === 'owner'), 'call-the-venue lookup returns the owner and staff');
+}
+
+// DND on the callee does not stop the admin
+await rec('PUT', '/calls/dnd', { minutes: 30 });
+R.got.length = 0;
+r = await admin('POST', '/calls', { calleeId: reception.id });
+ok(r.status === 201 && r.body.call.status === 'ringing', `admin rings through do-not-disturb (${r.body?.call?.status})`);
+const adminCallId = r.body.call.id;
+const adminIncoming = await R.wait('call.incoming');
+ok(adminIncoming?.from?.role === 'admin', 'staff sees the caller as the platform team (role admin)');
+R.s.emit('call.ringing', { callId: adminCallId, native: true });
+ok(!!(await A.wait('call.ringing')), 'admin sees "ringing"');
+r = await rec('POST', `/calls/${adminCallId}/accept`);
+ok(r.status === 200 && r.body.call.peer.role === 'admin', 'staff answers the admin');
+A.s.emit('call.offer', { callId: adminCallId, sdp: { type: 'offer', sdp: 'v=0 admin' } });
+ok((await R.wait('call.offer'))?.sdp?.sdp === 'v=0 admin', 'signaling relayed admin -> staff');
+r = await admin('POST', `/calls/${adminCallId}/end`);
+ok(r.status === 200, 'admin hangs up');
+await rec('PUT', '/calls/dnd', { minutes: 0 });
+
+// the other directions stay closed
+r = await rec('POST', '/calls', { calleeId: adminTok && (await admin('GET', '/users/me')).body?.id });
+ok(r.status === 404, `staff cannot call the admin (${r.status})`);
+r = await owner('POST', '/calls', { calleeId: (await admin('GET', '/users/me')).body?.id });
+ok(r.status === 404, `owner cannot call the admin (${r.status})`);
+const player0 = (await player('GET', '/users/me')).body?.id;
+r = await admin('POST', '/calls', { calleeId: player0 });
+ok(r.status === 404, `admin cannot call a regular player (${r.status})`);
+r = await admin('GET', '/calls/recent');
+ok(r.body.items.some((i) => i.peer.id === reception.id && i.peer.role === 'staff'), 'admin call history shows who they called');
+
+for (const x of [O, R, P, A]) x.s.close();
 console.log(failed ? `\n${failed} FAILED` : '\nALL PASSED');
 process.exit(failed ? 1 : 0);

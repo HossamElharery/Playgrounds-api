@@ -31,7 +31,8 @@ export interface CallPeer {
   id: string;
   name: string;
   avatarUrl: string | null;
-  role: 'owner' | 'staff';
+  /** `admin` = the platform team (Matchena), who may call any owner or staff member. */
+  role: 'owner' | 'staff' | 'admin';
   title: string | null;
 }
 
@@ -43,7 +44,21 @@ export interface DirectoryMember extends CallPeer {
   mutedUntil: string | null;
 }
 
+/** Somebody the platform admin can call: an owner or a staff member, with enough context to pick the right one. */
+export interface AdminCallTarget extends CallPeer {
+  online: boolean;
+  busy: boolean;
+  /** Do-not-disturb is on (an admin call still rings; this is only information). */
+  dnd: boolean;
+  /** For staff: who they work for. */
+  ownerName: string | null;
+  /** Up to three venue names of the organisation. */
+  venues: { id: string; nameAr: string; nameEn: string }[];
+}
+
 export interface CallDirectory {
+  /** True for the platform admin: the team list is empty because they search instead. */
+  admin?: boolean;
   enabled: boolean;
   members: DirectoryMember[];
   dndUntil: string | null;
@@ -184,18 +199,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return row?.ownerId === ownerId;
   }
 
-  private async peerInfo(
-    ownerId: string,
-    ids: string[],
-  ): Promise<Map<string, CallPeer>> {
+  /** Name, picture, role and job title of people, whichever organisation they belong to. */
+  private async peerInfo(ids: string[]): Promise<Map<string, CallPeer>> {
     const unique = [...new Set(ids)];
     const [users, staff] = await Promise.all([
       this.prisma.user.findMany({
         where: { id: { in: unique } },
-        select: { id: true, name: true, avatarUrl: true },
+        select: { id: true, name: true, avatarUrl: true, roles: true },
       }),
       this.prisma.staffMember.findMany({
-        where: { ownerId, userId: { in: unique } },
+        where: { userId: { in: unique } },
         select: { userId: true, title: true },
       }),
     ]);
@@ -207,11 +220,45 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
           id: u.id,
           name: u.name,
           avatarUrl: u.avatarUrl ?? null,
-          role: u.id === ownerId ? ('owner' as const) : ('staff' as const),
+          role: titles.has(u.id)
+            ? ('staff' as const)
+            : u.roles.includes('owner')
+              ? ('owner' as const)
+              : u.roles.includes('admin')
+                ? ('admin' as const)
+                : ('staff' as const),
           title: titles.get(u.id) ?? null,
         },
       ]),
     );
+  }
+
+  /** An active, non-guest platform admin. */
+  private async isActiveAdmin(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { roles: true, status: true, isGuest: true },
+    });
+    return (
+      !!user &&
+      user.status === 'active' &&
+      !user.isGuest &&
+      user.roles.includes('admin')
+    );
+  }
+
+  /** How a caller is named on the other person's screen and push: the platform team shows as "Matchena". */
+  private displayName(
+    user: { name?: string | null; roles?: string[] } | null,
+    ar: boolean,
+  ): string {
+    const roles = user?.roles ?? [];
+    const platform =
+      roles.includes('admin') &&
+      !roles.includes('owner') &&
+      !roles.includes('staff');
+    if (platform) return ar ? 'إدارة ماتشنا' : 'Matchena team';
+    return user?.name ?? '';
   }
 
   // ---------------------------------------------------------------- directory
@@ -224,6 +271,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       missedUnseen: 0,
     };
     if (!this.enabled()) return off;
+    if (await this.isActiveAdmin(userId))
+      return { ...off, enabled: true, admin: true };
     const org = await this.resolveOrg(userId);
     if (!org) return off;
     const [owner, staff] = await Promise.all([
@@ -247,7 +296,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
           where: { id: { in: ids }, status: 'active', isGuest: false },
           select: { id: true, lastSeenAt: true },
         }),
-        this.peerInfo(org.ownerId, ids),
+        this.peerInfo(ids),
         this.busyUserIds(ids),
         this.prisma.callMute.findMany({
           where: { muterId: userId, until: { gt: now } },
@@ -368,18 +417,24 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         'CALL_SELF',
         'You cannot call yourself',
       );
-    const org = await this.resolveOrg(callerId);
-    if (!org)
+    // The platform admin may call any owner or staff member; everybody else only their own organisation.
+    const byAdmin = await this.isActiveAdmin(callerId);
+    const org = byAdmin
+      ? await this.resolveOrg(calleeId)
+      : await this.resolveOrg(callerId);
+    if (!org && !byAdmin)
       throw new ApiException(
         HttpStatus.FORBIDDEN,
         'CALLS_NOT_AVAILABLE',
         'Calls are not available for this account',
       );
-    if (!(await this.inOrg(org.ownerId, calleeId))) {
+    if (!org || (!byAdmin && !(await this.inOrg(org.ownerId, calleeId)))) {
       throw new ApiException(
         HttpStatus.NOT_FOUND,
         'CALL_PEER_NOT_FOUND',
-        'This person is not on your team',
+        byAdmin
+          ? 'This person cannot be called'
+          : 'This person is not on your team',
       );
     }
     if (await this.activeCallOf(callerId)) {
@@ -389,11 +444,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         'Finish your current call first',
       );
     }
-    const peers = await this.peerInfo(org.ownerId, [callerId, calleeId]);
+    const peers = await this.peerInfo([callerId, calleeId]);
     const callee = peers.get(calleeId)!;
 
     // Muted / do-not-disturb: log it for the caller only; the callee is never bothered and never told.
-    if (await this.unavailableFor(calleeId, callerId)) {
+    // The platform admin is never held back by either.
+    if (!byAdmin && (await this.unavailableFor(calleeId, callerId))) {
       const row = await this.record(
         org.ownerId,
         callerId,
@@ -505,11 +561,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         }),
         this.prisma.user.findUnique({
           where: { id: live.callerId },
-          select: { name: true },
+          select: { name: true, roles: true },
         }),
       ]);
       const ar = callee?.preferredLang !== 'en';
-      const name = caller?.name ?? '';
+      const name = this.displayName(caller, ar);
       const message = {
         callId,
         kind: 'ring' as const,
@@ -538,7 +594,10 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (row.status !== 'ringing') this.throwEnded(row);
     if (
       !(await this.inOrg(row.ownerId, userId)) ||
-      !(await this.inOrg(row.ownerId, row.callerId))
+      !(
+        (await this.inOrg(row.ownerId, row.callerId)) ||
+        (await this.isActiveAdmin(row.callerId))
+      )
     ) {
       await this.finish(row.id, 'ringing', 'failed', 'membership');
       throw new ApiException(
@@ -577,7 +636,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const event = { type: 'call.accepted', callId, byUserId: userId };
     this.emitter.emitToUser(row.callerId, event);
     this.emitter.emitToUser(row.calleeId, event);
-    const peers = await this.peerInfo(row.ownerId, [row.callerId]);
+    const peers = await this.peerInfo([row.callerId]);
     const fresh = await this.prisma.staffCall.findUniqueOrThrow({
       where: { id: callId },
     });
@@ -668,11 +727,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       }),
       this.prisma.user.findUnique({
         where: { id: row.callerId },
-        select: { name: true },
+        select: { name: true, roles: true },
       }),
     ]);
-    const name = caller?.name ?? '';
     const ar = callee?.preferredLang !== 'en';
+    const name = this.displayName(caller, ar);
     const deepLink = `/${ar ? 'ar' : 'en'}/owner`;
     await this.notifications.create({
       dedupKey: `call-missed:${row.id}`,
@@ -795,10 +854,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       orderBy: { createdAt: 'desc' },
       take: 3,
     });
-    const ownerId = rows[0]?.ownerId;
-    if (!ownerId) return { incoming: null, current: null };
+    if (!rows.length) return { incoming: null, current: null };
     const info = await this.peerInfo(
-      ownerId,
       rows.flatMap((r) => [r.callerId, r.calleeId]),
     );
     const mine = (r: StaffCall) =>
@@ -830,10 +887,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       orderBy: { createdAt: 'desc' },
       take,
     });
-    const ownerId = rows[0]?.ownerId;
-    const info = ownerId
+    const info = rows.length
       ? await this.peerInfo(
-          ownerId,
           rows.map((r) => (r.callerId === userId ? r.calleeId : r.callerId)),
         )
       : new Map<string, CallPeer>();
@@ -883,6 +938,160 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         (row.status === 'missed' || row.status === 'cancelled') &&
         !row.seenAt,
     };
+  }
+
+  // ---------------------------------------------------------------- platform admin
+
+  private async requireAdmin(userId: string): Promise<void> {
+    this.assertEnabled();
+    if (!(await this.isActiveAdmin(userId))) {
+      throw new ApiException(
+        HttpStatus.FORBIDDEN,
+        'ADMIN_ONLY',
+        'Only the platform team can look people up to call',
+      );
+    }
+  }
+
+  /** Owners and staff matching a name, email, phone, username or venue name. The admin picks who to call. */
+  async adminSearch(userId: string, query: string): Promise<AdminCallTarget[]> {
+    await this.requireAdmin(userId);
+    const q = (query ?? '').trim().slice(0, 80);
+    if (q.length < 2) return [];
+    const like = { contains: q, mode: 'insensitive' as const };
+    const venues = await this.prisma.venue.findMany({
+      where: { OR: [{ nameAr: like }, { nameEn: like }] },
+      select: { ownerId: true },
+      take: 20,
+    });
+    const venueOwnerIds = [...new Set(venues.map((v) => v.ownerId))];
+    const matched = await this.prisma.user.findMany({
+      where: {
+        status: 'active',
+        isGuest: false,
+        OR: [
+          { name: like },
+          { email: like },
+          { phone: like },
+          { username: like },
+          { id: { in: venueOwnerIds } },
+        ],
+      },
+      select: { id: true, roles: true },
+      take: 60,
+    });
+    const matchedIds = matched.map((u) => u.id);
+    const ownerIds = [
+      ...new Set([
+        ...venueOwnerIds,
+        ...matched.filter((u) => u.roles.includes('owner')).map((u) => u.id),
+      ]),
+    ];
+    const staffRows = await this.prisma.staffMember.findMany({
+      where: {
+        OR: [{ userId: { in: matchedIds } }, { ownerId: { in: ownerIds } }],
+      },
+      select: { userId: true, ownerId: true },
+      take: 120,
+    });
+    const staffIds = staffRows.map((r) => r.userId);
+    const owningIds = [
+      ...new Set([...ownerIds, ...staffRows.map((r) => r.ownerId)]),
+    ];
+    const wanted = [...ownerIds, ...staffIds];
+    return (await this.adminTargets(wanted, owningIds, staffRows)).slice(0, 30);
+  }
+
+  /** The people of one venue (its owner and the staff who work there): "call the venue" from a booking. */
+  async adminVenue(userId: string, venueId: string) {
+    await this.requireAdmin(userId);
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: venueId },
+      select: { id: true, ownerId: true, nameAr: true, nameEn: true },
+    });
+    if (!venue)
+      throw new ApiException(
+        HttpStatus.NOT_FOUND,
+        'VENUE_NOT_FOUND',
+        'Venue not found',
+      );
+    const rows = await this.prisma.staffMember.findMany({
+      where: { ownerId: venue.ownerId },
+      select: { userId: true, ownerId: true, venueIds: true },
+    });
+    // Staff with no venue list work at every venue of the owner.
+    const staffRows = rows.filter(
+      (r) => !r.venueIds.length || r.venueIds.includes(venueId),
+    );
+    const targets = await this.adminTargets(
+      [venue.ownerId, ...staffRows.map((r) => r.userId)],
+      [venue.ownerId],
+      staffRows,
+    );
+    return {
+      venue: { id: venue.id, nameAr: venue.nameAr, nameEn: venue.nameEn },
+      targets,
+    };
+  }
+
+  private async adminTargets(
+    ids: string[],
+    ownerIds: string[],
+    staffRows: { userId: string; ownerId: string }[],
+  ): Promise<AdminCallTarget[]> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) return [];
+    const [users, owners, venues, info, busy, settings] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: unique }, status: 'active', isGuest: false },
+        select: { id: true, lastSeenAt: true },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, name: true },
+      }),
+      this.prisma.venue.findMany({
+        where: { ownerId: { in: ownerIds } },
+        select: { id: true, ownerId: true, nameAr: true, nameEn: true },
+        take: 200,
+      }),
+      this.peerInfo(unique),
+      this.busyUserIds(unique),
+      this.prisma.callSettings.findMany({ where: { userId: { in: unique } } }),
+    ]);
+    const now = new Date();
+    const dnd = new Set(
+      settings
+        .filter((x) => x.dndUntil && x.dndUntil > now)
+        .map((x) => x.userId),
+    );
+    const ownerOf = new Map(staffRows.map((r) => [r.userId, r.ownerId]));
+    const ownerName = new Map(owners.map((o) => [o.id, o.name]));
+    const venuesOf = (ownerId: string) =>
+      venues
+        .filter((v) => v.ownerId === ownerId)
+        .slice(0, 3)
+        .map((v) => ({ id: v.id, nameAr: v.nameAr, nameEn: v.nameEn }));
+    const targets: AdminCallTarget[] = [];
+    for (const u of users) {
+      const peer = info.get(u.id);
+      if (!peer || (peer.role !== 'owner' && peer.role !== 'staff')) continue;
+      const org = peer.role === 'owner' ? u.id : ownerOf.get(u.id);
+      if (!org) continue;
+      targets.push({
+        ...peer,
+        online: this.presence.isOnline(u.id, u.lastSeenAt),
+        busy: busy.has(u.id),
+        dnd: dnd.has(u.id),
+        ownerName: peer.role === 'staff' ? (ownerName.get(org) ?? null) : null,
+        venues: venuesOf(org),
+      });
+    }
+    return targets.sort(
+      (a, b) =>
+        Number(b.role === 'owner') - Number(a.role === 'owner') ||
+        a.name.localeCompare(b.name, 'ar'),
+    );
   }
 
   // ---------------------------------------------------------------- mute / do-not-disturb
