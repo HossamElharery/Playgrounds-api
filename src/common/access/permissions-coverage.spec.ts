@@ -18,6 +18,7 @@ import { TournamentsController } from '../../modules/tournaments/tournaments.con
 import { TeamController } from '../../modules/team/team.controller';
 import { SubscriptionsController } from '../../modules/subscriptions/subscriptions.controller';
 import { ReviewsController } from '../../modules/reviews/reviews.controller';
+import { CallsController } from '../../modules/calls/calls.controller';
 
 const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController,
   OwnerController,
@@ -28,6 +29,7 @@ const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayo
   TeamController,
   SubscriptionsController,
   ReviewsController,
+  CallsController,
 ];
 
 function routes(controller: Function) {

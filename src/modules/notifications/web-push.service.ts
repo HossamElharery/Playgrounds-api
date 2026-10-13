@@ -73,17 +73,44 @@ export class WebPushService {
    * payload that a lock-screen shows to whoever glances at the phone.
    */
   async send(userId: string, title: string, body?: string, url?: string): Promise<void> {
+    await this.deliver(userId, JSON.stringify({ title, body: body ?? title, url: url ?? '/' }));
+  }
+
+  /**
+   * Staff-call push: a ringing notification that stays until the user acts on it (`requireInteraction`)
+   * and dies with the call (short TTL), or the "missed call" that replaces it (same `tag`).
+   */
+  async sendCall(
+    userId: string,
+    call: { callId: string; kind: 'ring' | 'missed'; title: string; body?: string | null; url: string },
+  ): Promise<void> {
+    const ring = call.kind === 'ring';
+    await this.deliver(
+      userId,
+      JSON.stringify({
+        title: call.title,
+        body: call.body || call.title,
+        url: call.url,
+        tag: `call:${call.callId}`,
+        kind: call.kind,
+        callId: call.callId,
+        requireInteraction: ring,
+        renotify: true,
+      }),
+      { TTL: ring ? 30 : 86_400, urgency: 'high' },
+    );
+  }
+
+  private async deliver(userId: string, payload: string, options?: webpush.RequestOptions): Promise<void> {
     if (!this.ready) return;
     const subs = await this.prisma.pushSubscription.findMany({ where: { userId } });
     if (!subs.length) return;
-    const payload = JSON.stringify({ title, body: body ?? title, url: url ?? '/' });
     await Promise.all(
       subs.map(async (sub) => {
         try {
-          await webpush.sendNotification(
-            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-            payload,
-          );
+          const target = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
+          if (options) await webpush.sendNotification(target, payload, options);
+          else await webpush.sendNotification(target, payload);
           await this.prisma.pushSubscription.update({ where: { id: sub.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
         } catch (err) {
           const status = (err as { statusCode?: number })?.statusCode;

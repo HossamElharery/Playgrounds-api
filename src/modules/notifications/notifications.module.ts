@@ -9,6 +9,6 @@ import { RealtimeModule } from '../realtime/realtime.module';
   imports: [RealtimeModule],
   providers: [NotificationsService, WebPushService, FcmService],
   controllers: [NotificationsController],
-  exports: [NotificationsService, WebPushService],
+  exports: [NotificationsService, WebPushService, FcmService],
 })
 export class NotificationsModule {}

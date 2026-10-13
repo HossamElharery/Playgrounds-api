@@ -3326,3 +3326,60 @@ model GamingOutbox {
   attempts Int @default(0)
   @@index([deliveredAt, createdAt])
 }
+
+// ---- Staff calls: owner <-> team voice calls (1:1). Metadata only, never audio. ----
+
+enum StaffCallStatus {
+  ringing
+  answered
+  declined
+  missed
+  cancelled
+  busy
+  unavailable
+  failed
+  ended
+}
+
+/// One call between two people of the same organisation (the venue owner and their staff).
+/// `ownerId` is the organisation. Ids are plain strings on purpose: the log must outlive an
+/// anonymised or removed account and must never block deleting one.
+model StaffCall {
+  id         String          @id @default(uuid())
+  ownerId    String
+  callerId   String
+  calleeId   String
+  status     StaffCallStatus @default(ringing)
+  createdAt  DateTime        @default(now())
+  answeredAt DateTime?
+  endedAt    DateTime?
+  endReason  String?
+  /// When the callee opened "recent calls" after a missed one.
+  seenAt     DateTime?
+
+  @@index([callerId, createdAt])
+  @@index([calleeId, createdAt])
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// "Don't ring me for a while": `muterId` does not receive calls from `mutedId` until `until`.
+/// The caller is only ever told "not available", never that they were muted.
+model CallMute {
+  id        String   @id @default(uuid())
+  ownerId   String
+  muterId   String
+  mutedId   String
+  until     DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([muterId, mutedId])
+  @@index([muterId, until])
+}
+
+/// Per-person "do not disturb" for calls (mutes everyone until `dndUntil`).
+model CallSettings {
+  userId    String    @id
+  dndUntil  DateTime?
+  updatedAt DateTime  @updatedAt
+}

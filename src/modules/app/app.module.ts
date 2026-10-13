@@ -48,6 +48,7 @@ import { MorphsModule } from '../morphs/morphs.module';
 import { LobbyKioskModule } from '../lobby-kiosk/lobby-kiosk.module';
 import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
 import { LobbySocialModule } from '../lobby-social/lobby-social.module';
+import { CallsModule } from '../calls/calls.module';
 
 @Module({
   imports: [
@@ -104,6 +105,7 @@ import { LobbySocialModule } from '../lobby-social/lobby-social.module';
     LobbyWorldModule,
     LobbyKioskModule,
     LobbySocialModule,
+    CallsModule,
   ],
   controllers: [AppController],
   providers: [

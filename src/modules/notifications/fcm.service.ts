@@ -16,6 +16,20 @@ export interface FcmMessage {
   ctaUrl?: string | null;
 }
 
+/** An incoming (or just-missed) staff call. Delivered on its own channel with a short life. */
+export interface FcmCallMessage {
+  callId: string;
+  kind: 'ring' | 'missed';
+  title: string;
+  body?: string | null;
+  deepLink: string;
+}
+
+/** Android channel the ringing notification uses (created by the app: loud, heads-up, vibrating). */
+export const CALL_CHANNEL_ID = 'matchena_calls';
+/** A ringing push older than this is worthless: the caller has given up. */
+export const CALL_PUSH_TTL_S = 30;
+
 /**
  * Native push (Android + iOS) over Firebase Cloud Messaging HTTP v1.
  *
@@ -53,6 +67,18 @@ export class FcmService {
 
   /** Fire-and-forget from NotificationsService.create; never throws. */
   async sendToUser(userId: string, message: FcmMessage): Promise<void> {
+    await this.deliver(userId, (token) => buildMessage(token, message));
+  }
+
+  /**
+   * Staff-call push: a ringing notification (high priority, call channel, short TTL, time-sensitive
+   * on iOS) or the "missed call" that replaces it (same tag / collapse id). Never throws.
+   */
+  async sendCall(userId: string, message: FcmCallMessage): Promise<void> {
+    await this.deliver(userId, (token) => buildCallMessage(token, message));
+  }
+
+  private async deliver(userId: string, build: (token: string) => object): Promise<void> {
     if (!this.client || !this.account) return;
     const tokens = await this.prisma.deviceToken.findMany({
       where: { userId },
@@ -74,7 +100,7 @@ export class FcmService {
           const res = await fetch(url, {
             method: 'POST',
             headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: buildMessage(device.token, message) }),
+            body: JSON.stringify({ message: build(device.token) }),
           });
           if (res.ok) return;
           const detail = await res.text();
@@ -106,6 +132,42 @@ export function buildMessage(token: string, message: FcmMessage) {
       notification: { channel_id: 'matchena_default', sound: 'default' },
     },
     apns: { payload: { aps: { sound: 'default' } } },
+  };
+}
+
+export function buildCallMessage(token: string, message: FcmCallMessage, nowMs = Date.now()) {
+  const ring = message.kind === 'ring';
+  const tag = `call:${message.callId}`;
+  return {
+    token,
+    notification: { title: message.title, body: message.body || message.title },
+    data: { type: 'call', kind: message.kind, callId: message.callId, deepLink: message.deepLink },
+    android: {
+      priority: 'HIGH',
+      // A missed call lives on; a ring that arrives late is dropped by FCM itself.
+      ttl: ring ? `${CALL_PUSH_TTL_S}s` : '86400s',
+      collapse_key: tag,
+      notification: {
+        channel_id: ring ? CALL_CHANNEL_ID : 'matchena_default',
+        tag,
+        sound: 'default',
+        ...(ring ? { notification_priority: 'PRIORITY_MAX', visibility: 'PUBLIC', default_vibrate_timings: true } : {}),
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-collapse-id': message.callId.slice(0, 64),
+        ...(ring ? { 'apns-expiration': String(Math.floor(nowMs / 1000) + CALL_PUSH_TTL_S) } : {}),
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          // Needs the time-sensitive entitlement (added with the iOS project); without it iOS treats it as active.
+          'interruption-level': ring ? 'time-sensitive' : 'active',
+        },
+      },
+    },
   };
 }
 

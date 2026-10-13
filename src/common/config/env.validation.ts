@@ -90,6 +90,8 @@ export const envValidationSchema = Joi.object({
   LOBBY_KIOSK_ENABLED: Joi.string().allow('').optional(),
   LOBBY_SOCIAL_ENABLED: Joi.string().valid('true', 'false', '').default('false'),
   LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT: Joi.string().valid('true', 'false', '').default('false'),
+  /** Owner/staff calls: exactly `true` enables them; anything else keeps the API as it was. */
+  STAFF_CALLS_ENABLED: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),

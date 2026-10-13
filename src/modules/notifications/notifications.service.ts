@@ -23,6 +23,8 @@ export interface CreateNotificationInput {
   bodyAr?: string;
   deepLink?: string;
   payload?: Record<string, unknown>;
+  /** Store the notice and show it in the app, but send no push (the caller sends its own, e.g. a missed call). */
+  noPush?: boolean;
 }
 
 const DEFAULT_PREFS: Record<string, boolean> = {
@@ -37,6 +39,7 @@ const DEFAULT_PREFS: Record<string, boolean> = {
   pulse: true,
   posts: true,
   system: true,
+  calls: true,
   marketing: false,
 };
 
@@ -116,6 +119,7 @@ export class NotificationsService {
       type: 'notification.created',
       notification,
     });
+    if (input.noPush) return notification;
     const ar = user?.preferredLang !== 'en';
     void this.fcm.sendToUser(input.userId, {
       title: ar ? input.titleAr : input.titleEn,
