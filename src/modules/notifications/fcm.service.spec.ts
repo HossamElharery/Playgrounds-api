@@ -1,4 +1,4 @@
-import { FcmService, buildMessage, parseServiceAccount } from './fcm.service';
+import { FcmService, buildCallMessage, buildMessage, parseServiceAccount } from './fcm.service';
 
 jest.mock('google-auth-library', () => ({
   JWT: jest.fn().mockImplementation(() => ({
@@ -73,5 +73,44 @@ describe('FcmService', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://fcm.googleapis.com/v1/projects/matchena-app/messages:send');
     expect(prisma.deviceToken.delete).toHaveBeenCalledWith({ where: { id: 'd2' } });
     expect(prisma.deviceToken.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds a ringing call push: call channel, short life, time-sensitive, replaceable by its tag', () => {
+    const msg = buildCallMessage('t', { callId: 'c1', kind: 'ring', title: 'Call from Mona', body: 'Tap to answer', deepLink: '/ar/owner' }, 1_000_000_000_000);
+    expect(msg).toMatchObject({
+      token: 't',
+      notification: { title: 'Call from Mona', body: 'Tap to answer' },
+      data: { type: 'call', kind: 'ring', callId: 'c1', deepLink: '/ar/owner' },
+      android: {
+        priority: 'HIGH',
+        ttl: '30s',
+        collapse_key: 'call:c1',
+        notification: { channel_id: 'matchena_calls', tag: 'call:c1', notification_priority: 'PRIORITY_MAX', visibility: 'PUBLIC' },
+      },
+      apns: {
+        headers: { 'apns-priority': '10', 'apns-collapse-id': 'c1', 'apns-expiration': '1000000030' },
+        payload: { aps: { sound: 'matchena_ring.wav', 'interruption-level': 'time-sensitive' } },
+      },
+    });
+  });
+
+  it('builds the missed-call push so it replaces the ring and stays for a day', () => {
+    const msg = buildCallMessage('t', { callId: 'c1', kind: 'missed', title: 'Missed call', deepLink: '/ar/owner' });
+    expect(msg.android.ttl).toBe('86400s');
+    expect(msg.android.notification).toMatchObject({ channel_id: 'matchena_default', tag: 'call:c1' });
+    expect(msg.android.collapse_key).toBe('call:c1');
+    expect(msg.apns.headers).not.toHaveProperty('apns-expiration');
+    expect(msg.apns.payload.aps).toEqual({ sound: 'default', 'interruption-level': 'active' });
+    expect(msg.notification.body).toBe('Missed call');
+  });
+
+  it('sends a call push to every device through the same delivery path', async () => {
+    const { service } = build(JSON.stringify(account));
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('{}') });
+    global.fetch = fetchMock as never;
+    await service.sendCall('u1', { callId: 'c1', kind: 'ring', title: 'Call', deepLink: '/ar/owner' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const sent = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body) as { message: { data: { type: string } } };
+    expect(sent.message.data.type).toBe('call');
   });
 });

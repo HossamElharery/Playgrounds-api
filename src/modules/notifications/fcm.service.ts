@@ -162,7 +162,8 @@ export function buildCallMessage(token: string, message: FcmCallMessage, nowMs =
       },
       payload: {
         aps: {
-          sound: 'default',
+          // The 28 s ringtone ships inside the iOS app (ios/App/App/matchena_ring.wav); an older build falls back to the default tone.
+          sound: ring ? 'matchena_ring.wav' : 'default',
           // Needs the time-sensitive entitlement (added with the iOS project); without it iOS treats it as active.
           'interruption-level': ring ? 'time-sensitive' : 'active',
         },
