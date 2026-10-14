@@ -6,41 +6,60 @@ import { randomUUID } from 'node:crypto';
 const sharp: typeof import('sharp').default = require('sharp');
 
 /**
- * Responsive WebP variants for local uploads (blog covers and inline article images).
+ * Responsive WebP variants for local image uploads (blog, venue photos, avatars, feed and chat images).
  *
- * `/uploads/partner-photos/<id>.png` → `/uploads/partner-photos/w640/<id>.webp` (also w1280, w1920).
+ * `/uploads/venues/<id>.png` → `/uploads/venues/w640/<id>.webp` (also w1280, w1920; avatars get 128/256/512).
  * The URL is derived from the original, so the frontend can build a `srcset` without a schema change.
  * A variant is written to disk the first time it is requested (or on upload / by the backfill script);
  * after that `express.static` serves it like any other upload. Originals are never touched.
  */
-export const IMAGE_VARIANT_WIDTHS = [640, 1280, 1920] as const;
-export type ImageVariantWidth = (typeof IMAGE_VARIANT_WIDTHS)[number];
+const PHOTO_WIDTHS = [640, 1280, 1920] as const;
+const AVATAR_WIDTHS = [128, 256, 512] as const;
 
-/** Upload folders whose images get variants. Partner photos carry every blog cover and inline image. */
-const VARIANT_PREFIXES = new Set(['partner-photos']);
-const SOURCE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif'];
+/** Upload folders whose images get variants, and the widths each one is cut at. */
+export const IMAGE_VARIANT_WIDTHS: Readonly<Record<string, readonly number[]>> =
+  {
+    // Blog covers, inline article images and partner-application photos.
+    'partner-photos': PHOTO_WIDTHS,
+    venues: PHOTO_WIDTHS,
+    posts: PHOTO_WIDTHS,
+    chat: PHOTO_WIDTHS,
+    avatars: AVATAR_WIDTHS,
+  };
+// Upload keys keep the client's extension, so phone photos often end in `.JPG`.
+const SOURCE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif'].flatMap(
+  (ext) => [ext, ext.toUpperCase()],
+);
 const SOURCE_KEY = /^([a-z0-9-]+)\/([a-z0-9-]+)\.(png|jpe?g|webp|avif)$/i;
 const VARIANT_PATH = /^\/([a-z0-9-]+)\/w(\d+)\/([a-z0-9-]+)\.webp$/i;
 
 export interface ParsedVariant {
   prefix: string;
-  width: ImageVariantWidth;
+  width: number;
   name: string;
-  /** Key of the variant under the uploads root, e.g. `partner-photos/w640/<id>.webp`. */
+  /** Key of the variant under the uploads root, e.g. `venues/w640/<id>.webp`. */
   key: string;
 }
 
-function isWidth(value: number): value is ImageVariantWidth {
-  return (IMAGE_VARIANT_WIDTHS as readonly number[]).includes(value);
+function widthsFor(prefix: string): readonly number[] {
+  return Object.hasOwn(IMAGE_VARIANT_WIDTHS, prefix)
+    ? IMAGE_VARIANT_WIDTHS[prefix]
+    : [];
 }
 
-/** Variant key for an original upload key, or undefined when that upload gets no variants. */
+/** Widths an original upload key gets variants at; empty when it gets none. */
+export function imageVariantWidths(sourceKey: string): readonly number[] {
+  const match = SOURCE_KEY.exec(sourceKey);
+  return match ? widthsFor(match[1]) : [];
+}
+
+/** Variant key for an original upload key, or undefined when that upload gets no such variant. */
 export function imageVariantKey(
   sourceKey: string,
-  width: ImageVariantWidth,
+  width: number,
 ): string | undefined {
   const match = SOURCE_KEY.exec(sourceKey);
-  if (!match || !VARIANT_PREFIXES.has(match[1])) return undefined;
+  if (!match || !widthsFor(match[1]).includes(width)) return undefined;
   return `${match[1]}/w${width}/${match[2]}.webp`;
 }
 
@@ -52,13 +71,13 @@ export function parseVariantPath(
   if (!match) return undefined;
   const [, prefix, rawWidth, name] = match;
   const width = Number(rawWidth);
-  if (!VARIANT_PREFIXES.has(prefix) || !isWidth(width)) return undefined;
+  if (!widthsFor(prefix).includes(width)) return undefined;
   return { prefix, width, name, key: `${prefix}/w${width}/${name}.webp` };
 }
 
 export async function createImageVariant(
   buffer: Buffer,
-  width: ImageVariantWidth,
+  width: number,
 ): Promise<Buffer> {
   return sharp(buffer, { limitInputPixels: 40_000_000 })
     .rotate()
@@ -92,6 +111,23 @@ async function writeAtomically(target: string, data: Buffer): Promise<void> {
 
 const inFlight = new Map<string, Promise<Buffer | undefined>>();
 
+/** At most two resizes at once, so a page of fresh avatars cannot starve live requests of CPU. */
+const MAX_PARALLEL_RESIZES = 2;
+let activeResizes = 0;
+const resizeQueue: (() => void)[] = [];
+
+async function withResizeSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeResizes >= MAX_PARALLEL_RESIZES)
+    await new Promise<void>((resolve) => resizeQueue.push(resolve));
+  activeResizes++;
+  try {
+    return await work();
+  } finally {
+    activeResizes--;
+    resizeQueue.shift()?.();
+  }
+}
+
 /**
  * Returns the variant bytes, generating and caching them on disk when missing.
  * Resolves undefined when the original upload does not exist. Concurrent requests share one resize.
@@ -111,7 +147,9 @@ export function ensureImageVariant(
     }
     const original = await readOriginal(root, variant.prefix, variant.name);
     if (!original) return undefined;
-    const output = await createImageVariant(original, variant.width);
+    const output = await withResizeSlot(() =>
+      createImageVariant(original, variant.width),
+    );
     await writeAtomically(target, output);
     return output;
   })().finally(() => inFlight.delete(variant.key));
@@ -124,9 +162,8 @@ export async function warmImageVariants(
   root: string,
   sourceKey: string,
 ): Promise<void> {
-  for (const width of IMAGE_VARIANT_WIDTHS) {
-    const key = imageVariantKey(sourceKey, width);
-    const variant = key ? parseVariantPath(`/${key}`) : undefined;
+  for (const width of imageVariantWidths(sourceKey)) {
+    const variant = parseVariantPath(`/${imageVariantKey(sourceKey, width)}`);
     if (!variant) return;
     await ensureImageVariant(root, variant);
   }

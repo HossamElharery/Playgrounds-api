@@ -15,6 +15,7 @@ import {
   ensureImageVariant,
   imageVariantKey,
   imageVariantMiddleware,
+  imageVariantWidths,
   parseVariantPath,
   warmImageVariants,
 } from './image-variants';
@@ -45,8 +46,21 @@ describe('image variants', () => {
     expect(imageVariantKey(`partner-photos/${ID}.png`, 640)).toBe(
       `partner-photos/w640/${ID}.webp`,
     );
+    expect(imageVariantKey(`venues/${ID}.JPG`, 1920)).toBe(
+      `venues/w1920/${ID}.webp`,
+    );
+    expect(imageVariantKey(`avatars/${ID}.jpg`, 256)).toBe(
+      `avatars/w256/${ID}.webp`,
+    );
+    expect(imageVariantKey(`avatars/${ID}.jpg`, 640)).toBeUndefined();
     expect(imageVariantKey(`partner-docs/${ID}.pdf`, 640)).toBeUndefined();
-    expect(imageVariantKey(`posts/${ID}.png`, 640)).toBeUndefined();
+    expect(imageVariantKey(`posts/${ID}.mp4`, 640)).toBeUndefined();
+    expect(
+      imageVariantKey(`posts/thumbnails/${ID}-192.webp`, 640),
+    ).toBeUndefined();
+    expect(imageVariantWidths(`avatars/${ID}.png`)).toEqual([128, 256, 512]);
+    expect(imageVariantWidths(`chat/${ID}.webp`)).toEqual([640, 1280, 1920]);
+    expect(imageVariantWidths(`misc/${ID}.png`)).toEqual([]);
   });
 
   it('only accepts known widths, folders and plain file names', () => {
@@ -57,6 +71,8 @@ describe('image variants', () => {
     for (const bad of [
       `/partner-photos/w700/${ID}.webp`,
       `/partner-docs/w640/${ID}.webp`,
+      `/avatars/w640/${ID}.webp`,
+      `/constructor/w640/${ID}.webp`,
       `/partner-photos/w640/../${ID}.webp`,
       `/partner-photos/w640/${ID}.png`,
       `/partner-photos/${ID}.png`,
@@ -145,5 +161,26 @@ describe('image variants', () => {
     expect((await run('/partner-photos/w1280/missing.webp')).next).toBe(true);
     expect((await run(`/partner-photos/w999/${ID}.webp`)).next).toBe(true);
     expect((await run(`/partner-photos/${ID}.png`)).next).toBe(true);
+  });
+  it('finds an original saved with an upper-case extension', async () => {
+    await mkdir(join(root, 'venues'), { recursive: true });
+    await writeFile(join(root, 'venues', `${ID}.JPG`), original);
+    const data = await ensureImageVariant(
+      root,
+      parseVariantPath(`/venues/w640/${ID}.webp`)!,
+    );
+    expect((await sharp(data).metadata()).width).toBe(640);
+  });
+
+  it('cuts avatars at small widths', async () => {
+    await mkdir(join(root, 'avatars'), { recursive: true });
+    await writeFile(join(root, 'avatars', `${ID}.png`), original);
+    await warmImageVariants(root, `avatars/${ID}.png`);
+    for (const width of [128, 256, 512]) {
+      const meta = await sharp(
+        await readFile(join(root, `avatars/w${width}/${ID}.webp`)),
+      ).metadata();
+      expect(meta.width).toBe(width);
+    }
   });
 });

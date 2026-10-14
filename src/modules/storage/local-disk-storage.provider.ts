@@ -4,6 +4,11 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { StorageProvider, UploadResult } from './storage.interface';
+import {
+  imageVariantKey,
+  imageVariantWidths,
+  warmImageVariants,
+} from './image-variants';
 
 /** Dev-default provider: saves under ./uploads, served statically at STORAGE_LOCAL_PUBLIC_BASE. */
 @Injectable()
@@ -29,11 +34,18 @@ export class LocalDiskStorageProvider implements StorageProvider {
     const fullPath = path.join(this.root, key);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.writeFile(fullPath, buffer);
+    // Cut the responsive WebP sizes in the background so the first viewer never waits for them.
+    void warmImageVariants(this.root, key).catch(() => undefined);
     return { key, url: this.urlFor(key) };
   }
 
   async deleteObject(key: string): Promise<void> {
     await fs.rm(path.join(this.root, key), { force: true });
+    for (const width of imageVariantWidths(key)) {
+      await fs.rm(path.join(this.root, imageVariantKey(key, width)!), {
+        force: true,
+      });
+    }
   }
 
   urlFor(key: string): string {

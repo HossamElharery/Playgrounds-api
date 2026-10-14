@@ -22,7 +22,6 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import type { MulterFile } from '../../common/types/multer-file.type';
 import { StorageService } from '../storage/storage.service';
-import { warmImageVariants } from '../storage/image-variants';
 import { IMAGE_UPLOAD_OPTIONS } from '../../common/uploads/image-upload';
 import { DOCUMENT_UPLOAD_OPTIONS } from '../../common/uploads/document-upload';
 import { PartnersService } from './partners.service';
@@ -39,7 +38,6 @@ import {
   PatchPartnerApplicationDto,
 } from './dto/partner-application.dto';
 import { PartnerApplicationStatus } from '@prisma/client';
-import { join } from 'node:path';
 
 @ApiTags('partners')
 @Controller()
@@ -150,19 +148,12 @@ export class PartnersController {
     if (file.size > (options.limits?.fileSize ?? file.size)) {
       throw new BadRequestException('File is too large');
     }
-    const stored = await this.storage.uploadBuffer(
+    return this.storage.uploadBuffer(
       file.buffer,
       file.originalname,
       file.mimetype,
       kind === 'document' ? 'partner-docs' : 'partner-photos',
     );
-    if (kind !== 'document') {
-      // Blog covers render from these variants; cut them now so the first reader never waits.
-      void warmImageVariants(join(process.cwd(), 'uploads'), stored.key).catch(
-        () => undefined,
-      );
-    }
-    return stored;
   }
 
   @ApiBearerAuth()
