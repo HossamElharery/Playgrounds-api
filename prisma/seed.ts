@@ -1094,7 +1094,7 @@ async function main() {
         includedHours: 20,
         overageDiscountPercent: 15,
         perksEn: ['Priority Rescue Match matching', 'No service fee on gaming bookings'],
-        perksAr: ['أولوية في مطابقة Rescue Match', 'بدون رسوم خدمة على حجوزات الألعاب'],
+        perksAr: ['أولوية في ماتشات «إنقاذ ماتش»', 'بدون رسوم خدمة على حجوزات الألعاب'],
       },
       {
         slug: 'all-access',
@@ -1106,7 +1106,7 @@ async function main() {
         includedHours: 15,
         overageDiscountPercent: 10,
         perksEn: ['15% off every activity', 'Priority Rescue Match matching', 'Free coins bonus monthly'],
-        perksAr: ['خصم 15% على كل الأنشطة', 'أولوية في مطابقة Rescue Match', 'مكافأة كوينز شهرية مجانية'],
+        perksAr: ['خصم 15% على كل الأنشطة', 'أولوية في ماتشات «إنقاذ ماتش»', 'مكافأة كوينز شهرية مجانية'],
       },
     ].map((p) =>
       prisma.membershipPlan.upsert({

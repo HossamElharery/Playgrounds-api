@@ -90,3 +90,34 @@ describe('ContentService support inbox', () => {
     warn.mockRestore();
   });
 });
+
+describe('ContentService account deletion requests', () => {
+  const makeService = (recent: unknown) => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ name: 'Ahmed', email: null, phone: 'pending-1', username: 'ahmed.staff', roles: ['staff'] }) },
+      supportInquiry: {
+        findFirst: jest.fn().mockResolvedValue(recent),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...data, id: 'x', createdAt: new Date('2026-10-14T10:00:00Z') })),
+      },
+    };
+    const service = new ContentService(prisma as never, { notifyUrls: jest.fn() } as never, { sendSupportInquiry: jest.fn() } as never);
+    return { service, prisma };
+  };
+
+  it('files one request linked to the account, even without an email', async () => {
+    const { service, prisma } = makeService(null);
+    await service.requestAccountDeletion('u1');
+    const data = prisma.supportInquiry.create.mock.calls[0][0].data;
+    expect(data.userId).toBe('u1');
+    expect(data.email).toBe('ahmed.staff@no-email.matchena.com');
+    expect(data.phone).toBe('');
+    expect(data.message).toContain('[ACCOUNT_DELETION_REQUEST]');
+  });
+
+  it('does not file a second request within a week', async () => {
+    const { service, prisma } = makeService({ createdAt: new Date('2026-10-13T10:00:00Z') });
+    const res = await service.requestAccountDeletion('u1');
+    expect(prisma.supportInquiry.create).not.toHaveBeenCalled();
+    expect(res.requestedAt.toISOString()).toBe('2026-10-13T10:00:00.000Z');
+  });
+});

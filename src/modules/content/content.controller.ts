@@ -206,6 +206,18 @@ export class ContentController {
     return this.content.deleteFaq(id);
   }
 
+  /**
+   * Venue / staff accounts can't self-delete (venues, payouts and staff access must be handed
+   * over), but stores require an in-app way to ask: this files the request in the support inbox.
+   */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('users/me/deletion-request')
+  requestAccountDeletion(@CurrentUser() user: AuthenticatedUser) {
+    return this.content.requestAccountDeletion(user.id);
+  }
+
   // ---- Support / contact ----
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

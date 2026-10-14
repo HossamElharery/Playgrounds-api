@@ -303,6 +303,34 @@ export class ContentService {
     return inquiry;
   }
 
+  /** Files (once a week at most) an account-deletion request in the support inbox. */
+  async requestAccountDeletion(userId: string): Promise<{ requestedAt: Date }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true, phone: true, username: true, roles: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    const marker = '[ACCOUNT_DELETION_REQUEST]';
+    const recent = await this.prisma.supportInquiry.findFirst({
+      where: {
+        userId,
+        message: { startsWith: marker },
+        createdAt: { gt: new Date(Date.now() - 7 * 24 * 3600_000) },
+      },
+    });
+    if (recent) return { requestedAt: recent.createdAt };
+    const inquiry = await this.createSupportInquiry(
+      {
+        fullName: user.name || user.username || 'Matchena user',
+        email: user.email ?? `${user.username ?? userId}@no-email.matchena.com`,
+        phone: user.phone && !user.phone.startsWith('pending-') ? user.phone : undefined,
+        message: `${marker} User ${userId} (${user.roles.join(', ')}) asked to delete their account from the app settings.`,
+      },
+      userId,
+    );
+    return { requestedAt: inquiry.createdAt };
+  }
+
   async listSupportInquiries(page: number, perPage: number, status?: string) {
     const where = status ? { status } : {};
     const [items, total] = await Promise.all([
