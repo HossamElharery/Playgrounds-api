@@ -12,6 +12,7 @@ import * as path from 'path';
 import { SocketIoAdapter } from './common/adapters/socket-io.adapter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { imageVariantMiddleware } from './modules/storage/image-variants';
 
 /**
  * Shared app configuration used by both the real server (main.ts) and the
@@ -53,6 +54,9 @@ export function configureApp(app: INestApplication): ConfigService {
   // media locally so returning to a feed video does not revalidate multi-MB
   // files on every scroll.
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), { maxAge: '1y', immutable: true }));
+  // Responsive WebP variants (`partner-photos/w640/<id>.webp`) are cut from the original on first
+  // request; once on disk, the static handler above serves them.
+  app.use('/uploads', imageVariantMiddleware(path.join(process.cwd(), 'uploads')));
 
   const corsOrigins = config
     .get<string>('CORS_ORIGINS', 'http://localhost:4200')
