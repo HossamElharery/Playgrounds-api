@@ -51,6 +51,10 @@ import {
 
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
+/** The first-booking bonus needs a real booking (50 EGP in minor units), not a near-free one. */
+const FIRST_BOOKING_MIN_TOTAL = 5000;
+/** Max share of the court price (not the fee) that coins may discount. */
+const MAX_COIN_DISCOUNT_PCT = 30;
 
 /** PSP methods that cannot be used when the venue is `at_venue`. Wallet is the
  *  legacy player confirm path and is accepted as "pay at the venue" (no debit). */
@@ -264,16 +268,33 @@ export class BookingsService {
     }
 
     let coinsRedeemed = 0;
-    if (dto.coinsToRedeem) {
+    if (dto.coinsToRedeem && dto.coinsToRedeem > 0) {
       const user = await this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
       });
-      coinsRedeemed = Math.min(dto.coinsToRedeem, user.coinsBalance);
       const coinRate =
         court.venue.country.coinToMajorRate ??
         platformSetting?.coinToEgpRate ??
         20;
-      discountAmount += Math.round((coinsRedeemed / coinRate) * 100);
+      // Coin discounts are platform-funded, so they are capped to a share of
+      // the court price (never the service fee) and never stack past what is
+      // still owed after any promo. Only the coins actually needed are taken.
+      const maxCoinDiscount = Math.max(
+        0,
+        Math.min(
+          Math.floor((baseAmount * MAX_COIN_DISCOUNT_PCT) / 100),
+          baseAmount - discountAmount,
+        ),
+      );
+      const maxCoins = Math.floor((maxCoinDiscount / 100) * coinRate);
+      coinsRedeemed = Math.max(
+        0,
+        Math.min(dto.coinsToRedeem, user.coinsBalance, maxCoins),
+      );
+      discountAmount += Math.min(
+        maxCoinDiscount,
+        Math.round((coinsRedeemed / coinRate) * 100),
+      );
     }
 
     const totalAmount = Math.max(0, baseAmount + feeAmount - discountAmount);
@@ -896,7 +917,9 @@ export class BookingsService {
       },
     });
     const isFirstBooking = priorCompleted === 0;
-    if (isFirstBooking) coins += FIRST_BOOKING_BONUS_COINS;
+    if (isFirstBooking && booking.totalAmount >= FIRST_BOOKING_MIN_TOTAL) {
+      coins += FIRST_BOOKING_BONUS_COINS;
+    }
 
     await this.prisma.$transaction([
       this.prisma.user.update({
