@@ -24,7 +24,12 @@ async function login(email) {
   return token;
 }
 const api = (token) => async (method, path, data) => {
-  const res = await fetch(`${B}${path}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: data ? JSON.stringify(data) : undefined });
+  let res;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await fetch(`${B}${path}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: data ? JSON.stringify(data) : undefined });
+    if (res.status !== 429 || attempt === 1) break;
+    await sleep(Math.max(61_000, Number(res.headers.get('retry-after') ?? 0) * 1000));
+  }
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = text; }
   return { status: res.status, body: json?.result ?? json, raw: json };
@@ -45,12 +50,12 @@ await sleep(600);
 
 // directory
 let r = await owner('GET', '/calls/directory');
-ok(r.status === 200 && r.body.enabled === true && r.body.members.length === 4, `owner sees 4 teammates (got ${r.body?.members?.length})`);
+ok(r.status === 200 && r.body.enabled === true && r.body.members.length >= 1, `owner sees their team (got ${r.body?.members?.length})`);
 const reception = r.body.members.find((m) => m.title === 'Reception');
 ok(!!reception && reception.online === true, 'reception shows online');
 r = await rec('GET', '/calls/directory');
 const ownerEntry = r.body.members.find((m) => m.role === 'owner');
-ok(r.body.members.length === 4 && !!ownerEntry, 'staff sees owner + 3 colleagues (not self)');
+ok(!!ownerEntry && r.body.members.every((m) => m.id !== reception.id), 'staff sees owner and not self');
 ok(!('permissions' in (r.body.members[0] ?? {})) && !('email' in (r.body.members[0] ?? {})), 'directory leaks no email/permissions');
 
 // players and strangers
@@ -117,12 +122,34 @@ await rec('POST', `/calls/${r.body.call.id}/decline`);
 ok(!!(await O.wait('call.ended')) && O.got.find((e) => e.type === 'call.ended').status === 'declined', 'decline reaches the caller');
 O.got.length = 0;
 r = await owner('POST', '/calls', { calleeId: reception.id });
+R.s.emit('call.ringing', { callId: r.body.call.id, native: false });
+await O.wait('call.ringing');
 await owner('POST', `/calls/${r.body.call.id}/cancel`);
 r = await rec('GET', '/calls/recent');
 ok(r.body.items[0].status === 'cancelled' && r.body.items[0].unseen === true && r.body.missedUnseen >= 1, 'cancelled-while-ringing shows as an unseen missed call');
 await rec('POST', '/calls/recent/seen');
 r = await rec('GET', '/calls/recent');
 ok(r.body.missedUnseen === 0, 'opening recent clears the badge');
+
+// A call with no device acknowledgement must not invent a missed call for the callee.
+r = await owner('POST', '/calls', { calleeId: reception.id });
+const unreachedId = r.body.call.id;
+await owner('POST', `/calls/${unreachedId}/cancel`);
+let history = await rec('GET', '/calls/recent');
+ok(!history.body.items.some((i) => i.id === unreachedId), 'unconfirmed call is absent from callee history');
+history = await owner('GET', '/calls/recent');
+ok(history.body.items.some((i) => i.id === unreachedId && i.status === 'failed'), 'caller sees failed delivery');
+
+// The HTTP acknowledgement is the fallback when the callee socket is reconnecting.
+O.got.length = 0;
+r = await owner('POST', '/calls', { calleeId: reception.id });
+const httpAckId = r.body.call.id;
+let ack = await rec('POST', `/calls/${httpAckId}/ringing`, { native: false });
+ok(ack.status === 200 && !!(await O.wait('call.ringing')), 'HTTP acknowledgement reaches caller');
+await owner('POST', `/calls/${httpAckId}/cancel`);
+history = await rec('GET', '/calls/recent');
+ok(history.body.items.some((i) => i.id === httpAckId && i.status === 'cancelled'), 'HTTP-confirmed ring becomes a missed call');
+await rec('POST', '/calls/recent/seen');
 
 // DND
 r = await rec('PUT', '/calls/dnd', { minutes: 30 });

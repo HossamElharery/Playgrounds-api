@@ -115,6 +115,17 @@ export class CallsController {
     return this.calls.accept(user.id, id);
   }
 
+  @Post(':id/ringing')
+  @HttpCode(HttpStatus.OK)
+  async ringing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body('native') native?: boolean,
+  ) {
+    await this.calls.markRinging(user.id, id, native === true);
+    return { ok: true };
+  }
+
   @Post(':id/decline')
   @HttpCode(HttpStatus.OK)
   decline(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {

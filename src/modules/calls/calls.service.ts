@@ -692,26 +692,33 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     reason: string,
     notify = true,
   ): Promise<boolean> {
+    const live = this.live.get(callId);
+    // A socket send or a push-provider acceptance does not prove the callee's screen rang.
+    // Only the device acknowledgement may turn an unanswered attempt into a missed call.
+    const unconfirmed = from === 'ringing' &&
+      (to === 'missed' || to === 'cancelled') &&
+      !live?.ackNative && !live?.ackWeb;
+    const finalStatus = unconfirmed ? 'failed' : to;
+    const finalReason = unconfirmed ? 'unreached' : reason;
     const done = await this.prisma.staffCall.updateMany({
       where: { id: callId, status: from },
-      data: { status: to, endedAt: new Date(), endReason: reason },
+      data: { status: finalStatus, endedAt: new Date(), endReason: finalReason },
     });
     if (!done.count) return false;
     this.clear(this.ringTimers, callId);
     this.clear(this.pushTimers, callId);
-    const live = this.live.get(callId);
     this.live.delete(callId);
     const row = await this.prisma.staffCall.findUnique({
       where: { id: callId },
     });
     if (!row) return true;
     if (notify) {
-      const event = { type: 'call.ended', callId, status: to, reason };
+      const event = { type: 'call.ended', callId, status: finalStatus, reason: finalReason };
       this.emitter.emitToUser(row.callerId, event);
       this.emitter.emitToUser(row.calleeId, event);
     }
     // Rung but never answered: the callee gets a "missed call" (it also replaces the ringing push).
-    if (from === 'ringing' && (to === 'missed' || to === 'cancelled')) {
+    if (from === 'ringing' && (finalStatus === 'missed' || finalStatus === 'cancelled')) {
       await this.missedNotice(row, live?.pushed ?? false).catch((err) =>
         this.logger.warn(`missed-call notice failed: ${String(err)}`),
       );
@@ -833,7 +840,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       pushed: false,
       ackNative: false,
       ackWeb: false,
-      ringingEmitted: true,
+      ringingEmitted: row.status === 'answered',
     };
     this.live.set(row.id, live);
     return live;
@@ -881,7 +888,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       where: {
         OR: [
           { callerId: userId },
-          { calleeId: userId, status: { notIn: ['unavailable', 'busy'] } },
+          { calleeId: userId, status: { notIn: ['unavailable', 'busy', 'failed'] } },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -1200,7 +1207,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
           status: 'ringing',
           createdAt: { lt: new Date(now - CALL_RING_MS - 10_000) },
         },
-        data: { status: 'missed', endedAt: new Date(now), endReason: 'swept' },
+        data: { status: 'failed', endedAt: new Date(now), endReason: 'unreached' },
       });
       await this.prisma.staffCall.updateMany({
         where: {
