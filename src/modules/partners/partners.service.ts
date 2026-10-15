@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { isDeepStrictEqual } from 'node:util';
 import { PartnerApplicationStatus, Prisma, VenueStatus } from '@prisma/client';
@@ -15,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { VenuesService } from '../venues/venues.service';
+import { VenueTextService } from '../venues/venue-text.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { ApiException } from '../../common/errors/api-exception';
 import { encodeGeohash } from '../../common/utils/geo.util';
@@ -57,7 +59,39 @@ export class PartnersService {
     private readonly notifications: NotificationsService,
     private readonly venues: VenuesService,
     private readonly subscriptions: SubscriptionsService,
+    @Optional() private readonly venueTexts?: VenueTextService,
   ) {}
+
+  /**
+   * Older partner forms copied the one name the owner entered into both language fields. Repair
+   * that shape before publication, outside the DB transaction, so Explore never receives Arabic
+   * text as `nameEn` (and an AI timeout never keeps a transaction open).
+   */
+  private async localizePublicText(payload: PartnerApplicationPayload) {
+    if (!this.venueTexts) return;
+    const repair = async (
+      arKey: 'publicNameAr' | 'descriptionAr',
+      enKey: 'publicNameEn' | 'descriptionEn',
+      kind: 'name' | 'description',
+    ) => {
+      const ar = payload[arKey]?.trim() ?? '';
+      const en = payload[enKey]?.trim() ?? '';
+      const englishIsArabic = !!en && VenueTextService.languageOf(en) === 'ar';
+      const arabicIsEnglish = !!ar && VenueTextService.languageOf(ar) === 'en';
+      if (!en || englishIsArabic) {
+        const source = ar || en;
+        if (source) payload[enKey] = (await this.venueTexts!.both(source, kind)).en;
+      }
+      if (!ar || arabicIsEnglish) {
+        const source = en || ar;
+        if (source) payload[arKey] = (await this.venueTexts!.both(source, kind)).ar;
+      }
+    };
+    await repair('publicNameAr', 'publicNameEn', 'name');
+    if (payload.descriptionAr || payload.descriptionEn) {
+      await repair('descriptionAr', 'descriptionEn', 'description');
+    }
+  }
 
   usernameAvailability(raw: string) {
     const username = normalizeUsername(raw);
@@ -542,6 +576,17 @@ export class PartnersService {
     const nextStatus = this.statusForAction(dto.action);
     const payload = sanitizePayload(app.payload as PartnerApplicationPayload);
     if (dto.action === 'approve') {
+      await this.localizePublicText(payload);
+      if (
+        payload.publicNameEn &&
+        VenueTextService.languageOf(payload.publicNameEn) === 'ar'
+      ) {
+        throw new ApiException(
+          HttpStatus.BAD_REQUEST,
+          'VENUE_ENGLISH_NAME_REQUIRED',
+          'Add or generate an English venue name before approval',
+        );
+      }
       payload.courts = (payload.courts ?? []).map((court) => ({
         ...court,
         sportId: this.normalizeSportId(court.sportId),
@@ -608,6 +653,11 @@ export class PartnersService {
           data: {
             status: nextStatus,
             venueId,
+            ...(dto.action === 'approve' ? {
+              payload: payload as Prisma.InputJsonValue,
+              publicNameEn: payload.publicNameEn,
+              publicNameAr: payload.publicNameAr,
+            } : {}),
             version: { increment: 1 },
             events: {
               create: {

@@ -364,6 +364,7 @@ describe('CallsService', () => {
     it('becomes a missed call after 45 s, tells both sides and leaves a notice (with a replacing push)', async () => {
       const { service, prisma, eventsTo, notifications, fcm } = setup();
       const { call } = await service.create(OWNER, ALICE);
+      await service.markRinging(ALICE, call.id, false);
       await jest.advanceTimersByTimeAsync(CALL_RING_MS + 10);
       expect(prisma.staffCall.rows[0]).toMatchObject({
         status: 'missed',
@@ -391,12 +392,29 @@ describe('CallsService', () => {
     it('a caller who hangs up while it rings leaves the callee a missed call', async () => {
       const { service, prisma, eventsTo, notifications } = setup();
       const { call } = await service.create(OWNER, ALICE);
+      await service.markRinging(ALICE, call.id, false);
       await service.cancel(OWNER, call.id);
       expect(prisma.staffCall.rows[0]).toMatchObject({ status: 'cancelled' });
       expect(eventsTo(ALICE, 'call.ended')).toHaveLength(1);
       expect(notifications.create).toHaveBeenCalledTimes(1);
       await jest.advanceTimersByTimeAsync(CALL_RING_MS + 10);
       expect(prisma.staffCall.rows[0]['status']).toBe('cancelled');
+    });
+
+    it('does not invent a missed call when no device confirmed the ring', async () => {
+      const { service, prisma, notifications, eventsTo } = setup();
+      const { call } = await service.create(OWNER, ALICE);
+      await jest.advanceTimersByTimeAsync(CALL_RING_MS + 10);
+      expect(prisma.staffCall.rows[0]).toMatchObject({ status: 'failed', endReason: 'unreached' });
+      expect(eventsTo(OWNER, 'call.ended')[0].event).toMatchObject({ status: 'failed', reason: 'unreached' });
+      expect(notifications.create).not.toHaveBeenCalled();
+      expect((await service.recent(ALICE)).items).toHaveLength(0);
+      expect((await service.recent(OWNER)).items[0]).toMatchObject({ status: 'failed' });
+
+      const another = await service.create(OWNER, ALICE);
+      await service.cancel(OWNER, another.call.id);
+      expect(prisma.staffCall.rows[1]).toMatchObject({ status: 'failed', endReason: 'unreached' });
+      expect(notifications.create).not.toHaveBeenCalled();
     });
   });
 
@@ -609,6 +627,7 @@ describe('CallsService', () => {
     it('lists calls for both sides, marks unseen missed calls, and clears them when opened', async () => {
       const { service } = setup();
       const { call } = await service.create(OWNER, ALICE);
+      await service.markRinging(ALICE, call.id, false);
       await service.cancel(OWNER, call.id);
       const inbox = await service.recent(ALICE);
       expect(inbox.items[0]).toMatchObject({
@@ -668,7 +687,7 @@ describe('CallsService', () => {
       await service.sweep();
       expect(
         prisma.staffCall.rows.find((r) => r['id'] === 'a')?.['status'],
-      ).toBe('missed');
+      ).toBe('failed');
       expect(
         prisma.staffCall.rows.find((r) => r['id'] === 'b'),
       ).toBeUndefined();
@@ -783,7 +802,8 @@ describe('CallsService', () => {
 
     it('leaves a "missed call from Matchena team" when nobody answers', async () => {
       const { service, notifications } = setup();
-      await service.create(ADMIN, ALICE);
+      const { call } = await service.create(ADMIN, ALICE);
+      await service.markRinging(ALICE, call.id, false);
       await jest.advanceTimersByTimeAsync(CALL_RING_MS + 10);
       expect(notifications.create).toHaveBeenCalledWith(
         expect.objectContaining({

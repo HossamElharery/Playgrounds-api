@@ -100,6 +100,7 @@ describe('PartnersService admin decisions', () => {
       startOrExtendOnApproval: jest.fn().mockResolvedValue(undefined),
       ensure: jest.fn().mockResolvedValue({}),
     };
+    const venueTexts = overrides.venueTexts;
     (prisma as any).venueSubscription = { findUnique: jest.fn().mockResolvedValue(null) };
     const svc = new PartnersService(
       prisma,
@@ -107,12 +108,45 @@ describe('PartnersService admin decisions', () => {
       notifications as any,
       venues as any,
       subscriptions as any,
+      venueTexts as any,
     );
     prisma.partnerApplication.findUniqueOrThrow = jest
       .fn()
       .mockImplementation(() => Promise.resolve({ ...app, ...overrides.app, events: [] }));
     return { svc, prisma, notifications, subscriptions };
   }
+
+  it('repairs a single Arabic partner name before publishing it', async () => {
+    const venueTexts = {
+      both: jest.fn().mockResolvedValue({ ar: 'ملعب واحد', en: 'Court One' }),
+    };
+    const { svc, prisma } = serviceWith({
+      app: { payload: { ...app.payload, publicNameAr: 'ملعب واحد', publicNameEn: 'ملعب واحد' } },
+      venueTexts,
+    });
+    await svc.decide('admin-1', 'app-1', { action: 'approve', version: 1, subscriptionDays: 90 });
+    expect(venueTexts.both).toHaveBeenCalledWith('ملعب واحد', 'name');
+    expect(prisma.venue.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ nameAr: 'ملعب واحد', nameEn: 'Court One' }),
+    }));
+    expect(prisma.partnerApplication.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ publicNameAr: 'ملعب واحد', publicNameEn: 'Court One' }),
+    }));
+  });
+
+  it('does not publish an Arabic fallback as the English venue name when translation is unavailable', async () => {
+    const venueTexts = {
+      both: jest.fn().mockResolvedValue({ ar: 'ملعب واحد', en: 'ملعب واحد' }),
+    };
+    const { svc, prisma } = serviceWith({
+      app: { payload: { ...app.payload, publicNameAr: 'ملعب واحد', publicNameEn: 'ملعب واحد' } },
+      venueTexts,
+    });
+    await expect(
+      svc.decide('admin-1', 'app-1', { action: 'approve', version: 1, subscriptionDays: 90 }),
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'VENUE_ENGLISH_NAME_REQUIRED' }) });
+    expect(prisma.venue.create).not.toHaveBeenCalled();
+  });
 
   it('approves without a partner note, starting the subscription with the days the admin typed', async () => {
     const { svc, subscriptions } = serviceWith();

@@ -10,6 +10,6 @@ import { VenueTextService } from './venue-text.service';
   imports: [StorageModule, NotificationsModule, AiModule],
   providers: [VenuesService, VenueTextService],
   controllers: [VenuesController],
-  exports: [VenuesService],
+  exports: [VenuesService, VenueTextService],
 })
 export class VenuesModule {}
