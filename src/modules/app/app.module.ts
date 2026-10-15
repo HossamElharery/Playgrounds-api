@@ -43,6 +43,7 @@ import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
 import { AiAdminModule } from '../ai/admin/ai-admin.module';
 import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
+import { PartnerLinksModule } from '../partner-links/partner-links.module';
 import { PostsModule } from '../posts/posts.module';
 import { FinanceModule } from '../finance/finance.module';
 import { MorphsModule } from '../morphs/morphs.module';
@@ -101,6 +102,7 @@ import { CallsModule } from '../calls/calls.module';
     MembershipModule,
     TournamentsModule,
     SeoDiscoveryModule,
+    PartnerLinksModule,
     PostsModule,
     FinanceModule,
     MorphsModule,
