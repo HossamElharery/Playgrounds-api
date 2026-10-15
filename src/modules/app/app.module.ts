@@ -21,6 +21,7 @@ import { TeamModule } from '../team/team.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ContentModule } from '../content/content.module';
 import { GeoModule } from '../geo/geo.module';
+import { AreaCatalogModule } from '../geo/area-catalog.service';
 import { VenuesModule } from '../venues/venues.module';
 import { BookingsModule } from '../bookings/bookings.module';
 import { PaymentsModule } from '../payments/payments.module';
@@ -78,6 +79,7 @@ import { CallsModule } from '../calls/calls.module';
     UsersModule,
     ContentModule,
     GeoModule,
+    AreaCatalogModule,
     VenuesModule,
     SearchModule,
     AiAdminModule,

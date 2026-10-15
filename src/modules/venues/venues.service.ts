@@ -30,6 +30,7 @@ import { normalizeCountryCode } from '../../common/geo/country.util';
 import { zonedWallTimeToUtc } from '../../common/utils/timezone.util';
 import { buildPagination } from '../../common/dto/page-query.dto';
 import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
+import { AreaCatalogService } from '../geo/area-catalog.service';
 
 /** A price window must end after it starts (the end is exclusive; "24:00" is midnight). */
 function assertRuleWindow(dto: { startTime: string; endTime: string }): void {
@@ -47,6 +48,7 @@ export class VenuesService {
     private readonly prisma: PrismaService,
     @Optional() private readonly notifications?: NotificationsService,
     @Optional() private readonly texts?: VenueTextService,
+    @Optional() private readonly areas?: AreaCatalogService,
   ) {}
 
   private stripSeoOverrides<T extends Record<string, unknown>>(venue: T) {
@@ -356,8 +358,13 @@ export class VenuesService {
       approvedById: _approvedById,
       ...publicVenue
     } = venue;
+    const area = await this.areas?.areaFor(venue.districtId).catch(() => null);
     return {
       ...publicVenue,
+      // The district's map outline is never drawn on the venue page; it was most of the payload.
+      district: venue.district ? { ...venue.district, polygon: null } : null,
+      // The named area a census sub-area belongs to, for breadcrumbs and local landing links.
+      area: area ? { id: area.id, slug: area.slug, nameAr: area.nameAr, nameEn: area.nameEn } : null,
       reviews: venue.reviews.map(({ bookingId: _bookingId, ...review }) => review),
     };
   }
@@ -465,6 +472,9 @@ export class VenuesService {
       countryCode ??
       governorate?.countryCode ??
       district?.governorate.countryCode;
+    const districtIds = district
+      ? ((await this.areas?.searchDistrictIds(district.id).catch(() => null)) ?? [district.id])
+      : [];
 
     let availabilityFilter: Prisma.VenueWhereInput | undefined;
     if (query.date) {
@@ -522,7 +532,8 @@ export class VenuesService {
       NOT: { weeklyHours: { equals: Prisma.DbNull } },
       ...(resolvedCountry ? { countryCode: resolvedCountry } : {}),
       ...(sport ? { sports: { some: { sportId: sport.id } } } : {}),
-      ...(district ? { districtId: district.id } : {}),
+      // A named area also matches venues filed under its census sub-areas.
+      ...(district ? { districtId: { in: districtIds } } : {}),
       ...(governorate ? { governorateId: governorate.id } : {}),
       ...(query.instantBook ? { instantBook: true } : {}),
       ...(query.featured ? { featured: true } : {}),

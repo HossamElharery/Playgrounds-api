@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { LocalLandingService } from './local-landing.service';
 
 /** Same rule the post page uses to decide `noindex`: emoji-only / hashtag-only posts are thin content. */
 export function isIndexablePost(text: string, mediaCount: number): boolean {
@@ -19,6 +20,7 @@ export class SitemapService {
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    @Optional() private readonly landingPages?: LocalLandingService,
   ) {
     this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
@@ -113,31 +115,13 @@ ${items}
     );
   }
 
-  /** Indexable explore landings: governorate, district and sport filters that actually have venues. */
+  /**
+   * Local landing pages (/egypt/cairo/nasr-city/football) that pass the index rules.
+   * Filtered explore URLs are not listed: they 301 to these pages.
+   */
   async landings(): Promise<string> {
-    const [governorates, districts, sports] = await Promise.all([
-      this.prisma.governorate.findMany({
-        where: { slug: { not: null }, venues: { some: { status: 'active' } } },
-        select: { slug: true },
-      }),
-      this.prisma.district.findMany({
-        where: { slug: { not: null }, venues: { some: { status: 'active' } } },
-        select: { slug: true },
-      }),
-      this.prisma.sportCategory.findMany({
-        where: { venueSports: { some: { venue: { status: 'active' } } } },
-        select: { slug: true },
-      }),
-    ]);
-    const entry = (key: string, slug: string | null) =>
-      slug ? this.localizedEntry(`/explore?${key}=${encodeURIComponent(slug)}`) : '';
-    return this.urlset(
-      [
-        ...governorates.map((g) => entry('governorate', g.slug)),
-        ...districts.map((d) => entry('district', d.slug)),
-        ...sports.map((s) => entry('sport', s.slug)),
-      ].join(''),
-    );
+    const entries = (await this.landingPages?.sitemapEntries()) ?? [];
+    return this.urlset(entries.map((entry) => this.localizedEntry(entry.path, entry.lastmod, entry.images)).join(''));
   }
 
   async blog(): Promise<string> {

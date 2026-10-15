@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, Put, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, NotFoundException, Param, Put, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { IndexNowService } from './index-now.service';
 import { SitemapService } from './sitemap.service';
 import { LlmsService } from './llms.service';
 import { PageSeoService } from './page-seo.service';
+import { LocalLandingService } from './local-landing.service';
 import { UpdatePageSeoDto } from './page-seo.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
@@ -18,6 +19,7 @@ export class SeoDiscoveryController {
     private readonly indexNow: IndexNowService,
     private readonly pageSeo: PageSeoService,
     private readonly llmsService: LlmsService,
+    private readonly landingPages: LocalLandingService,
   ) {}
 
   @Public()
@@ -54,6 +56,36 @@ export class SeoDiscoveryController {
   @Get('sitemaps/hashtags.xml')
   @Header('Content-Type', 'application/xml; charset=utf-8')
   async hashtags(@Res() response: Response) { response.send(await this.sitemap.hashtags()); }
+
+  /** Governorates and named areas with live venue counts (footer, home, explore filter, HTML sitemap). */
+  @Public()
+  @Get('locations')
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
+  locations(@Query('country') country?: string) {
+    return this.landingPages.directory((country || 'EG').toUpperCase());
+  }
+
+  /** A local landing page, e.g. `path=egypt/cairo/nasr-city/football`. */
+  @Public()
+  @Get('landing')
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
+  landing(@Query('path') path = '', @Query('page') page?: string) {
+    const [country, ...segments] = path.split('/').filter(Boolean);
+    if (!country || !/^[a-z0-9/-]{1,160}$/.test(path.replace(/^\/+/, ''))) throw new NotFoundException('Unknown place');
+    return this.landingPages.landing(country, segments, Number(page) || 1);
+  }
+
+  /** Maps legacy explore filters (`governorate`/`district`/`sport`) to their landing path. */
+  @Public()
+  @Get('landing-path')
+  @Header('Cache-Control', 'public, max-age=300')
+  async landingPath(
+    @Query('governorate') governorate?: string,
+    @Query('district') district?: string,
+    @Query('sport') sport?: string,
+  ) {
+    return { path: await this.landingPages.pathForPlace('EG', { governorate, district, sport }) };
+  }
 
   @Public()
   @Get('llms.txt')

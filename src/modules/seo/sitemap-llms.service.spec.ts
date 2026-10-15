@@ -75,11 +75,15 @@ describe('SitemapService', () => {
     expect(await svc.hashtags()).toContain(`/community/hashtag/${encodeURIComponent('كورة')}`);
   });
 
-  it('landings cover governorate, district and sport', async () => {
-    const xml = await svc.landings();
-    expect(xml).toContain('explore?governorate=cairo');
-    expect(xml).toContain('explore?district=nasr-city');
-    expect(xml).toContain('explore?sport=padel');
+  it('landings list only the local pages the landing engine marks indexable', async () => {
+    const landingPages = {
+      sitemapEntries: async () => [{ path: '/egypt/cairo/nasr-city', lastmod: date, images: ['/p.jpg'] }],
+    };
+    const xml = await new SitemapService(prismaMock(), config, landingPages as never).landings();
+    expect(xml).toContain('https://matchena.com/ar/egypt/cairo/nasr-city');
+    expect(xml).toContain('https://matchena.com/en/egypt/cairo/nasr-city');
+    expect(xml).toContain('<image:loc>https://matchena.com/p.jpg</image:loc>');
+    expect(xml).not.toContain('explore?');
   });
 });
 
