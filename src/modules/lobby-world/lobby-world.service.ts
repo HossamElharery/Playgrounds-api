@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import {
   BALL_EVENT_GOAL,
+  GOAL_LINE_Z,
   KEEPER_SAVE_SCALE,
   ballResting,
   createBall,
@@ -13,6 +14,27 @@ import {
   type BallState,
   type BallStepInfo,
 } from './ball-sim';
+import {
+  ARRIVE_DISTANCE,
+  FLIGHT_MS,
+  KEEPER_BOX,
+  KEEPER_SPOT,
+  PENALTY_SPOT,
+  SHOOTER_BOX,
+  SHOOTER_SPOT,
+  advance as advancePenalty,
+  beginAim,
+  beginFlight,
+  cancel as cancelPenaltyState,
+  clampToBox,
+  createPenalty,
+  penaltyView,
+  removePlayer as removePenaltyPlayer,
+  resolveShot,
+  type PenaltyOutcome,
+  type PenaltyState,
+  type PenaltyView,
+} from './penalty-rules';
 import {
   LOBBY_MAX_CREDIT_S,
   LOBBY_MAX_SPEED,
@@ -88,6 +110,8 @@ export interface LobbySnapshot {
     vx: number;
     vz: number;
   }>;
+  /** The running penalty shootout, if any (late joiners see it at once). */
+  pen?: PenaltyView;
   ball?: {
     x: number;
     y: number;
@@ -181,6 +205,10 @@ export class LobbyWorldService implements OnModuleDestroy {
   private ballBoxes: readonly BallAabb[] = [];
   private readonly playerIds: string[] = [];
   private readonly stepInfo: BallStepInfo = { toucher: -1 };
+  /** Penalty shootouts by squad, and per-shot bookkeeping. */
+  private readonly penalties = new Map<string, PenaltyState>();
+  private readonly penShot = new Map<string, { keeperTouched: boolean }>();
+  private penTimer: NodeJS.Timeout | null = null;
 
   /** Validated move → the state to relay, or null to drop it silently. */
   acceptMove(
@@ -216,6 +244,23 @@ export class LobbyWorldService implements OnModuleDestroy {
         budget = 0;
       } else {
         budget -= dist;
+      }
+    }
+
+    // Penalties: during the kick the keeper stays on the line and the shooter behind the ball.
+    const pen = this.penalties.get(move.squadId);
+    if (pen && (pen.phase === 'aim' || pen.phase === 'flight')) {
+      const box =
+        userId === pen.keeperId
+          ? KEEPER_BOX
+          : userId === pen.shooterId && pen.phase === 'aim'
+            ? SHOOTER_BOX
+            : null;
+      const clamped = box ? clampToBox(x, z, box) : null;
+      if (clamped) {
+        x = round2(clamped.x);
+        z = round2(clamped.z);
+        correction = { x, z };
       }
     }
 
@@ -296,6 +341,8 @@ export class LobbyWorldService implements OnModuleDestroy {
         moving: ball.moving,
       };
       snap.score = scoreOf(ball);
+      const pen = this.penalties.get(squadId);
+      if (pen) snap.pen = penaltyView(pen, now);
     }
     return snap;
   }
@@ -361,6 +408,9 @@ export class LobbyWorldService implements OnModuleDestroy {
   kick(k: KickInput, userId: string, now: number): boolean {
     const ball = this.balls.get(k.squadId);
     if (!ball || now < ball.frozenUntil || ball.resetTimer) return false;
+    // Shootout: only the shooter, only once, only in the kick phase.
+    const pen = this.penalties.get(k.squadId);
+    if (pen && (pen.phase !== 'aim' || userId !== pen.shooterId)) return false;
     const last = this.kickAt.get(userId);
     if (last !== undefined && now - last < KICK_COOLDOWN_MS) return false;
     const me = this.squads.get(k.squadId)?.get(userId);
@@ -378,6 +428,11 @@ export class LobbyWorldService implements OnModuleDestroy {
     ball.moving = true;
     this.broadcastBall(ball, now, false, userId, k.seq);
     this.ensureBallTimer();
+    if (pen) {
+      this.penShot.set(k.squadId, { keeperTouched: false });
+      beginFlight(pen, now);
+      this.broadcastPenalty(pen, now);
+    }
     return true;
   }
 
@@ -398,7 +453,10 @@ export class LobbyWorldService implements OnModuleDestroy {
       );
       if (this.stepInfo.toucher >= 0)
         ball.lastTouchBy = this.playerIds[this.stepInfo.toucher];
-      if (events & BALL_EVENT_GOAL) {
+      const pen = this.penalties.get(ball.squadId);
+      if (pen) {
+        if (this.penaltyBallStep(pen, ball, events, now)) continue;
+      } else if (events & BALL_EVENT_GOAL) {
         this.goal(ball, now);
         continue;
       }
@@ -445,6 +503,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   ): void {
     const ball = this.balls.get(squadId);
     if (!ball || ball.moving || ball.resetTimer || m === 0) return;
+    if (this.penalties.has(squadId)) return; // the ball waits on the spot for the kick
     const b = ball.state;
     if (Math.hypot(b.x - x, b.z - z) > WAKE_DISTANCE) return;
     ball.moving = true;
@@ -454,7 +513,10 @@ export class LobbyWorldService implements OnModuleDestroy {
   /** Members as circles for the ball (moving ones extrapolated ≤ 250 ms; the keeper's save radius). */
   private collectPlayers(squadId: string, now: number): number {
     let n = 0;
+    const pen = this.penalties.get(squadId);
     for (const [userId, s] of this.squads.get(squadId) ?? []) {
+      // Shootout: onlookers never touch the ball.
+      if (pen && userId !== pen.shooterId && userId !== pen.keeperId) continue;
       const lead =
         s.m === 0 ? 0 : Math.min(EXTRAPOLATE_S, Math.max(0, now - s.at) / 1000);
       const x = s.x + s.vx * lead;
@@ -584,6 +646,14 @@ export class LobbyWorldService implements OnModuleDestroy {
   memberLeft(squadId: string, userId: string): void {
     this.morphOf.delete(userId);
     this.kickAt.delete(userId);
+    const pen = this.penalties.get(squadId);
+    if (pen) {
+      const now = Date.now();
+      const replay = pen.shooterId === userId || pen.keeperId === userId;
+      removePenaltyPlayer(pen, userId, now);
+      if (replay && pen.phase === 'setup') this.placePenaltyBall(squadId, now);
+      this.broadcastPenalty(pen, now);
+    }
     const members = this.squads.get(squadId);
     if (!members) return;
     members.delete(userId);
@@ -592,6 +662,8 @@ export class LobbyWorldService implements OnModuleDestroy {
 
   /** The squad emptied or was deleted: positions, ball and score go with it. */
   squadEmptied(squadId: string): void {
+    this.penalties.delete(squadId);
+    this.penShot.delete(squadId);
     this.squads.delete(squadId);
     this.dropBall(squadId);
     this.maybeStopSweep();
@@ -628,8 +700,226 @@ export class LobbyWorldService implements OnModuleDestroy {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
     this.stopBallTimer();
+    this.stopPenTimer();
     for (const ball of this.balls.values())
       if (ball.resetTimer) clearTimeout(ball.resetTimer);
+  }
+
+  // ── penalty shootout ──────────────────────────────────────────────────────
+
+  penalty(squadId: string): PenaltyState | null {
+    return this.penalties.get(squadId) ?? null;
+  }
+
+  /**
+   * Starts a shootout for everyone standing in the lobby world (the requester
+   * first, then the others). Refused when one is running, during a goal freeze
+   * or with fewer than two players. The ball goes to the penalty spot.
+   */
+  startPenalty(
+    squadId: string,
+    userId: string,
+    now: number,
+  ): PenaltyView | null {
+    const existing = this.penalties.get(squadId);
+    if (existing && existing.phase !== 'ended') return null;
+    const members = this.squads.get(squadId);
+    if (!members?.has(userId)) return null;
+    const ball = this.ensureBall(squadId);
+    if (ball.resetTimer) return null;
+    const players = [
+      userId,
+      ...[...members.keys()].filter((id) => id !== userId),
+    ];
+    const pen = createPenalty(squadId, userId, players, now);
+    if (!pen) return null;
+    this.penalties.set(squadId, pen);
+    this.placePenaltyBall(squadId, now);
+    this.ensurePenTimer();
+    this.broadcastPenalty(pen, now);
+    return penaltyView(pen, now);
+  }
+
+  /** Any player in the shootout may stop it. */
+  cancelPenalty(squadId: string, userId: string, now: number): boolean {
+    const pen = this.penalties.get(squadId);
+    if (!pen || pen.phase === 'ended' || !pen.order.includes(userId))
+      return false;
+    cancelPenaltyState(pen, now);
+    this.broadcastPenalty(pen, now);
+    return true;
+  }
+
+  /** The shootout's clock (4 Hz while any runs): arrivals, deadlines, the next turn, the end. */
+  tickPenalties(now: number): void {
+    for (const [squadId, pen] of this.penalties) {
+      switch (pen.phase) {
+        case 'setup':
+          if (now >= pen.phaseUntil || this.pairArrived(squadId, pen)) {
+            this.placePenaltyBall(squadId, now);
+            beginAim(pen, now);
+            this.broadcastPenalty(pen, now);
+          }
+          break;
+        case 'aim':
+          if (now >= pen.phaseUntil) this.resolvePenalty(pen, 'timeout', now);
+          break;
+        case 'flight':
+          if (now >= pen.phaseUntil)
+            this.resolvePenalty(pen, this.missOutcome(squadId), now);
+          break;
+        case 'result':
+          if (now >= pen.phaseUntil) {
+            advancePenalty(pen, now);
+            // `advancePenalty` changed the phase (TS still narrows it to 'result' here).
+            if ((pen.phase as string) === 'setup')
+              this.placePenaltyBall(squadId, now);
+            this.broadcastPenalty(pen, now);
+          }
+          break;
+        case 'ended':
+          if (now >= pen.phaseUntil) {
+            this.penalties.delete(squadId);
+            this.penShot.delete(squadId);
+            this.freePlayAgain(squadId, now);
+          }
+          break;
+      }
+    }
+    if (!this.penalties.size) this.stopPenTimer();
+  }
+
+  /**
+   * One ball step during a shootout's kick: a goal scores, a keeper touch is
+   * remembered (a save), a ball that comes to rest or crosses the goal line
+   * wide decides the shot. Returns true when the step was fully handled.
+   */
+  private penaltyBallStep(
+    pen: PenaltyState,
+    ball: BallRuntime,
+    events: number,
+    now: number,
+  ): boolean {
+    if (pen.phase !== 'flight') return false;
+    const shot = this.penShot.get(pen.squadId);
+    if (shot && ball.lastTouchBy === pen.keeperId) shot.keeperTouched = true;
+    const b = ball.state;
+    if (events & BALL_EVENT_GOAL) {
+      ball.moving = false;
+      b.vx = b.vy = b.vz = 0;
+      this.broadcastBall(ball, now, false);
+      this.resolvePenalty(pen, 'goal', now);
+      return true;
+    }
+    // Decided without a goal: past the goal line (wide), coming back out of the
+    // goal end (a save, the post, the wall) or at rest. The first ticks after
+    // the kick are skipped so the strike itself never counts as "coming back".
+    const sinceKick = now - (pen.phaseUntil - FLIGHT_MS);
+    const wide = b.z < GOAL_LINE_Z - 0.3;
+    const back = sinceKick > 250 && b.vz > 0.2;
+    if (wide || back || ballResting(b)) {
+      ball.moving = false;
+      b.vx = b.vy = b.vz = 0;
+      this.broadcastBall(ball, now, false);
+      this.resolvePenalty(pen, this.missOutcome(pen.squadId), now);
+      return true;
+    }
+    return false;
+  }
+
+  private missOutcome(squadId: string): PenaltyOutcome {
+    return this.penShot.get(squadId)?.keeperTouched ? 'saved' : 'missed';
+  }
+
+  private resolvePenalty(
+    pen: PenaltyState,
+    outcome: PenaltyOutcome,
+    now: number,
+  ): void {
+    if (pen.phase !== 'aim' && pen.phase !== 'flight') return;
+    this.penShot.delete(pen.squadId);
+    resolveShot(pen, outcome, now);
+    this.broadcastPenalty(pen, now);
+  }
+
+  /** Are the shooter and the keeper on their spots (server positions)? */
+  private pairArrived(squadId: string, pen: PenaltyState): boolean {
+    const members = this.squads.get(squadId);
+    const s = members?.get(pen.shooterId);
+    const k = members?.get(pen.keeperId);
+    if (!s || !k) return false;
+    return (
+      Math.hypot(s.x - SHOOTER_SPOT.x, s.z - SHOOTER_SPOT.z) <=
+        ARRIVE_DISTANCE &&
+      Math.hypot(k.x - KEEPER_SPOT.x, k.z - KEEPER_SPOT.z) <= ARRIVE_DISTANCE
+    );
+  }
+
+  /** The ball, still, on the penalty spot (broadcast as a placement). */
+  private placePenaltyBall(squadId: string, now: number): void {
+    const ball = this.ensureBall(squadId);
+    if (ball.resetTimer) clearTimeout(ball.resetTimer);
+    ball.resetTimer = null;
+    ball.frozenUntil = 0;
+    ball.moving = false;
+    ball.lastTouchBy = null;
+    resetBall(ball.state, 0);
+    ball.state.x = PENALTY_SPOT.x;
+    ball.state.z = PENALTY_SPOT.z;
+    ball.at = now;
+    this.sink?.toRoom(
+      squadId,
+      'lobby.ball.reset',
+      {
+        type: 'lobby.ball.reset',
+        squadId,
+        st: now,
+        b: [r2(ball.state.x), r2(ball.state.y), r2(ball.state.z), 0, 0, 0],
+      },
+      false,
+    );
+  }
+
+  /** The shootout is over: the ball drops back on the centre spot. */
+  private freePlayAgain(squadId: string, now: number): void {
+    const ball = this.balls.get(squadId);
+    if (!ball) return;
+    resetBall(ball.state);
+    ball.moving = true;
+    ball.lastTouchBy = null;
+    const b = ball.state;
+    this.sink?.toRoom(
+      squadId,
+      'lobby.ball.reset',
+      {
+        type: 'lobby.ball.reset',
+        squadId,
+        st: now,
+        b: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz)],
+      },
+      false,
+    );
+    this.ensureBallTimer();
+  }
+
+  private broadcastPenalty(pen: PenaltyState, now: number): void {
+    this.sink?.toRoom(
+      pen.squadId,
+      'lobby.pen.state',
+      penaltyView(pen, now),
+      false,
+    );
+  }
+
+  private ensurePenTimer(): void {
+    if (this.penTimer) return;
+    this.penTimer = setInterval(() => this.tickPenalties(Date.now()), 250);
+    this.penTimer.unref?.();
+  }
+
+  private stopPenTimer(): void {
+    if (this.penTimer) clearInterval(this.penTimer);
+    this.penTimer = null;
   }
 
   /** Token bucket: LOBBY_MOVE_RATE tokens, refilled continuously. */

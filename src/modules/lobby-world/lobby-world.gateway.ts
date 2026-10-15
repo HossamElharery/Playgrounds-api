@@ -151,6 +151,50 @@ export class LobbyWorldGateway
   }
 
   /**
+   * `lobby.pen.start` { squadId } — a penalty shootout for everyone standing
+   * in the lobby world; `lobby.pen.cancel` { squadId } — any player in it may
+   * stop it. Membership is the room; the service refuses silently (one at a
+   * time, at least two players) and broadcasts `lobby.pen.state` itself.
+   */
+  @SubscribeMessage('lobby.pen.start')
+  penStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: unknown,
+  ): void {
+    const target = this.penTarget(client, data);
+    if (target)
+      this.world.startPenalty(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.pen.cancel')
+  penCancel(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: unknown,
+  ): void {
+    const target = this.penTarget(client, data);
+    if (target)
+      this.world.cancelPenalty(target.squadId, target.userId, Date.now());
+  }
+
+  private penTarget(
+    client: Socket,
+    data: unknown,
+  ): { squadId: string; userId: string } | null {
+    if (!lobbyBallEnabled(this.config)) return null;
+    const userId = authedUserId(client);
+    const squadId = (data as { squadId?: unknown } | null)?.squadId;
+    if (
+      !userId ||
+      typeof squadId !== 'string' ||
+      !squadId ||
+      squadId.length > MAX_ID
+    )
+      return null;
+    if (!client.rooms.has(`squad:${squadId}`)) return null;
+    return { squadId, userId };
+  }
+
+  /**
    * The keeper's bigger save radius needs the member's equipped morph: read
    * once per user (then kept current by MorphsService.equipped$). Only with
    * Lobby Morphs on — with morphs off everybody is the classic avatar.
