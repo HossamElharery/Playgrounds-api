@@ -123,9 +123,9 @@ const HELP_FAQ_ROWS: Omit<HelpFaqSeed, 'ctaPath' | 'ctaLabelEn' | 'ctaLabelAr'>[
     questionEn: 'What is the Matchena wallet?',
     questionAr: 'إيه محفظة ماتشنا؟',
     answerEn:
-      'Your EGP wallet is the prepaid balance for bookings, hour bundles, and memberships. Top up once, then pay in the app. Coins are a separate rewards currency — they are not cash, and they sit next to the wallet, not inside it.',
+      'Your EGP wallet is the prepaid balance for bookings and hour bundles. Top up once, then pay in the app. Coins are a separate rewards currency — they are not cash, and they sit next to the wallet, not inside it.',
     answerAr:
-      'محفظة الجنيه هي رصيدك المدفوع مقدمًا للحجوزات وباقات الساعات والعضويات. اشحن مرة، وادفع من التطبيق. الكوينز عملة مكافآت منفصلة — مش فلوس نقدية، وبتظهر جنب المحفظة مش جواها.',
+      'محفظة الجنيه هي رصيدك المدفوع مقدمًا للحجوزات وباقات الساعات. اشحن مرة، وادفع من التطبيق. الكوينز عملة مكافآت منفصلة — مش فلوس نقدية، وبتظهر جنب المحفظة مش جواها.',
   },
   {
     id: 'faq-coins',

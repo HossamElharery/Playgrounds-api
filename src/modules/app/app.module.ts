@@ -38,7 +38,8 @@ import { AdminModule } from '../admin/admin.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { GamesModule } from '../games/games.module';
 import { BundlesModule } from '../bundles/bundles.module';
-import { MembershipModule } from '../membership/membership.module';
+// Player memberships disabled (no subscription plans offered yet).
+// import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
 import { AiAdminModule } from '../ai/admin/ai-admin.module';
@@ -99,7 +100,7 @@ import { CallsModule } from '../calls/calls.module';
     JobsModule,
     GamesModule,
     BundlesModule,
-    MembershipModule,
+    // MembershipModule,
     TournamentsModule,
     SeoDiscoveryModule,
     PartnerLinksModule,
