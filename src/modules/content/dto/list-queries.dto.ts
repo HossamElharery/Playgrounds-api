@@ -22,6 +22,14 @@ export class ListBlogQueryDto extends PageQueryDto {
   @IsOptional()
   @IsString()
   relatedSportSlug?: string;
+
+  @ApiPropertyOptional({
+    enum: ['true', 'false'],
+    description: 'Card view: omit the article HTML and send readingMinutesAr/En instead (lists stay small).',
+  })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  summary?: 'true' | 'false';
 }
 
 export class ListSupportQueryDto extends PageQueryDto {

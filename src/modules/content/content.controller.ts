@@ -61,7 +61,16 @@ export class ContentController {
       q.categoryId,
       q.relatedSportSlug,
     );
-    return { message: 'ok', result: items, pagination };
+    // Cards show title, cover and reading time, never the article: sending every post's HTML
+    // in both languages made the server-rendered journal page carry ~125 kB of state.
+    const result = q.summary === 'true'
+      ? items.map(({ contentAr, contentEn, ...post }) => ({
+          ...post,
+          readingMinutesAr: readingMinutes(contentAr),
+          readingMinutesEn: readingMinutes(contentEn),
+        }))
+      : items;
+    return { message: 'ok', result, pagination };
   }
 
   @Public()
@@ -254,4 +263,10 @@ export class ContentController {
   markRead(@Param('id') id: string) {
     return this.content.markSupportInquiryRead(id);
   }
+}
+
+/** Words at 200 per minute, at least one minute; same estimate the web app shows. */
+export function readingMinutes(html: string | null | undefined): number {
+  const words = (html ?? '').replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.round(words / 200));
 }
