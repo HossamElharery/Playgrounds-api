@@ -5,11 +5,13 @@ import {
   SETUP_MS,
   advance,
   beginAim,
+  beginDive,
   beginFlight,
   cancel,
   clampToBox,
   createPenalty,
   decidedEarly,
+  divePose,
   penaltyView,
   removePlayer,
   resolveShot,
@@ -29,6 +31,32 @@ function kick(s: PenaltyState, outcome: PenaltyOutcome): void {
 }
 
 describe('penalty rules', () => {
+  it('accepts one keeper dive per shot and follows a bounded 450ms arc', () => {
+    const s = createPenalty('sq', 'a', ['a', 'b'], T)!;
+    expect(beginDive(s, 'b', 1, 0, -6.65, T)).toBe(false);
+    beginAim(s, T);
+    expect(beginDive(s, 'a', 1, 0, -6.65, T)).toBe(false);
+    expect(beginDive(s, 'b', 2, 0, -6.65, T)).toBe(false);
+    expect(beginDive(s, 'b', -1, 0, -6.65, T)).toBe(true);
+    expect(beginDive(s, 'b', 1, 0, -6.65, T)).toBe(false);
+    expect(divePose(s.dive!, T).x).toBe(0);
+    expect(divePose(s.dive!, T + 450).x).toBe(-1.4);
+    expect(divePose(s.dive!, T + 500).locked).toBe(true);
+    expect(divePose(s.dive!, T + 1050).locked).toBe(false);
+    expect(divePose(s.dive!, T + 100).r).toBe(0.55);
+    beginFlight(s, T);
+    expect(beginDive(s, 'b', 0, 0, -6.65, T)).toBe(false);
+    resolveShot(s, 'missed', T);
+    advance(s, T);
+    expect(s.dive).toBeNull();
+  });
+
+  it('centre block stays on the line', () => {
+    const s = createPenalty('sq', 'a', ['a', 'b'], T)!;
+    beginAim(s, T);
+    expect(beginDive(s, 'b', 0, 0.2, -6.65, T)).toBe(true);
+    expect(divePose(s.dive!, T + 450).x).toBe(0.2);
+  });
   it('needs two different players and caps the squad at six', () => {
     expect(createPenalty('sq', 'a', ['a'], T)).toBeNull();
     expect(createPenalty('sq', 'a', ['a', 'a'], T)).toBeNull();

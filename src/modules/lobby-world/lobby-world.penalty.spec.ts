@@ -63,7 +63,10 @@ function setup() {
   const start = (players = ['a', 'b']) => {
     players.forEach((id, i) => move(id, i * 0.9, 1));
     world.snapshot(SQUAD, Date.now(), true);
-    return world.startPenalty(SQUAD, players[0], Date.now());
+    const invite = world.startPenalty(SQUAD, players[0], Date.now());
+    if (!invite) return null;
+    for (const id of players.slice(1)) world.joinPenalty(SQUAD, id, Date.now());
+    return last();
   };
   const toSpots = (shooter: string, keeper: string) => {
     walk(shooter, SHOOTER_SPOT.x, SHOOTER_SPOT.z);
@@ -76,6 +79,39 @@ function setup() {
 describe('LobbyWorldService — penalty shootout', () => {
   beforeEach(() => jest.useFakeTimers({ now: T0 }));
   afterEach(() => jest.useRealTimers());
+
+  it('invites players without moving the ball, and cancels if nobody joins', () => {
+    const { world, move, last } = setup();
+    move('a', 0, 1);
+    move('b', 0.9, 1);
+    world.snapshot(SQUAD, Date.now(), true);
+    const before = world.ballState(SQUAD)!;
+    expect(world.startPenalty(SQUAD, 'a', Date.now())?.phase).toBe('gathering');
+    const during = world.ballState(SQUAD)!;
+    expect([during.x, during.z]).toEqual([before.x, before.z]);
+    expect(world.declinePenalty(SQUAD, 'b', Date.now())).toBe(true);
+    expect(last().phase).toBe('ended');
+    expect(last().cancelled).toBe(true);
+    world.onModuleDestroy();
+  });
+
+  it('validates keeper dive once and keeps its arc authoritative against movement packets', () => {
+    const { world, start, toSpots, move, kick, last } = setup();
+    start();
+    toSpots('a', 'b');
+    const now = Date.now();
+    expect(world.divePenalty(SQUAD, 'a', -1, now)).toBe(false);
+    expect(world.divePenalty(SQUAD, 'b', -1, now)).toBe(true);
+    expect(world.divePenalty(SQUAD, 'b', 1, now)).toBe(false);
+    jest.advanceTimersByTime(250);
+    const corrected = move('b', 1.5, KEEPER_SPOT.z);
+    expect(corrected?.correction?.x).toBeLessThan(0);
+    expect(last().dive?.dir).toBe(-1);
+    expect(kick('a', 0.18, -0.984, 0.7)).toBe(true);
+    jest.advanceTimersByTime(1600);
+    expect(last().lastOutcome).toBe('goal'); // the shot went opposite the dive
+    world.onModuleDestroy();
+  });
 
   it('needs two players in the lobby world; the ball goes to the spot', () => {
     const { world, move, start } = setup();
@@ -197,7 +233,7 @@ describe('LobbyWorldService — penalty shootout', () => {
     expect(world.penalty(SQUAD)).toBeNull();
     const reset = out
       .filter((o) => o.event === 'lobby.ball.reset')
-      .at(-1)!.payload;
+      .at(-1)!.payload as { b: number[] };
     expect([reset.b[0], reset.b[2]]).toEqual([0, 0]);
     world.onModuleDestroy();
   });

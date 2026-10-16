@@ -176,6 +176,29 @@ export class LobbyWorldGateway
       this.world.cancelPenalty(target.squadId, target.userId, Date.now());
   }
 
+  @SubscribeMessage('lobby.pen.dive')
+  penDive(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: unknown,
+  ): void {
+    const target = this.penTarget(client, data);
+    const dir = (data as { dir?: unknown } | null)?.dir;
+    if (target && (dir === -1 || dir === 0 || dir === 1))
+      this.world.divePenalty(target.squadId, target.userId, dir, Date.now());
+  }
+
+  @SubscribeMessage('lobby.pen.join')
+  penJoin(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.joinPenalty(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.pen.decline')
+  penDecline(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.declinePenalty(target.squadId, target.userId, Date.now());
+  }
+
   private penTarget(
     client: Socket,
     data: unknown,

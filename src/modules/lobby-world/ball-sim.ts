@@ -132,6 +132,7 @@ export function kickBall(
   dirX: number,
   dirZ: number,
   power: number,
+  lift?: number,
 ): boolean {
   const len = hypot2(dirX, dirZ);
   if (!(len > 1e-6) || !Number.isFinite(len)) return false;
@@ -139,7 +140,12 @@ export function kickBall(
   const speed = KICK_BASE_SPEED + KICK_POWER_SPEED * p;
   b.vx = (dirX / len) * speed;
   b.vz = (dirZ / len) * speed;
-  if (p > KICK_CHIP_POWER) b.vy = KICK_CHIP_LIFT;
+  if (lift !== undefined && Number.isFinite(lift)) {
+    const l = Math.min(1, Math.max(0, lift));
+    b.vy = l * (3.8 + 1.6 * p);
+    // A gentle central shot arcs over a keeper who committed early.
+    if (p < 0.2 && Math.abs(dirX / len) < 0.12 && l < 0.35) b.vy = 2.2;
+  } else if (p > KICK_CHIP_POWER) b.vy = KICK_CHIP_LIFT;
   else if (ballOnGround(b)) b.vy = 0;
   return true;
 }

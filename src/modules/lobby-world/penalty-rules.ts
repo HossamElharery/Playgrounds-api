@@ -40,12 +40,37 @@ export const FLIGHT_MS = 3500;
 export const RESULT_MS = 2600;
 /** The final table stays up this long before free play resumes. */
 export const ENDED_MS = 9000;
+export const GATHERING_MS = 12000;
 export const PENALTY_MIN_PLAYERS = 2;
 export const PENALTY_MAX_PLAYERS = 6;
 /** Sudden-death rounds before a still-level shootout is shared. */
 export const MAX_SUDDEN_DEATH_ROUNDS = 3;
+export const DIVE_DISTANCE = 1.4;
+export const DIVE_MS = 450;
+export const DIVE_GROUND_MS = 600;
 
-export type PenaltyPhase = 'setup' | 'aim' | 'flight' | 'result' | 'ended';
+export interface PenaltyDive {
+  dir: -1 | 0 | 1;
+  at: number;
+  x: number;
+  z: number;
+  finished: boolean;
+}
+
+/** The authoritative keeper pose. No client movement can extend the dive. */
+export function divePose(dive: PenaltyDive, now: number): { x: number; z: number; r: number; locked: boolean } {
+  const elapsed = Math.max(0, now - dive.at);
+  const t = Math.min(1, elapsed / DIVE_MS);
+  const eased = 1 - (1 - t) * (1 - t) * (1 - t);
+  return {
+    x: Math.max(KEEPER_BOX.minX, Math.min(KEEPER_BOX.maxX, dive.x + dive.dir * DIVE_DISTANCE * eased)),
+    z: dive.z,
+    r: elapsed < DIVE_MS + DIVE_GROUND_MS ? 0.55 : 0.3,
+    locked: elapsed < DIVE_MS + DIVE_GROUND_MS,
+  };
+}
+
+export type PenaltyPhase = 'gathering' | 'setup' | 'aim' | 'flight' | 'result' | 'ended';
 export type PenaltyOutcome = 'goal' | 'saved' | 'missed' | 'timeout';
 
 export interface PenaltyState {
@@ -53,6 +78,9 @@ export interface PenaltyState {
   starterId: string;
   /** Everyone taking part, in kicking order. */
   order: string[];
+  candidates: string[];
+  accepted: string[];
+  declined: string[];
   /** Shots each player takes before sudden death. */
   rounds: number;
   /** Kicks each kicker has taken in the current stage (regular, or this sudden-death round). */
@@ -68,9 +96,11 @@ export interface PenaltyState {
   goals: Record<string, number>;
   shots: Record<string, PenaltyOutcome[]>;
   lastOutcome: PenaltyOutcome | null;
+  lastPanenka: boolean;
   lastShooterId: string | null;
   winners: string[];
   cancelled: boolean;
+  dive: PenaltyDive | null;
   /** Increments on every change (clients ignore stale states). */
   rev: number;
 }
@@ -98,6 +128,9 @@ export function createPenalty(
     squadId,
     starterId,
     order,
+    candidates: [...order],
+    accepted: [...order],
+    declined: [],
     rounds: roundsFor(order.length),
     stageShots: Object.fromEntries(order.map((id) => [id, 0])),
     kickers: [...order],
@@ -109,9 +142,11 @@ export function createPenalty(
     goals,
     shots,
     lastOutcome: null,
+    lastPanenka: false,
     lastShooterId: null,
     winners: [],
     cancelled: false,
+    dive: null,
     rev: 0,
   };
   beginTurn(s, now);
@@ -130,6 +165,8 @@ function stageKicks(s: PenaltyState): number {
  * keeps goal in turn, and nobody ever keeps against themselves).
  */
 export function beginTurn(s: PenaltyState, now: number): void {
+  s.dive = null;
+  s.lastPanenka = false;
   let shooter = s.kickers[0];
   for (const id of s.kickers)
     if ((s.stageShots[id] ?? 0) < (s.stageShots[shooter] ?? 0)) shooter = id;
@@ -147,6 +184,14 @@ export function beginAim(s: PenaltyState, now: number): void {
   s.phase = 'aim';
   s.phaseUntil = now + AIM_MS;
   s.rev++;
+}
+
+/** Once per kick, including an early guess during aim. */
+export function beginDive(s: PenaltyState, userId: string, dir: number, x: number, z: number, now: number): boolean {
+  if (userId !== s.keeperId || (s.phase !== 'aim' && s.phase !== 'flight') || s.dive || !Number.isInteger(dir) || dir < -1 || dir > 1) return false;
+  s.dive = { dir: dir as -1 | 0 | 1, at: now, x, z, finished: false };
+  s.rev++;
+  return true;
 }
 
 export function beginFlight(s: PenaltyState, now: number): void {
@@ -279,6 +324,9 @@ export interface PenaltyView {
   phase: PenaltyPhase;
   phaseUntil: number;
   order: string[];
+  candidates?: string[];
+  accepted?: string[];
+  declined?: string[];
   kickers: string[];
   rounds: number;
   suddenDeath: number;
@@ -287,9 +335,11 @@ export interface PenaltyView {
   goals: Record<string, number>;
   shots: Record<string, PenaltyOutcome[]>;
   lastOutcome: PenaltyOutcome | null;
+  lastPanenka?: boolean;
   lastShooterId: string | null;
   winners: string[];
   cancelled: boolean;
+  dive?: PenaltyDive | null;
   starterId: string;
 }
 
@@ -302,6 +352,9 @@ export function penaltyView(s: PenaltyState, now: number): PenaltyView {
     phase: s.phase,
     phaseUntil: s.phaseUntil,
     order: [...s.order],
+    candidates: [...s.candidates],
+    accepted: [...s.accepted],
+    declined: [...s.declined],
     kickers: [...s.kickers],
     rounds: s.rounds,
     suddenDeath: s.suddenDeath,
@@ -312,9 +365,11 @@ export function penaltyView(s: PenaltyState, now: number): PenaltyView {
       Object.entries(s.shots).map(([k, v]) => [k, [...v]]),
     ),
     lastOutcome: s.lastOutcome,
+    lastPanenka: s.lastPanenka,
     lastShooterId: s.lastShooterId,
     winners: [...s.winners],
     cancelled: s.cancelled,
+    dive: s.dive ? { ...s.dive } : null,
     starterId: s.starterId,
   };
 }

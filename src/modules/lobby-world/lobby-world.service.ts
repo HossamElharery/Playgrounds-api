@@ -17,6 +17,7 @@ import {
 import {
   ARRIVE_DISTANCE,
   FLIGHT_MS,
+  GATHERING_MS,
   KEEPER_BOX,
   KEEPER_SPOT,
   PENALTY_SPOT,
@@ -24,10 +25,12 @@ import {
   SHOOTER_SPOT,
   advance as advancePenalty,
   beginAim,
+  beginDive,
   beginFlight,
   cancel as cancelPenaltyState,
   clampToBox,
   createPenalty,
+  divePose,
   penaltyView,
   removePlayer as removePenaltyPlayer,
   resolveShot,
@@ -167,6 +170,7 @@ export interface KickInput {
   dirX: number;
   dirZ: number;
   power: number;
+  lift?: number;
 }
 
 interface BallRuntime {
@@ -262,6 +266,12 @@ export class LobbyWorldService implements OnModuleDestroy {
         z = round2(clamped.z);
         correction = { x, z };
       }
+      if (userId === pen.keeperId && pen.dive && !pen.dive.finished) {
+        const pose = divePose(pen.dive, now);
+        x = round2(pose.x);
+        z = round2(pose.z);
+        correction = { x, z };
+      }
     }
 
     if (!members) {
@@ -271,8 +281,8 @@ export class LobbyWorldService implements OnModuleDestroy {
     members.set(userId, {
       x,
       z,
-      vx: move.vx,
-      vz: move.vz,
+      vx: pen?.dive && userId === pen.keeperId && !pen.dive.finished ? 0 : move.vx,
+      vz: pen?.dive && userId === pen.keeperId && !pen.dive.finished ? 0 : move.vz,
       h: move.h,
       m: move.m,
       seq: move.seq,
@@ -290,8 +300,8 @@ export class LobbyWorldService implements OnModuleDestroy {
       seq: move.seq,
       x,
       z,
-      vx: move.vx,
-      vz: move.vz,
+      vx: pen?.dive && userId === pen.keeperId && !pen.dive.finished ? 0 : move.vx,
+      vz: pen?.dive && userId === pen.keeperId && !pen.dive.finished ? 0 : move.vz,
       h: move.h,
       m: move.m,
       st: now,
@@ -410,7 +420,7 @@ export class LobbyWorldService implements OnModuleDestroy {
     if (!ball || now < ball.frozenUntil || ball.resetTimer) return false;
     // Shootout: only the shooter, only once, only in the kick phase.
     const pen = this.penalties.get(k.squadId);
-    if (pen && (pen.phase !== 'aim' || userId !== pen.shooterId)) return false;
+    if (pen && pen.phase !== 'gathering' && (pen.phase !== 'aim' || userId !== pen.shooterId)) return false;
     const last = this.kickAt.get(userId);
     if (last !== undefined && now - last < KICK_COOLDOWN_MS) return false;
     const me = this.squads.get(k.squadId)?.get(userId);
@@ -421,14 +431,15 @@ export class LobbyWorldService implements OnModuleDestroy {
     const pz = me.z + me.vz * lead;
     const b = ball.state;
     if (Math.hypot(b.x - px, b.z - pz) > KICK_MAX_DISTANCE) return false;
-    if (!kickBall(b, k.dirX, k.dirZ, k.power)) return false;
+    if (!kickBall(b, k.dirX, k.dirZ, k.power, pen ? k.lift : undefined)) return false;
+    if (pen) pen.lastPanenka = k.power < 0.2 && Math.abs(k.dirX) < 0.12 && (k.lift ?? 0) < 0.35;
     this.kickAt.set(userId, now);
     ball.at = now;
     ball.lastTouchBy = userId;
     ball.moving = true;
     this.broadcastBall(ball, now, false, userId, k.seq);
     this.ensureBallTimer();
-    if (pen) {
+    if (pen && pen.phase !== 'gathering') {
       this.penShot.set(k.squadId, { keeperTouched: false });
       beginFlight(pen, now);
       this.broadcastPenalty(pen, now);
@@ -454,7 +465,7 @@ export class LobbyWorldService implements OnModuleDestroy {
       if (this.stepInfo.toucher >= 0)
         ball.lastTouchBy = this.playerIds[this.stepInfo.toucher];
       const pen = this.penalties.get(ball.squadId);
-      if (pen) {
+      if (pen && pen.phase !== 'gathering') {
         if (this.penaltyBallStep(pen, ball, events, now)) continue;
       } else if (events & BALL_EVENT_GOAL) {
         this.goal(ball, now);
@@ -503,7 +514,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   ): void {
     const ball = this.balls.get(squadId);
     if (!ball || ball.moving || ball.resetTimer || m === 0) return;
-    if (this.penalties.has(squadId)) return; // the ball waits on the spot for the kick
+    if (this.penalties.get(squadId)?.phase !== 'gathering' && this.penalties.has(squadId)) return; // the ball waits on the spot for the kick
     const b = ball.state;
     if (Math.hypot(b.x - x, b.z - z) > WAKE_DISTANCE) return;
     ball.moving = true;
@@ -513,7 +524,8 @@ export class LobbyWorldService implements OnModuleDestroy {
   /** Members as circles for the ball (moving ones extrapolated ≤ 250 ms; the keeper's save radius). */
   private collectPlayers(squadId: string, now: number): number {
     let n = 0;
-    const pen = this.penalties.get(squadId);
+    const activePen = this.penalties.get(squadId);
+    const pen = activePen?.phase === 'gathering' ? undefined : activePen;
     for (const [userId, s] of this.squads.get(squadId) ?? []) {
       // Shootout: onlookers never touch the ball.
       if (pen && userId !== pen.shooterId && userId !== pen.keeperId) continue;
@@ -528,11 +540,12 @@ export class LobbyWorldService implements OnModuleDestroy {
         p = { x: 0, z: 0, vx: 0, vz: 0, r: BODY_RADIUS };
         this.players[n] = p;
       }
-      p.x = x;
-      p.z = z;
-      p.vx = s.m === 0 ? 0 : s.vx;
-      p.vz = s.m === 0 ? 0 : s.vz;
-      p.r = keeper ? BODY_RADIUS * KEEPER_SAVE_SCALE : BODY_RADIUS;
+      const dive = pen && userId === pen.keeperId && pen.dive && !pen.dive.finished ? divePose(pen.dive, now) : null;
+      p.x = dive?.x ?? x;
+      p.z = dive?.z ?? z;
+      p.vx = dive ? 0 : s.m === 0 ? 0 : s.vx;
+      p.vz = dive ? 0 : s.m === 0 ? 0 : s.vz;
+      p.r = dive?.r ?? (pen && userId === pen.keeperId ? 0.3 : keeper ? BODY_RADIUS * KEEPER_SAVE_SCALE : BODY_RADIUS);
       this.playerIds[n] = userId;
       n++;
     }
@@ -649,9 +662,18 @@ export class LobbyWorldService implements OnModuleDestroy {
     const pen = this.penalties.get(squadId);
     if (pen) {
       const now = Date.now();
-      const replay = pen.shooterId === userId || pen.keeperId === userId;
-      removePenaltyPlayer(pen, userId, now);
-      if (replay && pen.phase === 'setup') this.placePenaltyBall(squadId, now);
+      if (pen.phase === 'gathering') {
+        pen.candidates = pen.candidates.filter(id => id !== userId);
+        pen.accepted = pen.accepted.filter(id => id !== userId);
+        pen.declined = pen.declined.filter(id => id !== userId);
+        pen.rev++;
+        if (userId === pen.starterId) cancelPenaltyState(pen, now);
+        else this.maybeBeginGathered(pen, now);
+      } else {
+        const replay = pen.shooterId === userId || pen.keeperId === userId;
+        removePenaltyPlayer(pen, userId, now);
+        if (replay && pen.phase === 'setup') this.placePenaltyBall(squadId, now);
+      }
       this.broadcastPenalty(pen, now);
     }
     const members = this.squads.get(squadId);
@@ -733,8 +755,10 @@ export class LobbyWorldService implements OnModuleDestroy {
     ];
     const pen = createPenalty(squadId, userId, players, now);
     if (!pen) return null;
+    pen.phase = 'gathering';
+    pen.phaseUntil = now + GATHERING_MS;
+    pen.accepted = [userId];
     this.penalties.set(squadId, pen);
-    this.placePenaltyBall(squadId, now);
     this.ensurePenTimer();
     this.broadcastPenalty(pen, now);
     return penaltyView(pen, now);
@@ -743,9 +767,60 @@ export class LobbyWorldService implements OnModuleDestroy {
   /** Any player in the shootout may stop it. */
   cancelPenalty(squadId: string, userId: string, now: number): boolean {
     const pen = this.penalties.get(squadId);
-    if (!pen || pen.phase === 'ended' || !pen.order.includes(userId))
+    if (!pen || pen.phase === 'ended' || !pen.order.includes(userId)
+      || (pen.phase === 'gathering' && userId !== pen.starterId))
       return false;
     cancelPenaltyState(pen, now);
+    this.broadcastPenalty(pen, now);
+    return true;
+  }
+
+  joinPenalty(squadId: string, userId: string, now: number): boolean {
+    const pen = this.penalties.get(squadId);
+    if (!pen || pen.phase !== 'gathering' || !pen.candidates.includes(userId) || pen.declined.includes(userId)) return false;
+    if (!pen.accepted.includes(userId)) pen.accepted.push(userId);
+    pen.rev++;
+    this.broadcastPenalty(pen, now);
+    this.maybeBeginGathered(pen, now);
+    return true;
+  }
+
+  declinePenalty(squadId: string, userId: string, now: number): boolean {
+    const pen = this.penalties.get(squadId);
+    if (!pen || pen.phase !== 'gathering' || !pen.candidates.includes(userId)) return false;
+    pen.accepted = pen.accepted.filter(id => id !== userId);
+    if (!pen.declined.includes(userId)) pen.declined.push(userId);
+    pen.rev++;
+    this.broadcastPenalty(pen, now);
+    this.maybeBeginGathered(pen, now);
+    return true;
+  }
+
+  private maybeBeginGathered(pen: PenaltyState, now: number): void {
+    if (pen.phase !== 'gathering') return;
+    const allAnswered = pen.candidates.every(id => pen.accepted.includes(id) || pen.declined.includes(id));
+    if (!allAnswered && now < pen.phaseUntil) return;
+    if (pen.accepted.length < 2) {
+      cancelPenaltyState(pen, now);
+      this.broadcastPenalty(pen, now);
+      return;
+    }
+    const match = createPenalty(pen.squadId, pen.starterId, pen.accepted, now);
+    if (!match) return;
+    match.candidates = [...pen.candidates];
+    match.accepted = [...pen.accepted];
+    match.declined = [...pen.declined];
+    match.rev = pen.rev + 1;
+    this.penalties.set(pen.squadId, match);
+    this.placePenaltyBall(pen.squadId, now);
+    this.broadcastPenalty(match, now);
+  }
+
+  /** One server-authoritative keeper dive per shot. */
+  divePenalty(squadId: string, userId: string, dir: number, now: number): boolean {
+    const pen = this.penalties.get(squadId);
+    const keeper = this.squads.get(squadId)?.get(userId);
+    if (!pen || !keeper || !beginDive(pen, userId, dir, keeper.x, keeper.z, now)) return false;
     this.broadcastPenalty(pen, now);
     return true;
   }
@@ -753,7 +828,23 @@ export class LobbyWorldService implements OnModuleDestroy {
   /** The shootout's clock (4 Hz while any runs): arrivals, deadlines, the next turn, the end. */
   tickPenalties(now: number): void {
     for (const [squadId, pen] of this.penalties) {
+      if (pen.dive && !pen.dive.finished && !divePose(pen.dive, now).locked) {
+        const keeper = this.squads.get(squadId)?.get(pen.keeperId);
+        if (keeper) {
+          keeper.x = round2(divePose(pen.dive, now).x);
+          keeper.z = round2(pen.dive.z);
+          keeper.vx = keeper.vz = 0;
+          keeper.m = 0;
+          keeper.at = now;
+        }
+        pen.dive.finished = true;
+        pen.rev++;
+        this.broadcastPenalty(pen, now);
+      }
       switch (pen.phase) {
+        case 'gathering':
+          this.maybeBeginGathered(pen, now);
+          break;
         case 'setup':
           if (now >= pen.phaseUntil || this.pairArrived(squadId, pen)) {
             this.placePenaltyBall(squadId, now);
