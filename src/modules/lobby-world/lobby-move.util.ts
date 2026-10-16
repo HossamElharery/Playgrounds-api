@@ -113,15 +113,17 @@ export function parseLobbyKick(data: unknown): {
   dirX: number;
   dirZ: number;
   power: number;
+  lift?: number;
 } | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
   const squadId = d['squadId'];
   if (typeof squadId !== 'string' || !squadId || squadId.length > MAX_ID)
     return null;
-  const { seq, dirX, dirZ, power } = d;
+  const { seq, dirX, dirZ, power, lift } = d;
   if (!finite(seq) || !finite(dirX) || !finite(dirZ) || !finite(power))
     return null;
+  if (lift !== undefined && !finite(lift)) return null;
   const len = Math.hypot(dirX, dirZ);
   if (!(len >= MIN_KICK_DIR)) return null;
   return {
@@ -130,6 +132,7 @@ export function parseLobbyKick(data: unknown): {
     dirX: dirX / len,
     dirZ: dirZ / len,
     power: Math.min(1, Math.max(0, power)),
+    ...(lift === undefined ? {} : { lift: Math.min(1, Math.max(0, lift as number)) }),
   };
 }
 

@@ -30,7 +30,7 @@ type Scenario = {
   name: string;
   start: Vec;
   reset: boolean;
-  kick: { dirX: number; dirZ: number; power: number } | null;
+  kick: { dirX: number; dirZ: number; power: number; lift?: number } | null;
   players: BallPlayer[];
   movePlayers: boolean;
   jump?: { step: number; dx: number; dz: number } | null;
@@ -86,7 +86,7 @@ describe('ball-sim', () => {
         const b: BallState = { ...s.start };
         const players = s.players.map((p) => ({ ...p }));
         if (s.reset) resetBall(b);
-        if (s.kick) kickBall(b, s.kick.dirX, s.kick.dirZ, s.kick.power);
+        if (s.kick) kickBall(b, s.kick.dirX, s.kick.dirZ, s.kick.power, s.kick.lift);
         const info = { toucher: -1 };
         const dt = fixture.dt;
         const drift: string[] = [];
