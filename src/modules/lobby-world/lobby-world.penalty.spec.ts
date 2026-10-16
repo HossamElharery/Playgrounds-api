@@ -95,6 +95,16 @@ describe('LobbyWorldService — penalty shootout', () => {
     world.onModuleDestroy();
   });
 
+  it('assigns sidelines to waiting players and corrects entry into the penalty area', () => {
+    const { world, start, toSpots, move, last } = setup();
+    start(['a', 'b', 'c']);
+    expect(last().spectatorSpots?.c).toEqual({ x: -3.5, z: -0.3 });
+    toSpots('a', 'b');
+    const correction = move('c', 0, PENALTY_SPOT.z);
+    expect(correction?.correction?.x).toBe(-2.2);
+    world.onModuleDestroy();
+  });
+
   it('validates keeper dive once and keeps its arc authoritative against movement packets', () => {
     const { world, start, toSpots, move, kick, last } = setup();
     start();

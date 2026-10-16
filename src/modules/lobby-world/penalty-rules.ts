@@ -81,6 +81,7 @@ export interface PenaltyState {
   candidates: string[];
   accepted: string[];
   declined: string[];
+  spectatorSpots: Record<string, { x: number; z: number }>;
   /** Shots each player takes before sudden death. */
   rounds: number;
   /** Kicks each kicker has taken in the current stage (regular, or this sudden-death round). */
@@ -131,6 +132,7 @@ export function createPenalty(
     candidates: [...order],
     accepted: [...order],
     declined: [],
+    spectatorSpots: Object.fromEntries(order.map((id, i) => [id, { x: i % 2 === 0 ? -3.5 : 3.5, z: Math.round((-1.5 + Math.floor(i / 2) * 1.2) * 100) / 100 }])),
     rounds: roundsFor(order.length),
     stageShots: Object.fromEntries(order.map((id) => [id, 0])),
     kickers: [...order],
@@ -327,6 +329,7 @@ export interface PenaltyView {
   candidates?: string[];
   accepted?: string[];
   declined?: string[];
+  spectatorSpots?: Record<string, { x: number; z: number }>;
   kickers: string[];
   rounds: number;
   suddenDeath: number;
@@ -355,6 +358,7 @@ export function penaltyView(s: PenaltyState, now: number): PenaltyView {
     candidates: [...s.candidates],
     accepted: [...s.accepted],
     declined: [...s.declined],
+    spectatorSpots: { ...s.spectatorSpots },
     kickers: [...s.kickers],
     rounds: s.rounds,
     suddenDeath: s.suddenDeath,

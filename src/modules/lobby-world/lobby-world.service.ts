@@ -272,6 +272,12 @@ export class LobbyWorldService implements OnModuleDestroy {
         z = round2(pose.z);
         correction = { x, z };
       }
+      // Participants waiting for their turn stay outside the penalty area.
+      if (pen.order.includes(userId) && userId !== pen.shooterId && userId !== pen.keeperId
+        && Math.abs(x) < 2.2 && z > GOAL_LINE_Z - 0.2 && z < PENALTY_SPOT.z + 0.5) {
+        x = pen.spectatorSpots[userId]?.x < 0 ? -2.2 : 2.2;
+        correction = { x, z };
+      }
     }
 
     if (!members) {
