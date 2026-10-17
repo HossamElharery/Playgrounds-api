@@ -17,6 +17,8 @@ import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { ContentService } from './content.service';
+import { join } from 'node:path';
+import { enrichArticleImages } from './blog-images';
 import { CreateBlogPostDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateBlogCategoryDto } from './dto/blog-category.dto';
 import { UpsertBannerDto } from './dto/banner.dto';
@@ -63,13 +65,14 @@ export class ContentController {
     );
     // Cards show title, cover and reading time, never the article: sending every post's HTML
     // in both languages made the server-rendered journal page carry ~125 kB of state.
-    const result = q.summary === 'true'
-      ? items.map(({ contentAr, contentEn, ...post }) => ({
-          ...post,
-          readingMinutesAr: readingMinutes(contentAr),
-          readingMinutesEn: readingMinutes(contentEn),
-        }))
-      : items;
+    const result =
+      q.summary === 'true'
+        ? items.map(({ contentAr, contentEn, ...post }) => ({
+            ...post,
+            readingMinutesAr: readingMinutes(contentAr),
+            readingMinutesEn: readingMinutes(contentEn),
+          }))
+        : items;
     return { message: 'ok', result, pagination };
   }
 
@@ -95,8 +98,22 @@ export class ContentController {
     description:
       'Each post has titleEn/titleAr, subtitleEn/subtitleAr, contentEn/contentAr. Pick the pair that matches the UI locale.',
   })
-  getBlog(@Param('slugOrId') slugOrId: string) {
-    return this.content.getBlogPost(slugOrId, true);
+  async getBlog(@Param('slugOrId') slugOrId: string) {
+    const post = await this.content.getBlogPost(slugOrId, true);
+    const uploadsRoot = join(process.cwd(), 'uploads');
+    return {
+      ...post,
+      contentAr: await enrichArticleImages(
+        post.contentAr ?? '',
+        post.titleAr ?? '',
+        uploadsRoot,
+      ),
+      contentEn: await enrichArticleImages(
+        post.contentEn ?? '',
+        post.titleEn ?? '',
+        uploadsRoot,
+      ),
+    };
   }
 
   @ApiBearerAuth()
@@ -267,6 +284,10 @@ export class ContentController {
 
 /** Words at 200 per minute, at least one minute; same estimate the web app shows. */
 export function readingMinutes(html: string | null | undefined): number {
-  const words = (html ?? '').replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  const words = (html ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
   return Math.max(1, Math.round(words / 200));
 }
