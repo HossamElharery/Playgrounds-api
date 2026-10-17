@@ -8,12 +8,12 @@ const sharp: typeof import('sharp').default = require('sharp');
 /**
  * Responsive WebP variants for local image uploads (blog, venue photos, avatars, feed and chat images).
  *
- * `/uploads/venues/<id>.png` → `/uploads/venues/w640/<id>.webp` (also w1280, w1920; avatars get 128/256/512).
+ * `/uploads/venues/<id>.png` → `/uploads/venues/w640/<id>.webp` (also w960, w1280, w1920; avatars get 128/256/512).
  * The URL is derived from the original, so the frontend can build a `srcset` without a schema change.
  * A variant is written to disk the first time it is requested (or on upload / by the backfill script);
  * after that `express.static` serves it like any other upload. Originals are never touched.
  */
-const PHOTO_WIDTHS = [640, 1280, 1920] as const;
+const PHOTO_WIDTHS = [640, 960, 1280, 1920] as const;
 const AVATAR_WIDTHS = [128, 256, 512] as const;
 
 /** Upload folders whose images get variants, and the widths each one is cut at. */
