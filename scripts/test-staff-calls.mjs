@@ -1,9 +1,3 @@
-// End-to-end check of owner/staff calls against a LOCAL API with the demo data (owner@, reception@,
-// player0@ matchena.com / Password123!) and STAFF_CALLS_ENABLED=true. Real sockets, real REST.
-//
-//   API=http://localhost:3000 node scripts/test-staff-calls.mjs
-//
-// socket.io-client comes from the Angular app's node_modules (the API does not depend on it).
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -131,7 +125,6 @@ await rec('POST', '/calls/recent/seen');
 r = await rec('GET', '/calls/recent');
 ok(r.body.missedUnseen === 0, 'opening recent clears the badge');
 
-// A call with no device acknowledgement must not invent a missed call for the callee.
 r = await owner('POST', '/calls', { calleeId: reception.id });
 const unreachedId = r.body.call.id;
 await owner('POST', `/calls/${unreachedId}/cancel`);
@@ -140,7 +133,6 @@ ok(!history.body.items.some((i) => i.id === unreachedId), 'unconfirmed call is a
 history = await owner('GET', '/calls/recent');
 ok(history.body.items.some((i) => i.id === unreachedId && i.status === 'failed'), 'caller sees failed delivery');
 
-// The HTTP acknowledgement is the fallback when the callee socket is reconnecting.
 O.got.length = 0;
 r = await owner('POST', '/calls', { calleeId: reception.id });
 const httpAckId = r.body.call.id;
@@ -151,14 +143,12 @@ history = await rec('GET', '/calls/recent');
 ok(history.body.items.some((i) => i.id === httpAckId && i.status === 'cancelled'), 'HTTP-confirmed ring becomes a missed call');
 await rec('POST', '/calls/recent/seen');
 
-// DND
 r = await rec('PUT', '/calls/dnd', { minutes: 30 });
 ok(r.status === 200 && !!r.body.dndUntil, 'do-not-disturb on');
 r = await owner('POST', '/calls', { calleeId: reception.id });
 ok(r.body.call.status === 'unavailable', 'DND -> unavailable');
 await rec('PUT', '/calls/dnd', { minutes: 0 });
 
-// ---- platform admin: may call any owner / staff member, nobody may call the admin ----
 const adminTok = await login('admin@matchena.com');
 const admin = api(adminTok);
 const A = socket(adminTok); await sleep(500);

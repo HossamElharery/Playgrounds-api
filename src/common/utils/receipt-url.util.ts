@@ -8,11 +8,6 @@ function hasControlOrBackslash(value: string): boolean {
   return false;
 }
 
-/**
- * Receipts must be files we stored ourselves: a `/uploads/...` path (or the
- * configured public storage base) with a safe image/PDF extension, no query
- * string, fragment, traversal, or protocol-relative tricks.
- */
 export function isSafeReceiptUrl(url: string, publicBase?: string): boolean {
   if (!url || url.length > 500 || hasControlOrBackslash(url)) return false;
   let path: string;

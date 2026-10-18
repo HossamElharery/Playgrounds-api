@@ -9,12 +9,6 @@ import { Observable, from, of } from 'rxjs';
 import { switchMap, tap } from 'rxjs/operators';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
-/**
- * Reads `Idempotency-Key` on mutating requests (bookings, chat messages,
- * pulse claims). First call executes and stores the response; a retried
- * call with the same key + user returns the stored response instead of
- * re-running the mutation. Required by PROJECT_BLUEPRINT.md §16.5 / §19.3.
- */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
   constructor(private readonly prisma: PrismaService) {}

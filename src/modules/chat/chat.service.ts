@@ -43,9 +43,6 @@ export class ChatService {
       where: { id: toId },
       select: { messagePolicy: true, status: true, isGuest: true },
     });
-    // A guest has no client access to /chat (blocked by AuthGuard) and no
-    // way back once their session ends, so a thread with one would sit
-    // permanently unread on both sides.
     if (!to || to.status !== 'active' || to.isGuest)
       throw new NotFoundException('Player not found');
     const policy = to?.messagePolicy ?? 'everyone';
@@ -159,8 +156,6 @@ export class ChatService {
 
   async findOrCreateTeamThread(userId: string, teamId: string, title?: string) {
     const threadId = await this.prisma.$transaction(async (tx) => {
-      // Use the same lock as membership changes, so opening chat cannot restore
-      // a participant concurrently removed by leaving or archiving the team.
       await tx.$executeRaw`SELECT 1 FROM "Team" WHERE "id" = ${teamId} FOR UPDATE`;
       const member = await tx.teamMember.findUnique({
         where: { teamId_userId: { teamId, userId } },
@@ -362,8 +357,6 @@ export class ChatService {
       (args) =>
         this.prisma.chatMessage.findMany({
           where: { threadId },
-          // UUID ids are random and cannot represent chronology. Keep newest
-          // first for cursor pages and use id only to make equal timestamps stable.
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           include: { sender: { select: PUBLIC_SENDER } },
           ...args,

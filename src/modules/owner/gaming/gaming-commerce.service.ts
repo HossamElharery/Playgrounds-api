@@ -59,7 +59,6 @@ export class GamingCommerceService {
       return tx.gamingOrder.create({data:{venueId:dto.venueId,currency:v.currency,moneyScale:isoMoneyScale(v.currency),createdById:user.id,customerId:dto.customerId,guestName:dto.guestName?.trim()||null,guestPhone:dto.guestPhone?guestPhoneForStorage(dto.guestPhone,v.countryCode):null}});
     });
   }
-  /** Newest bills first (ids are random UUIDs, so they cannot order anything). `state:'open'` lists every unpaid/unclosed bill, however old; each row carries enough to recognise it: its stations, the guest, what is still owed. */
   async list(user:AuthenticatedUser,venueId:string,cursor?:string,state?:'open') {
     await this.commands.access(this.prisma,user,venueId,'orders.manage',false);
     await assertStaffAnyPermission(this.prisma,user,['reports.view','payments.record']);
@@ -70,7 +69,6 @@ export class GamingCommerceService {
       select:{id:true,version:true,state:true,createdAt:true,currency:true,totalMinor:true,moneyScale:true,guestName:true,sessions:{select:{unitId:true,state:true,unit:{select:{name:true}},segments:{select:{unitId:true,unit:{select:{name:true}}},orderBy:{startedAt:'asc'}}},orderBy:{startedAt:'asc'}},payments:{where:{status:{in:['paid','refunded']}},select:{amount:true,moneyScale:true}}}});
     const items=rows.slice(0,30).map(({payments,sessions,moneyScale,guestName,...o})=>{
       const receivedMinor=payments.reduce((sum,p)=>sum+rescaleMoney(p.amount,p.moneyScale,moneyScale),0);
-      // every station a bill moved through (for its label) and the ones it sits on now (for «unpaid on this station»)
       const stations=new Map<string,{id:string;name:string}>();
       for(const x of sessions){for(const g of x.segments)stations.set(g.unitId,{id:g.unitId,name:g.unit.name});stations.set(x.unitId,{id:x.unitId,name:x.unit.name});}
       return {...o,guestName:customers?guestName:null,receivedMinor,remainingMinor:Math.max(0,o.totalMinor-receivedMinor),running:sessions.some(x=>x.state==='running'),units:[...stations.values()],unitIds:[...new Set(sessions.map(x=>x.unitId))]};
@@ -118,7 +116,6 @@ export class GamingCommerceService {
       if(line.allocations.length)throw new ConflictException({code:'PAID_LINE_REQUIRES_RETURN'});
       const snap=line.snapshot as {stockTracked:boolean};
       await this.moveStock(tx,line.sourceId!,line.quantity-dto.quantity,user.id,'quantity correction',lineId,snap.stockTracked);
-      // Zero is an audited removal, retained as a returned line with zero amount.
       await tx.gamingOrderLine.update({where:{id:lineId},data:dto.quantity?{quantity:dto.quantity,amountMinor:line.unitPriceMinor*dto.quantity}:{amountMinor:0,returnedQuantity:line.quantity}});
       return this.sessions.refreshOrder(tx,id,now);
     });

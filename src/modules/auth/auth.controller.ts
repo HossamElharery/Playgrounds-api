@@ -261,7 +261,6 @@ export class AuthController {
     return this.authService.logoutAll(user.id);
   }
 
-  // Never returns the OTP — it only ever leaves the server via OtpDelivery (console/SMS provider).
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -270,7 +269,6 @@ export class AuthController {
     return this.authService.requestPasswordReset(dto);
   }
 
-  /** Signed-in password change; other devices are signed out, this one gets fresh tokens. */
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

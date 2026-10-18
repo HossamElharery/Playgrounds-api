@@ -1,28 +1,11 @@
-/**
- * What Captain may tell a player about Matchena itself — the built-in set.
- *
- * Each entry is written once, reviewed by a person, and shown to the player
- * word for word — the model only chooses WHICH entries answer the question
- * (by id), it never writes the answer. A claim that is not in the knowledge
- * table, or in the help center, is a claim Captain does not make.
- *
- * The admin edits these in the database; this file seeds a missing entry once
- * (it never overwrites an edit or brings back a deleted one) and is the
- * fallback when the table is empty or unreachable.
- *
- * `when` ties an entry to a feature flag: a lobby feature that is switched off
- * in production must not be promised to players.
- */
 export type KnowledgeFlag = 'morphs' | 'movement' | 'ball' | 'kiosk';
 
 export interface KnowledgeEntry {
   id: string;
-  /** One short line the model reads to decide whether the question is about this. */
   topicAr: string;
   topicEn: string;
   ar: string;
   en: string;
-  /** In-app path (no locale) or a named destination for the answer's button. */
   cta?: { target: string; labelAr: string; labelEn: string };
   when?: KnowledgeFlag;
 }

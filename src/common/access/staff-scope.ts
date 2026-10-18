@@ -9,7 +9,6 @@ export interface StaffScope {
   title: string | null;
 }
 
-/** The staff member behind a user, or null when the account is not (or no longer) staff. */
 export async function loadStaffScope(
   prisma: Pick<PrismaService, 'staffMember'>,
   userId: string,

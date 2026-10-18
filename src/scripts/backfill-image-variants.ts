@@ -1,10 +1,3 @@
-/** Local-disk uploads only. Dry-run by default; pass --apply to write the WebP variants.
- * Run with: node dist/src/scripts/backfill-image-variants.js --apply   (or: node -r ts-node/register src/scripts/backfill-image-variants.ts)
- * Optional: --only=venues,avatars to limit the folders. Run from the app folder that holds ./uploads.
- * Scans the upload folders on disk (blog, venue photos, avatars, feed and chat images), so no database
- * access is needed and no rows change: variant URLs are derived from the original URL. Originals stay
- * untouched. Images are processed one at a time to keep the live server responsive. Safe to re-run.
- */
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {

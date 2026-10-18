@@ -108,7 +108,6 @@ export class LobbySocialService {
     }, { timeout: 10_000 });
     const recipients = result.state?.members.map(m => m.userId) ?? [];
     const snapshots = new Map(recipients.map(id => [id, socialSnapshot(result.state, squadId, id, result.now)]));
-    // Empty-user projection is safe for all room members, including nonparticipants.
     snapshots.set('', socialSnapshot(result.state, squadId, '', result.now));
     const fingerprint = JSON.stringify([...snapshots].map(([id, snapshot]) => [id, snapshot.session, snapshot.personal]));
     if (this.lastPublished.get(squadId) !== fingerprint) {
@@ -163,7 +162,6 @@ export class LobbySocialService {
     try {
       const rows = await this.prisma.$queryRaw<{ squadId: string }[]>`SELECT "squadId" FROM "LobbySocialState" WHERE "state"->>'phase' <> 'ended'`;
       for (const row of rows) await this.run(row.squadId, null, async (tx, s, now) => {
-        // Read the established app presence tracker. Never touch its connection/media lifecycle.
         if (s && this.presence) for (const m of s.members) {
           if (m.disconnectedAt == null && this.presence.isOnline(m.userId) && now - m.lastSeen > 5000) {
             m.lastSeen = now;

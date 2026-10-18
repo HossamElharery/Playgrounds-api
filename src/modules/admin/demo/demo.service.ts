@@ -12,7 +12,6 @@ const TZ = 'Africa/Cairo';
 const HISTORY_DAYS = 70;
 const COMMISSION_BPS = 1000;
 
-/** Small deterministic PRNG so a demo looks the same every time it is (re)generated. */
 function rng(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -24,12 +23,6 @@ function rng(seed: number) {
 const CUSTOMERS = ['الأهلي', 'الزمالك', 'أحمد سمير', 'محمد علي', 'كريم فتحي', 'يوسف عادل', 'عمر خالد', 'زياد مصطفى', 'مصطفى رضا', 'إبراهيم سعيد'];
 const SOURCES = ['walk_in', 'phone', 'whatsapp'] as const;
 
-/**
- * Sales demo: one clearly-flagged venue with realistic data that lights up every owner screen
- * (fixed bookings, idle hours for discount suggestions, part payments, expenses, team, a request
- * to Matchena, a subscription about to end). It is `isDemo` AND `pending`, so every public query
- * (which asks for `active`) and every real figure (which asks for `isDemo = false`) skips it.
- */
 @Injectable()
 export class DemoService {
   private readonly logger = new Logger(DemoService.name);
@@ -56,7 +49,6 @@ export class DemoService {
     }));
   }
 
-  /** Builds a fresh demo. The owner password is generated here and returned exactly once. */
   async create(adminId: string, opts: { seedKey?: number } = {}) {
     if (NODE_ENV_IS_PRODUCTION() && process.env.ALLOW_DEMO_IN_PRODUCTION !== 'true') {
       throw new BadRequestException('Demo venues are disabled in production');
@@ -131,7 +123,6 @@ export class DemoService {
     }
   }
 
-  /** Wipes a demo venue and everything that belongs to it, then builds it again (dates relative to today). */
   async reset(adminId: string, venueId: string) {
     const venue = await this.loadDemo(venueId);
     await this.remove(adminId, venueId);
@@ -139,7 +130,6 @@ export class DemoService {
     return this.create(adminId);
   }
 
-  /** Deletes the venue, its data and the fake accounts. Refuses anything that is not a demo. */
   async remove(adminId: string, venueId: string) {
     const venue = await this.loadDemo(venueId);
     const ownerId = venue.ownerId;
@@ -167,8 +157,6 @@ export class DemoService {
     return { ok: true };
   }
 
-  // ---- generators ---------------------------------------------------------
-
   private async history(venueId: string, ownerId: string, playerId: string, courts: { id: string }[], seed: number) {
     const rand = rng(seed);
     const today = zonedDate(new Date(), TZ);
@@ -182,8 +170,6 @@ export class DemoService {
       const weekday = weekdayOfLocalDate(date);
       for (const [ci, court] of courts.entries()) {
         for (let hour = 16; hour <= 23; hour++) {
-          // Thursday/Friday evenings are busy; court 1 is deliberately EMPTY on Sunday 14:00-16:00-ish
-          // (nothing before 18:00 on Sundays) so the idle-hours suggestion has something to say.
           const peak = hour >= 18 && hour <= 22;
           if (weekday === 0 && ci === 0 && hour < 18) continue;
           const chance = (peak ? 0.62 : 0.2) + (weekday === 4 || weekday === 5 ? 0.22 : 0) - (weekday === 0 || weekday === 1 ? 0.15 : 0);
@@ -223,7 +209,6 @@ export class DemoService {
           } else {
             const roll = rand();
             const name = CUSTOMERS[Math.floor(rand() * CUSTOMERS.length)];
-            // Past: mostly paid, a few still owed. Near future: some unpaid, one partial.
             const paid = past ? roll < 0.86 : roll < 0.25;
             const partial = !paid && roll > 0.9;
             const id = crypto.randomUUID();
@@ -257,7 +242,6 @@ export class DemoService {
 
   private async fixedSeries(venueId: string, ownerId: string, courtId: string) {
     const today = zonedDate(new Date(), TZ);
-    // "Al Ahly every Thursday 20:00" and "Zamalek every Sunday 21:00" — booked from 4 weeks ago, 8 weeks ahead.
     for (const [name, weekday, hhmm] of [['الأهلي', 4, '20:00'], ['الزمالك', 0, '21:00']] as const) {
       let first = addDays(today, -28);
       while (weekdayOfLocalDate(first) !== weekday) first = addDays(first, 1);
@@ -303,7 +287,6 @@ export class DemoService {
   }
 
   private async discountAndRequest(venueId: string, ownerId: string, playerId: string, courts: { id: string }[]) {
-    // A discount applied 20 days ago on the quiet Sunday afternoon, so "measured result" has data.
     const court = courts[0];
     const now = new Date();
     const rule = await this.prisma.pricingRule.create({

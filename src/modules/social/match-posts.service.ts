@@ -112,9 +112,6 @@ export class MatchPostsService {
       orderBy: { dateTime: 'asc' },
       take: 50,
     });
-    // Every card needs to know "have I already asked / am I already in?" —
-    // without it the frontend was making a second round-trip per post just
-    // to patch this in after the fact.
     return posts.map((p) => {
       const viewerRequest = viewerId
         ? p.joinRequests.find((j) => j.userId === viewerId)
@@ -279,8 +276,6 @@ export class MatchPostsService {
         data: { status: 'open' },
       });
     }
-    // Only worth a ping if they were actually counted in — a withdrawn
-    // pending request never showed up in the organizer's roster anyway.
     if (leaving?.status === 'approved') {
       await this.notifications
         .create({
@@ -426,8 +421,6 @@ export class MatchPostsService {
       data: { status: 'cancelled' },
     });
 
-    // Everyone who was approved had this match in their plans. Cancelling it
-    // without telling them is how people show up to an empty pitch.
     const approved = await this.prisma.matchPostJoinRequest.findMany({
       where: { matchPostId: id, status: 'approved' },
       select: { userId: true },
@@ -552,7 +545,6 @@ export class MatchPostsService {
     return rows.map((r) => ({ emoji: r.emoji, count: r._count._all }));
   }
 
-  /** Persist `expired` for any live match whose kickoff has passed. */
   async expireElapsed(now = new Date()) {
     return this.prisma.matchPost.updateMany({
       where: elapsedLiveMatchWhere(now),

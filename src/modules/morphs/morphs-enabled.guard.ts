@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { ApiException } from '../../common/errors/api-exception';
 import { lobbyMorphsEnabled } from './morphs-flag';
 
-/** Hides morph endpoints (404) while the feature flag is off. */
 @Injectable()
 export class MorphsEnabledGuard implements CanActivate {
   constructor(private readonly config: ConfigService) {}

@@ -20,9 +20,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      // A 429 thrown deliberately as ApiException carries a domain code and
-      // retry data (e.g. MORPH_COOLDOWN.retryAfterMs) the client needs; only
-      // the throttler's generic 429 is normalised to RATE_LIMITED.
       if (
         status === HttpStatus.TOO_MANY_REQUESTS &&
         !(exception instanceof ApiException)
@@ -104,8 +101,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
   } {
     switch (error.code) {
       case 'P2002': {
-        // Unique constraint violation. The booking slot partial-unique-index
-        // surfaces here as a clean, typed conflict instead of a raw DB error.
         const target = (error.meta?.target as string[] | undefined)?.join(', ');
         if (target?.includes('courtId') || target?.includes('slotStart')) {
           return { status: HttpStatus.CONFLICT, message: 'SLOT_ALREADY_HELD' };

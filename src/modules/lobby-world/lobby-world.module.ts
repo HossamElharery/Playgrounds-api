@@ -23,7 +23,6 @@ export class LobbyWorldModule implements OnModuleInit, OnModuleDestroy {
     private readonly world: LobbyWorldService,
   ) {}
 
-  /** Positions die with the membership (left, kicked, dropped) or the squad itself. */
   onModuleInit(): void {
     this.subs.add(
       this.squads.membershipEnded$.subscribe(
@@ -33,7 +32,6 @@ export class LobbyWorldModule implements OnModuleInit, OnModuleDestroy {
         },
       ),
     );
-    // The keeper's save radius follows equips/rolls of members already in a lobby.
     this.subs.add(
       this.morphs.equipped$.subscribe(({ userId, morphId }) =>
         this.world.setMorph(userId, morphId),

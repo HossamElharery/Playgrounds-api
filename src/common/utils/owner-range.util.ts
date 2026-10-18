@@ -45,7 +45,6 @@ export function eachYmd(from: string, to: string): string[] {
   return out;
 }
 
-/** Egypt week starts Saturday. JS: 0=Sun … 6=Sat. Days since last Saturday. */
 function daysSinceSaturday(jsWeekday: number): number {
   return (jsWeekday + 1) % 7;
 }

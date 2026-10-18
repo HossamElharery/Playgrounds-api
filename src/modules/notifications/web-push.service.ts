@@ -9,12 +9,6 @@ export interface WebPushSubscriptionInput {
   userAgent?: string;
 }
 
-/**
- * Free browser push over VAPID. Off by default: with no `VAPID_*` env vars this service is a
- * no-op everywhere (the API tells the frontend so, and the frontend never shows the "enable"
- * button). Piggybacks on `NotificationsService.create` — no new send path, no new dedupe
- * logic, no new place a category preference could be forgotten.
- */
 @Injectable()
 export class WebPushService {
   private readonly logger = new Logger(WebPushService.name);
@@ -42,7 +36,6 @@ export class WebPushService {
     );
   }
 
-  /** `null` when the feature is off — the frontend never shows the "enable" button in that case. */
   publicKey(): string | null {
     return this.configured() ? this.config.get<string>('VAPID_PUBLIC_KEY')! : null;
   }
@@ -60,26 +53,15 @@ export class WebPushService {
     return { ok: true };
   }
 
-  /** Scoped to the caller: one browser cannot unsubscribe another user's endpoint. */
   async unsubscribe(userId: string, endpoint: string) {
     await this.prisma.pushSubscription.deleteMany({ where: { userId, endpoint } });
     return { ok: true };
   }
 
-  /**
-   * Fire-and-forget from `NotificationsService.create`, after the same category/preference
-   * check has already gated whether a notification was written at all. `title`/`body` are
-   * exactly what was already stored (never richer), so nothing new can leak into a push
-   * payload that a lock-screen shows to whoever glances at the phone.
-   */
   async send(userId: string, title: string, body?: string, url?: string): Promise<void> {
     await this.deliver(userId, JSON.stringify({ title, body: body ?? title, url: url ?? '/' }));
   }
 
-  /**
-   * Staff-call push: a ringing notification that stays until the user acts on it (`requireInteraction`)
-   * and dies with the call (short TTL), or the "missed call" that replaces it (same `tag`).
-   */
   async sendCall(
     userId: string,
     call: { callId: string; kind: 'ring' | 'missed'; title: string; body?: string | null; url: string },
@@ -115,7 +97,6 @@ export class WebPushService {
         } catch (err) {
           const status = (err as { statusCode?: number })?.statusCode;
           if (status === 404 || status === 410) {
-            // The browser dropped this subscription (uninstalled, cleared data, expired) — stop trying it.
             await this.prisma.pushSubscription.delete({ where: { id: sub.id } }).catch(() => undefined);
           } else {
             this.logger.warn(`push send failed (${status ?? 'no status'}): ${String(err)}`);

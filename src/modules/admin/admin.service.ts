@@ -65,7 +65,6 @@ export class AdminService {
     };
   }
 
-  // ---- Moderation ----
   createReport(reporterId: string, dto: CreateReportDto) {
     return this.prisma.moderationReport.create({
       data: {
@@ -111,7 +110,6 @@ export class AdminService {
     });
   }
 
-  // ---- Audit log ----
   async logAction(
     actorUserId: string,
     action: string,
@@ -143,7 +141,6 @@ export class AdminService {
     return { items, pagination: buildPagination(page, perPage, total) };
   }
 
-  // ---- Feature flags ----
   listFeatureFlags() {
     return this.prisma.featureFlag.findMany();
   }
@@ -171,7 +168,6 @@ export class AdminService {
     });
   }
 
-  // ---- Analytics (pragmatic aggregates — see MATCHENA_BACKEND.md for scope) ----
   async searchFunnel() {
     const [venueSearches, venueViews, bookingsCreated, bookingsCompleted] =
       await Promise.all([

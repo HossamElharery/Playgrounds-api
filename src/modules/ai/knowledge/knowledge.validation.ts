@@ -1,7 +1,6 @@
 import { safeAppPath, tokens } from '../../search/captain/captain-text';
 import type { KnowledgeEntry, KnowledgeFlag } from './default-knowledge';
 
-/** Destinations the player app already knows by name; anything else must be a safe in-app path. */
 export const NAMED_DESTINATIONS = ['players', 'chat', 'community', 'tonight', 'bookings', 'help', 'login', 'explore'] as const;
 export const KNOWLEDGE_FLAGS: KnowledgeFlag[] = ['morphs', 'movement', 'ball', 'kiosk'];
 
@@ -23,7 +22,6 @@ export interface KnowledgeInput {
   active?: unknown;
 }
 
-/** What gets stored. */
 export interface KnowledgeValue {
   id: string;
   topicAr: string;
@@ -47,7 +45,6 @@ export interface KnowledgeCheck {
   value: KnowledgeValue | null;
 }
 
-/** Words that promise something the app may not always do. A warning, never a block: the admin knows the facts. */
 const PROMISE_WORDS: Record<'ar' | 'en', string[]> = {
   ar: ['مضمون', 'نضمن', 'بنضمن', 'هنضمن', 'دايما', 'دائما', 'أبدا', 'ابدا', 'مجاني', 'مجانا', 'بالمجان', 'بدون رسوم', '100%'],
   en: ['guarantee', 'guaranteed', 'always', 'never', 'free of charge', 'for free', 'promise', 'definitely', '100%'],
@@ -65,7 +62,6 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '';
 }
 
-/** Jaccard overlap of two topics' words, so two entries a model could not tell apart are flagged. */
 export function topicOverlap(a: string, b: string): number {
   const x = new Set(tokens(a));
   const y = new Set(tokens(b));
@@ -75,7 +71,6 @@ export function topicOverlap(a: string, b: string): number {
   return shared / (x.size + y.size - shared);
 }
 
-/** An external link, markup or a script scheme has no place in text shown verbatim in the app. */
 function hasLinkOrMarkup(text: string): boolean {
   return /(?:https?:\/\/|www\.|javascript:|data:)/i.test(text) || /<\/?[a-z][^>]*>/i.test(text);
 }
@@ -86,10 +81,6 @@ export function isSafeCtaTarget(target: string): boolean {
   return safeAppPath(target) === target.replace(/^\/+/, '');
 }
 
-/**
- * Checks what an admin typed. `others` are the other entries, to warn when
- * two topics would confuse the model. Errors block saving; warnings do not.
- */
 export function checkKnowledge(
   input: KnowledgeInput,
   opts: { requireId: boolean; others?: Pick<KnowledgeEntry, 'id' | 'topicAr' | 'topicEn'>[] },

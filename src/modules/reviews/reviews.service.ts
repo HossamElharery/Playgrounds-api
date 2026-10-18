@@ -19,7 +19,6 @@ export class ReviewsService {
     private readonly rewards: RewardsService,
   ) {}
 
-  // ---- Venue reviews (gated to a completed, checked-in booking) ----
 
   async createVenueReview(userId: string, dto: CreateVenueReviewDto) {
     const booking = await this.prisma.booking.findUnique({
@@ -107,7 +106,6 @@ export class ReviewsService {
     });
   }
 
-  // ---- Player-to-player ratings ----
 
   private async eligibleParticipants(bookingId: string): Promise<Set<string>> {
     const booking = await this.prisma.booking.findUnique({

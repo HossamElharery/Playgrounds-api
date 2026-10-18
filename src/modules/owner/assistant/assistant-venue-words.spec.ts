@@ -105,7 +105,6 @@ describe('cancelling a paid booking through the assistant', () => {
     const { service, prisma } = build(lounge, reading({ intent: 'cancel', customerName: 'سامي', fromMins: null }), { bookings: [withRefund] });
     const plan = await service.ask(user, 'v1', 'الغي حجز سامي ورجّع الفلوس');
     expect(plan.actions[0]).toMatchObject({ refundAmount: 10000 });
-    // The query itself must read refunds too, otherwise a taken-back payment would look like money held.
     const include = prisma.booking.findMany.mock.calls[0][0].include;
     expect(include.payments.where.status).toEqual({ in: ['paid', 'refunded'] });
   });

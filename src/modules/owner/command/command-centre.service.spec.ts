@@ -27,7 +27,6 @@ function build(over: { staff?: { permissions: string[]; venueIds: string[]; owne
     booking: {
       count: jest.fn().mockImplementation(({ where }: { where: { venueId: string } }) => Promise.resolve(where.venueId === 'v-eg' ? 6 : 2)),
       findMany: jest.fn().mockImplementation(({ where }: { where: { venueId: string; slotEnd?: unknown } }) => {
-        // Egypt: a finished 120 debt. Dubai: an upcoming 40 balance. Newcomer: nothing.
         if (where.venueId === 'v-eg' && where.slotEnd && (where.slotEnd as { lt?: Date }).lt) return Promise.resolve([owedRow('v-eg', 12_000, -2 * DAY)]);
         if (where.venueId === 'v-ae' && where.slotEnd && (where.slotEnd as { gte?: Date }).gte) return Promise.resolve([owedRow('v-ae', 4_000, DAY)]);
         return Promise.resolve([]);
@@ -71,8 +70,6 @@ describe('CommandCentreService', () => {
   it('puts the venues that need the owner first', async () => {
     const { service } = build();
     const out = await service.centre(owner);
-    // Maadi: debt (2) + open drawers (1) = 3. Marina: shift to review = 2.
-    // Newcomer is still in review (pending): it is not running yet, so it sits last and does not count as "needs you".
     expect(out.venues.map((v) => v.id)).toEqual(['v-eg', 'v-ae', 'v-new']);
     expect(out.venues[2].attention).toBe(0);
     expect(out.needAttention).toBe(2);

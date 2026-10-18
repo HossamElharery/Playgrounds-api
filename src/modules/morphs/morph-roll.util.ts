@@ -13,9 +13,7 @@ export interface RollInput {
   ownedIds: ReadonlySet<string>;
   rollsSinceEpicOrBetter: number;
   rollsSinceMisk: number;
-  /** Injected; production passes `crypto.randomInt`. */
   randomInt: (maxExclusive: number) => number;
-  /** Overrides for tests (e.g. huge thresholds to measure raw odds). */
   epicPityRolls?: number;
   miskPityRolls?: number;
 }
@@ -30,7 +28,6 @@ export interface RollResult {
 
 const TIER_ORDER: readonly MorphTier[] = ['COMMON', 'EPIC', 'MISK'];
 
-/** Weighted tier draw against the cumulative basis-point table. */
 export function drawTier(randomInt: (max: number) => number): MorphTier {
   const r = randomInt(10000);
   if (r < TIER_ODDS_BP.COMMON) return 'COMMON';
@@ -54,11 +51,6 @@ function pickTier(input: RollInput): {
   return { tier: drawTier(input.randomInt), pity: null };
 }
 
-/**
- * Rollable morphs of `tier`, excluding the equipped one so a roll always
- * visibly changes something. Falls back to including it when it is the only
- * candidate. A tier with no rollable morph steps down (defensive).
- */
 function candidatesFor(
   input: RollInput,
   tier: MorphTier,
@@ -73,7 +65,6 @@ function candidatesFor(
   throw new Error('MORPH_CATALOG_EMPTY');
 }
 
-/** Pure server-side roll: tier (with pity), then a weighted in-tier pick. */
 export function rollMorph(input: RollInput): RollResult {
   const picked = pickTier(input);
   const { tier, defs } = candidatesFor(input, picked.tier);

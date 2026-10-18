@@ -11,24 +11,18 @@ import { addDays, dayDate, toMicros, utcDayString } from './ai-day';
 export interface QuestionLogInput {
   surface?: AiSurface;
   userKind: AiAskerKind;
-  /** The player's sentence exactly as typed (trimmed and capped); only admins can read it. */
   text: string;
   lang?: 'ar' | 'en';
   intent?: string;
   outcome: AiQuestionOutcome;
-  /** minute | day | budget | spam | noise | guests_off | challenge … */
   detail?: string;
   factIds?: string[];
   reading?: Record<string, unknown>;
-  /** null/undefined = no model answered. */
   model?: string | null;
   ms?: number;
   costUsd?: number;
-  /** The quota key (`dev:…`, `ip:…`, `user:…`), hashed here into a short reference. */
   askerKey?: string;
-  /** The signed-in player, so the admin can open their whole conversation. Never set for visitors. */
   userId?: string;
-  /** What Captain answered, as the player saw it. */
   replyText?: string;
 }
 
@@ -38,9 +32,7 @@ export interface OwnerEventInput {
   event: 'ask' | 'applied' | 'undone';
   intent?: string;
   outcome: 'planned' | 'clarify' | 'denied' | 'unavailable' | 'limited' | 'error' | 'applied' | 'failed';
-  /** Controlled vocabulary only (an error class, a reason code). */
   detail?: string;
-  /** What the owner typed, exactly (admin-only; only on `ask` events). */
   text?: string;
   confidence?: number;
   model?: string | null;
@@ -53,17 +45,12 @@ const CALL_ROWS_RETENTION_DAYS = 400;
 const COUNTER_RETENTION_DAYS = 7;
 const BLOCK_LOG_EVERY_MS = 60_000;
 
-/** A reason or intent code: lower-case words only, so free text can never ride along. */
 function code(value: string | undefined, max: number): string | null {
   if (!value) return null;
   const clean = value.toLowerCase().replace(/[^a-z0-9_.:-]/g, '').slice(0, max);
   return clean || null;
 }
 
-/**
- * Writes the two logs the admin reads: what players asked Captain and what owners asked their assistant (both as typed, admin-only, kept for a fixed window). A log write is best effort — it never delays or
- * fails the answer, and a flood of refused messages is counted, not stored row by row.
- */
 @Injectable()
 export class AiLogService {
   private readonly logger = new Logger(AiLogService.name);
@@ -76,7 +63,6 @@ export class AiLogService {
     @Optional() private readonly settings?: AiSettingsService,
   ) {}
 
-  /** Returns the id the client can send feedback against, or null when nothing was stored. */
   logQuestion(input: QuestionLogInput): string | null {
     const refused = input.outcome === 'limited' || input.outcome === 'blocked';
     if (refused) this.usage?.bump(`${input.outcome}:${input.detail ?? 'other'}:${input.userKind}`);
@@ -100,7 +86,6 @@ export class AiLogService {
           id,
           surface: input.surface ?? 'captain',
           userKind: input.userKind,
-          // The column keeps its old name; the admin asked to see every message exactly as the player wrote it.
           textRedacted: input.text.replace(/\s+/g, ' ').trim().slice(0, 300) || '—',
           lang: input.lang ?? null,
           intent: code(input.intent, 40),
@@ -120,7 +105,6 @@ export class AiLogService {
     return id;
   }
 
-  /** Only the ids this server handed out can be rated, and only for a day. */
   async setFeedback(id: string, value: AiFeedback): Promise<boolean> {
     if (!this.prisma) return false;
     try {
@@ -156,7 +140,6 @@ export class AiLogService {
       .catch((err: unknown) => this.logger.warn(`[ai-log] could not store an owner event: ${String(err)}`));
   }
 
-  /** Retention: the player questions after the admin-set window (30-60 days), the rest after their own, shorter or longer, ones. */
   @Cron('15 3 * * *', { timeZone: 'Africa/Cairo' })
   async purge(): Promise<{ questions: number; ownerEvents: number; counters: number; calls: number } | null> {
     if (!this.prisma) return null;

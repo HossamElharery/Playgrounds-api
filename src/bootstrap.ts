@@ -14,16 +14,9 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { imageVariantMiddleware } from './modules/storage/image-variants';
 
-/**
- * Shared app configuration used by both the real server (main.ts) and the
- * e2e test bootstrap — keeps them from drifting apart (global prefix,
- * filters, interceptors, pipes must be identical in both).
- */
 export function configureApp(app: INestApplication): ConfigService {
   const config = app.get(ConfigService);
 
-  // Coolify terminates TLS at its reverse proxy. Trust exactly that first hop
-  // so secure-protocol/IP-aware middleware reads X-Forwarded-* correctly.
   if (config.get<string>('NODE_ENV') === 'production') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
@@ -48,14 +41,8 @@ export function configureApp(app: INestApplication): ConfigService {
     }),
   );
   app.use(cookieParser());
-  // Thumbnail URLs are immutable derivatives; avoid downloading them on each visit.
   app.use('/uploads/posts/thumbnails', express.static(path.join(process.cwd(), 'uploads/posts/thumbnails'), { maxAge: '1y', immutable: true }));
-  // Upload keys are UUID-based and never overwritten. Let browsers/CDNs keep
-  // media locally so returning to a feed video does not revalidate multi-MB
-  // files on every scroll.
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), { maxAge: '1y', immutable: true }));
-  // Responsive WebP variants (`partner-photos/w640/<id>.webp`) are cut from the original on first
-  // request; once on disk, the static handler above serves them.
   app.use('/uploads', imageVariantMiddleware(path.join(process.cwd(), 'uploads')));
 
   const corsOrigins = config

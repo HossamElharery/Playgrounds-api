@@ -1,7 +1,6 @@
 import { LayoutDocument, LayoutPlacement, validateLayoutDocument } from './layout-document';
 import { GamingSetupDto, SetupKind } from './gaming-setup.dto';
 export interface PlannedUnit { id:string; assetKey:SetupKind; floorIndex:number; roomIndex?:number; roomParent?:boolean; }
-/** Cross-field checks supplement nested DTO validation, including total vs private counts. */
 export function validateSetupPlan(d:GamingSetupDto):void {
  const fail=()=>{throw new RangeError('Invalid setup plan');};
  if(!d.groups.length||new Set(d.groups.map(g=>g.assetKey)).size!==d.groups.length||d.groups.reduce((n,g)=>n+g.count,0)>100)fail();
@@ -16,7 +15,6 @@ export function validateSetupPlan(d:GamingSetupDto):void {
  }
  for(const g of d.groups)if(g.floorCounts&&(g.floorCounts.length!==d.floorCount||g.floorCounts.reduce((n,c)=>n+c,0)!==remaining.get(g.assetKey)))fail();
 }
-/** Deterministic geometry; all identity is assigned once by the transaction. No external AI needed. */
 export function buildSetupLayout(d:GamingSetupDto,units:PlannedUnit[],id:()=>string):LayoutDocument {
  const placements:LayoutPlacement[]=[];
  const floors:LayoutDocument['floors']=[];
@@ -40,7 +38,6 @@ export function buildSetupLayout(d:GamingSetupDto,units:PlannedUnit[],id:()=>str
    width=Math.max(width,roomWidth+3);
    const roomId=id();rooms.push({id:roomId,name:r.name.trim(),x:1.5,z:cursor,width:roomWidth,depth:roomDepth,occupancy:r.occupancy,...(parent?{bookableCourtId:parent.id}:{})});
    children.forEach((u,i)=>place(floorId,u,3.5+i%roomCols*3.8,cursor+2.3+Math.floor(i/roomCols)*4.6,roomId));
-   // Door is the selectable whole-room resource, while its contents retain their identities.
    placements.push({id:id(),floorId,...(parent?{unitId:parent.id}:{}),assetKey:'door',x:4,z:cursor+roomDepth-.1,rotation:0,width:1.4,depth:.2,height:2.1});
    cursor+=roomDepth+1;
   });

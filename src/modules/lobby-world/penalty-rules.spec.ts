@@ -22,7 +22,6 @@ import {
 
 const T = 1_000_000;
 
-/** Plays one kick: aim → flight → outcome → next. */
 function kick(s: PenaltyState, outcome: PenaltyOutcome): void {
   beginAim(s, T);
   beginFlight(s, T);
@@ -122,8 +121,7 @@ describe('penalty rules', () => {
   });
 
   it('level after the regular kicks: sudden death between the tied players only', () => {
-    const s = createPenalty('sq', 'a', ['a', 'b', 'c', 'd'], T)!; // 3 rounds
-    // a and b score every kick, c and d never: tied leaders a & b.
+    const s = createPenalty('sq', 'a', ['a', 'b', 'c', 'd'], T)!;
     for (let i = 0; i < 12 && s.suddenDeath === 0; i++)
       kick(s, s.shooterId === 'a' || s.shooterId === 'b' ? 'goal' : 'missed');
     expect(s.suddenDeath).toBe(1);

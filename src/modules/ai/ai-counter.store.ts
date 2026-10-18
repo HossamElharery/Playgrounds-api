@@ -7,20 +7,12 @@ const FLUSH_MS = 15_000;
 const LOAD_RETRY_MS = 30_000;
 
 interface Entry {
-  /** Today's total as this instance knows it (what was in the table at load, plus what was added here). */
   count: number;
-  /** Added here and not yet written. */
   pending: number;
   loaded: boolean;
   retryAt: number;
 }
 
-/**
- * Small named counters per UTC day, written behind: increments land in memory
- * at once and reach the table in batches (added to whatever other instances
- * wrote — `count = count + delta`, never overwritten). Without a database it
- * is a plain in-memory counter, which is how the tests and the eval script use it.
- */
 @Injectable()
 export class AiCounterStore implements OnModuleDestroy {
   private readonly logger = new Logger(AiCounterStore.name);
@@ -43,7 +35,6 @@ export class AiCounterStore implements OnModuleDestroy {
     return `${day}\u0000${scope}\u0000${key}`;
   }
 
-  /** Makes sure today's stored value is known before it is compared with a limit. A read failure counts as zero: the database being down must never lock people out. */
   async ensure(scope: string, key: string, now = Date.now()): Promise<void> {
     const day = utcDayString(now);
     const id = this.id(day, scope, key);
@@ -66,7 +57,6 @@ export class AiCounterStore implements OnModuleDestroy {
     }
   }
 
-  /** Today's count, synchronously (call `ensure` first when the stored value matters). */
   get(scope: string, key: string, now = Date.now()): number {
     return this.entries.get(this.id(utcDayString(now), scope, key))?.count ?? 0;
   }
@@ -83,7 +73,6 @@ export class AiCounterStore implements OnModuleDestroy {
     e.pending += n;
   }
 
-  /** Writes every pending increment. Safe to call at any time; concurrent calls share one write. */
   flush(): Promise<void> {
     if (!this.prisma) return Promise.resolve();
     if (this.flushing) return this.flushing;
@@ -121,7 +110,6 @@ export class AiCounterStore implements OnModuleDestroy {
     }
   }
 
-  /** Yesterday's entries are written and dropped; the table keeps them. */
   private sweep(): void {
     const today = utcDayString();
     for (const [id, e] of this.entries) {

@@ -20,11 +20,6 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/**
- * Normalizes optional free-text so that empty/whitespace strings become
- * `undefined`. Combined with `@IsOptional()`, this lets clients send an empty
- * note/reason (e.g. approving without feedback) without tripping `@MinLength`.
- */
 const OptionalText = () =>
   Transform(({ value }) =>
     typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined,
@@ -396,7 +391,6 @@ export class AdminPartnerApplicationsQueryDto extends CursorPaginationQueryDto {
     | 'suspended';
 }
 
-/** Keeps class-validator happy if a client sends an unused wrapper field. */
 export class EmptyBodyDto {
   @Allow()
   @IsOptional()

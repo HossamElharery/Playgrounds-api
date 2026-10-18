@@ -1,4 +1,3 @@
-/** Local-only integration audit. Creates and removes its own disposable fixtures. */
 require('dotenv').config({ quiet: true });
 require('reflect-metadata');
 const assert = require('node:assert/strict');

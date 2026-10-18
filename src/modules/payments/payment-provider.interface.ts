@@ -7,13 +7,7 @@ export interface ChargeResult {
   providerRef?: string;
 }
 
-/**
- * Localized checkout abstraction. Methods are validated against
- * CountryConfig.paymentMethods at confirm time — adding a market is config,
- * not a BookingsService change.
- */
 export interface PaymentProvider {
-  /** Live PSP configured and allowed to collect online charges. Mock = false. */
   readonly isLive: boolean;
   charge(
     amount: number,

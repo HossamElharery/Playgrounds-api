@@ -15,7 +15,6 @@ const WORDS: Record<Lang, { floor: string; vip: string; vr: string; bar: string 
 };
 
 const MARGIN = 1.5;
-/** Footprints in metres: a console station includes its screen, couch and walking space. */
 const STATION = { w: 2.6, d: 2.6, stepX: 3.4, stepZ: 3.8 };
 const VIP_ROOM = { w: 5.2, d: 4.8, stepX: 5.8, stepZ: 5.4 };
 const TABLE = {
@@ -32,14 +31,8 @@ function assetOf(unit: DefaultLayoutUnit): LayoutAsset {
   return (['ps4', 'ps5', 'xbox-series', 'pc', 'vr'].includes(console) ? console : 'ps5') as LayoutAsset;
 }
 
-/**
- * A believable first floor plan built from the units a venue already registered: standard consoles
- * in rows, one room per VIP / VR unit, tables in their own zone, a bar and an entrance. The owner
- * only nudges it afterwards. Pure and deterministic, so it is unit-tested and never random.
- */
 export function buildDefaultLayout(venueId: string, units: DefaultLayoutUnit[], lang: Lang = 'ar', id: () => string): LayoutDocument {
   const words = WORDS[lang];
-  // Newest hardware first (PS5 before PS4), then by the owner's own numbering.
   const rank = (u: DefaultLayoutUnit) => ['ps5', 'xbox-series', 'ps4', 'pc', 'vr', 'billiards', 'table-tennis'].indexOf(assetOf(u));
   const sorted = [...units].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   const vip = sorted.filter((u) => u.activityKind === 'gaming-station' && ['vip-big-screen', 'vr-booth'].includes(cfg(u.gamingConfig).roomTier));

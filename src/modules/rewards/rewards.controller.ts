@@ -37,10 +37,6 @@ export class RewardsController {
     private readonly prisma: PrismaService,
   ) {}
 
-  /**
-   * Who a promo-code action runs as. Staff act as the owner they work for, and only
-   * on a venue in their list (a promo without a venue is platform-wide: admin only).
-   */
   private async promoActor(
     user: AuthenticatedUser,
     venueId?: string | null,
@@ -106,7 +102,6 @@ export class RewardsController {
     return this.rewards.leaderboard(sportId, scope, districtId, friendsUserId);
   }
 
-  // ---- Promo codes ----
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('admin', 'owner', 'staff')
@@ -160,7 +155,6 @@ export class RewardsController {
     return this.rewards.deactivatePromoCode(id, actor.userId, actor.isAdmin);
   }
 
-  // ---- Admin config ----
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('admin')

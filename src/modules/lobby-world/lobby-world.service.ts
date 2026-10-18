@@ -49,13 +49,10 @@ import {
   type LobbyMoveMode,
 } from './lobby-move.util';
 
-/** ≤ 15 `lobby.move` per second per user (all of their sockets share it). */
 export const LOBBY_MOVE_RATE = 15;
-/** A member who has not moved for this long is forgotten (they respawn on the circle). */
 export const LOBBY_IDLE_MS = 10 * 60 * 1000;
 export const LOBBY_SWEEP_MS = 60 * 1000;
 
-/** Distance a member may cover: refills at maxSpeed × 1.5 per second, capped at 1 s + 0.5 u. */
 const TRAVEL_RATE = LOBBY_MAX_SPEED * LOBBY_SPEED_SLACK;
 const TRAVEL_CAP = TRAVEL_RATE * LOBBY_MAX_CREDIT_S + LOBBY_TELEPORT_SLACK;
 
@@ -67,11 +64,8 @@ export interface MemberState {
   h: number;
   m: LobbyMoveMode;
   seq: number;
-  /** Server time (ms) of the last accepted update. */
   at: number;
-  /** Socket that sent `seq` (a new socket restarts its sequence). */
   socketId: string;
-  /** Travel budget left (scene units), see TRAVEL_CAP. */
   budget: number;
 }
 
@@ -88,15 +82,12 @@ export interface LobbyMoved {
   m: LobbyMoveMode;
   tx?: number;
   tz?: number;
-  /** Server timestamp (ms). */
   st: number;
 }
 
 export interface MoveResult {
   moved: LobbyMoved;
-  /** Stops and corrections go out non-volatile; in-motion updates may be dropped. */
   reliable: boolean;
-  /** Set when the position was pulled back: the sender lerps to it. */
   correction: { x: number; z: number } | null;
 }
 
@@ -113,7 +104,6 @@ export interface LobbySnapshot {
     vx: number;
     vz: number;
   }>;
-  /** The running penalty shootout, if any (late joiners see it at once). */
   pen?: PenaltyView;
   ball?: {
     x: number;
@@ -132,17 +122,12 @@ interface Bucket {
   at: number;
 }
 
-/** Server ball simulation rate while a ball moves, and its broadcast rate. */
 export const BALL_TICK_HZ = 30;
-export const BALL_BROADCAST_EVERY = 2; // → 15 Hz
-/** After a goal the ball stays in the net this long, then respawns at the centre. */
+export const BALL_BROADCAST_EVERY = 2;
 export const GOAL_FREEZE_MS = 2500;
 export const KICK_COOLDOWN_MS = 250;
-/** Kick reach, measured from the server's own position of the kicker (latency slack included). */
 export const KICK_MAX_DISTANCE = 1.3;
-/** A walking player this close to a resting ball wakes the simulation (dribbling). */
 const WAKE_DISTANCE = 1.2;
-/** Server positions of moving members are extrapolated at most this far (s). */
 const EXTRAPOLATE_S = 0.25;
 const BODY_RADIUS = 0.38;
 const KEEPER_MORPH_ID = 'keeper';
@@ -153,9 +138,7 @@ export interface BallScore {
   byUser: Record<string, number>;
 }
 
-/** What the gateway does with ball events (it owns the Socket.IO server). */
 export interface BallSink {
-  /** `volatile`: may be dropped under congestion (in-motion states only). */
   toRoom(
     squadId: string,
     event: string,
@@ -182,17 +165,9 @@ interface BallRuntime {
   lastTouchBy: string | null;
   score: { total: number; byUser: Map<string, number> };
   ticks: number;
-  /** Last snapshot, kick or motion (idle balls of empty lobbies are swept). */
   at: number;
 }
 
-/**
- * Ephemeral lobby positions, in memory only (no database): the last accepted
- * state per (squadId, userId). The server validates every client update —
- * rate, bounds, speed and travel distance — and the gateway relays what it
- * accepted. There is no character physics here: each client simulates its
- * own avatar, everyone else interpolates the relayed states.
- */
 @Injectable()
 export class LobbyWorldService implements OnModuleDestroy {
   private readonly squads = new Map<string, Map<string, MemberState>>();
@@ -203,18 +178,14 @@ export class LobbyWorldService implements OnModuleDestroy {
   private readonly kickAt = new Map<string, number>();
   private readonly morphOf = new Map<string, { id: string; at: number }>();
   private sink: BallSink | null = null;
-  /** Reused every tick (no allocation per step for the players list). */
   private readonly players: BallPlayer[] = [];
-  /** Extra solids (the kiosk) while that flag is on. Empty keeps the sim unchanged. */
   private ballBoxes: readonly BallAabb[] = [];
   private readonly playerIds: string[] = [];
   private readonly stepInfo: BallStepInfo = { toucher: -1 };
-  /** Penalty shootouts by squad, and per-shot bookkeeping. */
   private readonly penalties = new Map<string, PenaltyState>();
   private readonly penShot = new Map<string, { keeperTouched: boolean }>();
   private penTimer: NodeJS.Timeout | null = null;
 
-  /** Validated move → the state to relay, or null to drop it silently. */
   acceptMove(
     move: LobbyMove,
     userId: string,
@@ -251,7 +222,6 @@ export class LobbyWorldService implements OnModuleDestroy {
       }
     }
 
-    // Penalties: during the kick the keeper stays on the line and the shooter behind the ball.
     const pen = this.penalties.get(move.squadId);
     if (pen && (pen.phase === 'aim' || pen.phase === 'flight')) {
       const box =
@@ -319,11 +289,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     return { moved, reliable: move.m === 0 || correction !== null, correction };
   }
 
-  /**
-   * Everyone's last known state in one squad (members who never moved are
-   * absent). With the ball on it also carries the ball and the session score
-   * (and creates the squad's ball on first use).
-   */
   snapshot(squadId: string, now: number, withBall = false): LobbySnapshot {
     const members: LobbySnapshot['members'] = [];
     for (const [userId, s] of this.squads.get(squadId) ?? []) {
@@ -363,23 +328,14 @@ export class LobbyWorldService implements OnModuleDestroy {
     return snap;
   }
 
-  // ── ball (Stage 2) ─────────────────────────────────────────────────────────
-
-  /** The gateway registers itself here so ball ticks can broadcast. */
   attachBallSink(sink: BallSink | null): void {
     this.sink = sink;
   }
 
-  /** Solids the ball bounces off. Empty (the default) leaves the sim unchanged. */
   setBallBoxes(boxes: readonly BallAabb[]): void {
     this.ballBoxes = boxes;
   }
 
-  /**
-   * Keeper easter egg: the member's equipped morph. `force` is the gateway's
-   * first read for a lobby member; MorphsService.equipped$ only updates users
-   * already known, so equips outside any lobby never grow the map.
-   */
   setMorph(userId: string, morphId: string, force = false): void {
     if (!force && !this.morphOf.has(userId)) return;
     this.morphOf.set(userId, { id: morphId, at: Date.now() });
@@ -394,14 +350,12 @@ export class LobbyWorldService implements OnModuleDestroy {
     return this.balls.has(squadId);
   }
 
-  /** Balls the shared interval is simulating right now (resting ones cost nothing). */
   get activeBallCount(): number {
     let n = 0;
     for (const ball of this.balls.values()) if (ball.moving) n++;
     return n;
   }
 
-  /** Is the shared simulation interval running (only while some ball moves)? */
   get ballTicking(): boolean {
     return this.ballTimer !== null;
   }
@@ -415,12 +369,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     return ball ? scoreOf(ball) : null;
   }
 
-  /**
-   * A validated kick: cooldown (250 ms per user), not during the goal freeze,
-   * and within 1.3 u of the ball measured from the server's own position of
-   * the kicker. Applies the impulse, marks the toucher, and broadcasts at once
-   * (non-volatile). Returns false when refused (silently).
-   */
   kick(k: KickInput, userId: string, now: number): boolean {
     const ball = this.balls.get(k.squadId);
     if (!ball || now < ball.frozenUntil || ball.resetTimer) return false;
@@ -453,7 +401,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     return true;
   }
 
-  /** One simulation tick for every moving ball (the shared 30 Hz interval). */
   tickBalls(now: number): void {
     const dt = 1 / BALL_TICK_HZ;
     let active = false;
@@ -527,7 +474,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.ensureBallTimer();
   }
 
-  /** Members as circles for the ball (moving ones extrapolated ≤ 250 ms; the keeper's save radius). */
   private collectPlayers(squadId: string, now: number): number {
     let n = 0;
     const activePen = this.penalties.get(squadId);
@@ -614,10 +560,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.ensureBallTimer();
   }
 
-  /**
-   * `lobby.ball.state`, compact (≤ 100 B in motion): sq = squad tag, b = [x, y,
-   * z, vx, vy, vz], m = moving. A kick adds k (kicker) and s (their seq).
-   */
   private broadcastBall(
     ball: BallRuntime,
     now: number,
@@ -661,7 +603,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     if (![...this.balls.values()].some((b) => b.moving)) this.stopBallTimer();
   }
 
-  /** Left, kicked or dropped past the grace period. */
   memberLeft(squadId: string, userId: string): void {
     this.morphOf.delete(userId);
     this.kickAt.delete(userId);
@@ -688,7 +629,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     if (!members.size) this.squadEmptied(squadId);
   }
 
-  /** The squad emptied or was deleted: positions, ball and score go with it. */
   squadEmptied(squadId: string): void {
     this.penalties.delete(squadId);
     this.penShot.delete(squadId);
@@ -697,7 +637,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.maybeStopSweep();
   }
 
-  /** Forget members idle past LOBBY_IDLE_MS and stale rate buckets. */
   sweep(now: number): void {
     for (const [squadId, members] of this.squads) {
       for (const [userId, s] of members) {
@@ -711,8 +650,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     for (const [userId, at] of this.kickAt) {
       if (now - at > LOBBY_SWEEP_MS) this.kickAt.delete(userId);
     }
-    // A ball at rest in a lobby nobody walks in any more; morphs of users
-    // who are no longer anywhere in a lobby.
     for (const [squadId, ball] of this.balls) {
       if (ball.moving || ball.resetTimer || this.squads.has(squadId)) continue;
       if (now - ball.at > LOBBY_IDLE_MS) this.balls.delete(squadId);
@@ -733,17 +670,10 @@ export class LobbyWorldService implements OnModuleDestroy {
       if (ball.resetTimer) clearTimeout(ball.resetTimer);
   }
 
-  // ── penalty shootout ──────────────────────────────────────────────────────
-
   penalty(squadId: string): PenaltyState | null {
     return this.penalties.get(squadId) ?? null;
   }
 
-  /**
-   * Starts a shootout for everyone standing in the lobby world (the requester
-   * first, then the others). Refused when one is running, during a goal freeze
-   * or with fewer than two players. The ball goes to the penalty spot.
-   */
   startPenalty(
     squadId: string,
     userId: string,
@@ -770,7 +700,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     return penaltyView(pen, now);
   }
 
-  /** Any player in the shootout may stop it. */
   cancelPenalty(squadId: string, userId: string, now: number): boolean {
     const pen = this.penalties.get(squadId);
     if (!pen || pen.phase === 'ended' || !pen.order.includes(userId)
@@ -822,7 +751,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.broadcastPenalty(match, now);
   }
 
-  /** One server-authoritative keeper dive per shot. */
   divePenalty(squadId: string, userId: string, dir: number, now: number): boolean {
     const pen = this.penalties.get(squadId);
     const keeper = this.squads.get(squadId)?.get(userId);
@@ -831,7 +759,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     return true;
   }
 
-  /** The shootout's clock (4 Hz while any runs): arrivals, deadlines, the next turn, the end. */
   tickPenalties(now: number): void {
     for (const [squadId, pen] of this.penalties) {
       if (pen.dive && !pen.dive.finished && !divePose(pen.dive, now).locked) {
@@ -868,7 +795,6 @@ export class LobbyWorldService implements OnModuleDestroy {
         case 'result':
           if (now >= pen.phaseUntil) {
             advancePenalty(pen, now);
-            // `advancePenalty` changed the phase (TS still narrows it to 'result' here).
             if ((pen.phase as string) === 'setup')
               this.placePenaltyBall(squadId, now);
             this.broadcastPenalty(pen, now);
@@ -886,11 +812,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     if (!this.penalties.size) this.stopPenTimer();
   }
 
-  /**
-   * One ball step during a shootout's kick: a goal scores, a keeper touch is
-   * remembered (a save), a ball that comes to rest or crosses the goal line
-   * wide decides the shot. Returns true when the step was fully handled.
-   */
   private penaltyBallStep(
     pen: PenaltyState,
     ball: BallRuntime,
@@ -908,9 +829,6 @@ export class LobbyWorldService implements OnModuleDestroy {
       this.resolvePenalty(pen, 'goal', now);
       return true;
     }
-    // Decided without a goal: past the goal line (wide), coming back out of the
-    // goal end (a save, the post, the wall) or at rest. The first ticks after
-    // the kick are skipped so the strike itself never counts as "coming back".
     const sinceKick = now - (pen.phaseUntil - FLIGHT_MS);
     const wide = b.z < GOAL_LINE_Z - 0.3;
     const back = sinceKick > 250 && b.vz > 0.2;
@@ -939,7 +857,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.broadcastPenalty(pen, now);
   }
 
-  /** Are the shooter and the keeper on their spots (server positions)? */
   private pairArrived(squadId: string, pen: PenaltyState): boolean {
     const members = this.squads.get(squadId);
     const s = members?.get(pen.shooterId);
@@ -952,7 +869,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     );
   }
 
-  /** The ball, still, on the penalty spot (broadcast as a placement). */
   private placePenaltyBall(squadId: string, now: number): void {
     const ball = this.ensureBall(squadId);
     if (ball.resetTimer) clearTimeout(ball.resetTimer);
@@ -977,7 +893,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     );
   }
 
-  /** The shootout is over: the ball drops back on the centre spot. */
   private freePlayAgain(squadId: string, now: number): void {
     const ball = this.balls.get(squadId);
     if (!ball) return;
@@ -1019,7 +934,6 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.penTimer = null;
   }
 
-  /** Token bucket: LOBBY_MOVE_RATE tokens, refilled continuously. */
   private takeToken(userId: string, now: number): boolean {
     const b = this.buckets.get(userId);
     if (!b) {

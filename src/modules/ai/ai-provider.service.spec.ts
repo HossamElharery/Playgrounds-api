@@ -31,7 +31,6 @@ const fail = (status: number) => ({ ok: false, status });
 const GOOD = JSON.stringify({ intent: 'block', confidence: 0.9 });
 const REQUEST = { systemPrompt: 'sys', userPrompt: 'اقفل ملعب 2 بكرة من 5 لـ 7' };
 
-/** Routes a mocked fetch by the model asked of OpenRouter (or the Gemini host), so each route gets its own canned answer. */
 function routed(answers: Record<string, () => unknown>) {
   const calls: string[] = [];
   const fn = jest.fn(async (url: string, init?: { body?: string }) => {

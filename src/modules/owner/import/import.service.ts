@@ -23,18 +23,15 @@ export type ImportKind = 'bookings' | 'customers';
 export interface ImportConfig {
   venueId: string;
   kind: ImportKind;
-  /** 1-based row of the headers; detected when absent. */
   headerRow?: number;
   mapping?: ColumnMapping;
   options: ImportOptions;
-  /** 1-based sheet rows the owner un-ticked in the preview. */
   skipRows: number[];
 }
 
 export type RowStatus = 'ok' | 'warning' | 'error' | 'duplicate' | 'skipped';
 
 export interface PreviewRow {
-  /** 1-based row number in the sheet — what the owner sees in Excel. */
   row: number;
   status: RowStatus;
   issues: ImportIssue[];
@@ -54,7 +51,6 @@ export interface PreviewRow {
 const KINDS: ImportKind[] = ['bookings', 'customers'];
 const MAX_SHOWN_ROWS = 600;
 
-/** Only what we understand survives; everything else about the request is ignored. */
 export function sanitizeConfig(raw: unknown): ImportConfig {
   let obj: Record<string, unknown>;
   try {
@@ -97,7 +93,6 @@ export function sanitizeConfig(raw: unknown): ImportConfig {
   return { venueId, kind, headerRow, mapping, options, skipRows };
 }
 
-/** The first rows of an owner's sheet are often a title; the header row is the one that reads most like headers. */
 export function detectHeaderRow(rows: string[][]): { index: number; matched: number } {
   let best = { index: 0, matched: -1 };
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
@@ -114,7 +109,6 @@ export class ImportService {
     private readonly bookings: OwnerBookingsService,
   ) {}
 
-  /** Reads the file and tells the owner what would happen. Writes nothing. */
   async preview(user: AuthenticatedUser, file: { buffer: Buffer; originalname?: string } | undefined, rawConfig: unknown) {
     const run = await this.analyse(user, file, rawConfig);
     return {
@@ -133,7 +127,6 @@ export class ImportService {
     };
   }
 
-  /** Imports every row that is fine (or only has warnings). Rows with errors are left out and reported. */
   async commit(user: AuthenticatedUser, file: { buffer: Buffer; originalname?: string } | undefined, rawConfig: unknown) {
     const run = await this.analyse(user, file, rawConfig);
     const importable = run.rows.filter((r) => r.status === 'ok' || r.status === 'warning');
@@ -191,7 +184,6 @@ export class ImportService {
                 sourceKey: b.sourceKey,
                 sourceLabel: b.sourceLabel ?? null,
                 notes: b.notes,
-                // History is not anybody's open drawer, and its money dates from the game, not from today.
                 paymentRecordedBy: null,
                 paidAt: new Date(Math.min(b.startsAt.getTime(), now)),
                 importBatchId: batch.id,
@@ -244,10 +236,6 @@ export class ImportService {
     }));
   }
 
-  /**
-   * Takes a whole import back. Refused once somebody has taken money on one of its bookings
-   * since — that money is in a drawer and must not vanish with the booking.
-   */
   async undo(user: AuthenticatedUser, batchId: string) {
     const batch = await this.prisma.venueImportBatch.findUnique({ where: { id: batchId } });
     if (!batch) throw new NotFoundException('Import not found');
@@ -274,8 +262,6 @@ export class ImportService {
     return { removed: deleted.count };
   }
 
-  // ---- the shared analysis behind preview and commit ----------------------------------------
-
   private async analyse(user: AuthenticatedUser, file: { buffer: Buffer; originalname?: string } | undefined, rawConfig: unknown) {
     const config = sanitizeConfig(rawConfig);
     if (!file?.buffer?.length) throw new BadRequestException('Attach an Excel or CSV file');
@@ -293,7 +279,6 @@ export class ImportService {
     const headerIndex = config.headerRow ? config.headerRow - 1 : detected.index;
     const headers = table.rows[headerIndex] ?? [];
     const suggested = suggestMapping(headers);
-    // No recognisable header at all: treat the first row as data, columns by position.
     const headerless = detected.matched <= 0 && !config.headerRow;
     const dataStart = headerless ? 0 : headerIndex + 1;
     const mapping: ColumnMapping = config.mapping ?? suggested.mapping;
@@ -388,11 +373,6 @@ export class ImportService {
     };
   }
 
-  /**
-   * Rows that collide with each other or with what the venue already has. The exact same booking
-   * (same court, start and customer) is a harmless duplicate from an earlier import; anything
-   * else that overlaps is a real conflict the owner must resolve.
-   */
   private async markConflicts(venueId: string, rows: PreviewRow[], byRow: Map<number, NormalizedBooking>) {
     const live = rows.filter((r) => byRow.has(r.row) && r.status !== 'error' && r.status !== 'skipped');
     if (!live.length) return;

@@ -7,7 +7,6 @@ import type { AuthenticatedUser } from '../../../common/types/authenticated-user
 import { addDays, isLocalDate, zonedDate } from '../../../common/utils/fixed-series.util';
 import { CreateExpenseDto, UpdateExpenseDto } from './expenses.dto';
 
-/** `2026-03-31` + 1 month → `2026-04-30`: the day is kept when the month has it, else clamped. */
 export function monthlyDate(anchor: string, monthOffset: number): string {
   const [y, m, d] = anchor.split('-').map(Number);
   const first = new Date(Date.UTC(y, m - 1 + monthOffset, 1));
@@ -15,10 +14,6 @@ export function monthlyDate(anchor: string, monthOffset: number): string {
   return `${first.getUTCFullYear()}-${String(first.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
 }
 
-/**
- * Every date a monthly template should have a copy on, after its own date and up to
- * `today` (and its `until` month). Pure, so the calendar rules are easy to test.
- */
 export function recurringDates(anchor: string, today: string, until?: string | null): string[] {
   const out: string[] = [];
   for (let i = 1; i < 240; i++) {
@@ -114,7 +109,6 @@ export class ExpensesService {
     return { ok: true };
   }
 
-  /** Totals for a local-date range (inclusive) — shared with the profit summary and the exports. */
   async totals(venueId: string, from: string, to: string) {
     await this.materialize(venueId);
     const rows = await this.prisma.venueExpense.groupBy({
@@ -129,7 +123,6 @@ export class ExpensesService {
     return { total: byCategory.reduce((s, r) => s + r.amount, 0), byCategory };
   }
 
-  /** Creates the missing monthly copies of every template of a venue (idempotent, race-safe). */
   async materialize(venueId: string): Promise<number> {
     const venue = await this.prisma.venue.findUnique({
       where: { id: venueId },

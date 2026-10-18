@@ -52,8 +52,6 @@ function build(subs: any[]) {
 describe('SubscriptionsService', () => {
   it('extend: adds the days from the current end, records who took what, and tells the owner', async () => {
     const { svc, tx, notifications } = build([sub({ currentPeriodEnd: at(10) })]);
-    // `extend` counts from the later of "now" and the current end. Pin the clock to the
-    // fixture's `now`, or this passes only while the real date is before the fixture's end.
     jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
     try {
       await svc.extend(admin, 'v1', { days: 90, amount: 200000, method: 'instapay', note: 'paid in full' });
@@ -71,8 +69,6 @@ describe('SubscriptionsService', () => {
   it('the owner view shows the struck-through list price and never the agreed one', async () => {
     const { svc, prisma } = build([sub()]);
     prisma.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'owner-1' });
-    // forOwner reads the real clock; pin it to the fixture's `now` so the
-    // 3-days-left subscription stays "expiring" whatever day the suite runs.
     jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
     const view = await svc
       .forOwner({ id: 'owner-1', phone: '', name: 'O', roles: ['owner'] } as never, 'v1')

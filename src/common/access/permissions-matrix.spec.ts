@@ -10,13 +10,6 @@ import { OwnerController } from '../../modules/owner/owner.controller';
 import { TeamController } from '../../modules/team/team.controller';
 import { SubscriptionsController } from '../../modules/subscriptions/subscriptions.controller';
 
-/**
- * Generated from the real controllers' metadata and run through the real AuthGuard:
- * for every staff-reachable route, a staff account holding every permission EXCEPT the
- * ones the route needs is refused, one holding exactly those is admitted, and a route
- * marked owner-only refuses staff no matter what they hold. New routes are covered
- * automatically — nobody has to remember to add a case.
- */
 const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController, OwnerController, TeamController, SubscriptionsController];
 
 function handlers(controller: Function) {

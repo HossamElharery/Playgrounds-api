@@ -1,17 +1,3 @@
-/**
- * Manual quality check — NOT part of the Jest suite. Run with:
- *   npm run ai:eval                          (all default models, both assistants)
- *   npm run ai:eval -- --only=captain
- *   npm run ai:eval -- --models=google/gemini-3.8-flash,deepseek/deepseek-v4.1-flash
- *   npm run ai:eval -- --reasoning=low
- *   npm run ai:eval -- --save                (also store the results for the admin Quality tab)
- *
- * Sends real sentences — Egyptian Arabic, English, voice-transcript slips —
- * through the same prompts the app uses, one model at a time with no fallback,
- * and scores what comes back against what a person would expect. Use it before
- * trusting a model, and after changing a prompt. It spends real (tiny) money.
- * The cases live in modules/ai/eval and are shared with the admin Quality tab.
- */
 import * as dotenv from 'dotenv';
 dotenv.config();
 import { PrismaClient, type Prisma } from '@prisma/client';

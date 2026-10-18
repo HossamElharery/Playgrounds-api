@@ -15,11 +15,6 @@ interface Catalog {
   districts: CatalogEntry[];
 }
 
-/**
- * Small, growable list of local slang the model won't reliably know from
- * training alone. Start small — this is meant to be extended over time, not
- * to become a full dictionary.
- */
 const SYNONYMS: Record<string, string> = {
   'بادل': 'padel',
   'خماسي': '5-a-side football court',
@@ -30,12 +25,6 @@ const SYNONYMS: Record<string, string> = {
   'بلياردو': 'billiards/snooker',
 };
 
-/**
- * Builds the "context" that makes the model look like it knows the platform:
- * real venue/court/district/sport names pulled live from the database on
- * every call, plus a small synonym list. This is not fine-tuning — the model
- * has no memory between calls, so this string is re-sent every time.
- */
 @Injectable()
 export class AiContextService {
   constructor(
@@ -45,7 +34,6 @@ export class AiContextService {
 
   private cache: { exp: number; value: Catalog } | null = null;
 
-  /** Refreshed at least once a minute — no manual setup needed for new venues/sports. */
   private async loadCatalog(): Promise<Catalog> {
     if (this.cache && this.cache.exp > Date.now()) return this.cache.value;
 
@@ -62,12 +50,10 @@ export class AiContextService {
     return value;
   }
 
-  /** Real sport + district names with their slugs, for callers that answer in the player's own words. */
   async listCatalog(): Promise<Catalog> {
     return this.loadCatalog();
   }
 
-  /** Real sport + district names, formatted for the system prompt. */
   async buildPlatformContext(): Promise<string> {
     const { sports, districts } = await this.loadCatalog();
     return [
@@ -77,7 +63,6 @@ export class AiContextService {
     ].join('\n');
   }
 
-  /** The real slugs the model is allowed to use — anything else the model returns must be dropped, never trusted. */
   async listValidSlugs(): Promise<{ sports: Set<string>; districts: Set<string> }> {
     const { sports, districts } = await this.loadCatalog();
     return {
@@ -86,7 +71,6 @@ export class AiContextService {
     };
   }
 
-  /** Real court names for one venue — used by the owner schedule assistant. */
   async buildVenueContext(venueId: string): Promise<string> {
     const courts = await this.prisma.court.findMany({
       where: { venueId },

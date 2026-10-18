@@ -58,7 +58,6 @@ export class CreateMatchPostDto {
   @IsString()
   notes?: string;
 
-  // Matchena gaming expansion — MATCHENA_GAMING_EXPANSION_BLUEPRINT.md §3.6/§3.10.
   @ApiPropertyOptional({
     description: 'GameCatalogEntry id/slug — only for gaming-station sports',
   })

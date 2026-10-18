@@ -103,7 +103,6 @@ describe('gaming release audit: real PostgreSQL cross-module regressions',()=>{
    {provide:GamingCommerceService,useValue:commerce},{provide:GamingReceiptsService,useValue:receipts},
   ]}).compile();
   const app=module.createNestApplication();
-  // Only identity transport is replaced; guards re-read real roles and grants from the disposable database.
   const staff=await db.user.findUniqueOrThrow({where:{phone:'+201099993002'}});
   app.use((req:any,_res:any,next:()=>void)=>{if(req.headers['x-fixture-identity']==='owner')req.user={...owner};if(req.headers['x-fixture-identity']==='staff')req.user={id:staff.id,name:staff.name,phone:staff.phone,roles:['staff']};next();});
   app.setGlobalPrefix('api/v1');app.useGlobalPipes(new ValidationPipe({whitelist:true,forbidNonWhitelisted:true,transform:true,transformOptions:{enableImplicitConversion:true}}));

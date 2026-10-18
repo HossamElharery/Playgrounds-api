@@ -13,14 +13,12 @@ import type { AiReasoningEffort } from '../ai-provider.types';
 
 const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 const MAX_MODELS_PER_RUN = 3;
-/** A run stops starting new cases once it has spent this much; the total for a job is capped too. */
 const MAX_COST_PER_MODEL_USD = 0.25;
 const MAX_COST_PER_JOB_USD = 0.5;
 const MIN_GAP_MS = 30_000;
 const SHADOW_MAX_SAMPLE = 40;
 const SHADOW_MAX_COST_USD = 0.25;
 const JOB_KEEP_MS = 10 * 60_000;
-/** Rough prices per model for the "this will cost about" line: what the last measured runs came to. */
 const ESTIMATE_PER_CASE_USD = { captain: 0.0015, owner: 0.002 };
 
 export interface Job {
@@ -42,7 +40,6 @@ interface ShadowDiff {
 
 const REASONINGS: AiReasoningEffort[] = ['minimal', 'low', 'medium', 'high'];
 
-/** Quality runs for the admin: the `ai:eval` cases on demand, and shadow comparison of a candidate model on real (redacted) questions. */
 @Injectable()
 export class AiAdminQualityService {
   private readonly logger = new Logger(AiAdminQualityService.name);
@@ -133,13 +130,10 @@ export class AiAdminQualityService {
     if (!clean.length || clean.length > MAX_MODELS_PER_RUN) throw new BadRequestException(`give 1-${MAX_MODELS_PER_RUN} models`);
     for (const m of clean) {
       if (!MODEL_ID.test(m) || m.length > 100) throw new BadRequestException(`not a model id: ${m.slice(0, 40)}`);
-      // The owner assistant's real traffic never leaves Google's models; its quality runs follow the same rule.
       if (kind === 'owner' && !m.startsWith('google/')) throw new BadRequestException('the owner assistant is only evaluated on google/* models');
     }
     return clean;
   }
-
-  // ----------------------------------------------------------- eval run ----
 
   async startEval(body: { kind: 'captain' | 'owner' | 'both'; models?: string[]; reasoning?: string }, actorUserId: string) {
     if (!this.provider.enabled) throw new BadRequestException('no AI key is configured');
@@ -216,14 +210,6 @@ export class AiAdminQualityService {
     }
   }
 
-  // -------------------------------------------------------------- shadow ----
-
-  /**
-   * Replays a sample of real (already redacted) player questions on a candidate
-   * model and shows where it reads them differently from the model that really
-   * answered. Nothing is shown to any player; the candidate's answers go nowhere
-   * but this report. Multi-turn context is not replayed, so follow-ups can differ for that reason alone.
-   */
   async startShadow(body: { model: string; sampleSize?: number; days?: number }, actorUserId: string) {
     if (!this.provider.enabled) throw new BadRequestException('no AI key is configured');
     const [model] = this.checkModels([body.model], 'captain');

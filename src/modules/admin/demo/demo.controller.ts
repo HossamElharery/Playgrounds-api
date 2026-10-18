@@ -6,7 +6,6 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import { DemoService } from './demo.service';
 
-/** Platform admin only. Demo venues are for sales calls and never touch real data. */
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)

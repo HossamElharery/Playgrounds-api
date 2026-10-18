@@ -2,7 +2,6 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsInt, Max, Min } from 'class-validator';
 import { PaymentMethod } from '@prisma/client';
 
-/** PSP methods allowed for wallet top-up. Cash stays owner walk-in only. */
 export const WALLET_TOP_UP_METHODS = [
   'card',
   'vodafone',

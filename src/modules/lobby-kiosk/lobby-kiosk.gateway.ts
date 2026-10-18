@@ -14,11 +14,6 @@ import { LobbyKioskService } from './lobby-kiosk.service';
 
 const MAX_ID = 64;
 
-/**
- * `lobby.kiosk.*` on the same Socket.IO server as RealtimeGateway.
- * Voice and `inOrder` are untouched: these handlers are separate, like
- * LobbyWorldGateway. Membership is "this socket is in `squad:<id>`".
- */
 @Injectable()
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class LobbyKioskGateway implements OnGatewayInit, OnModuleDestroy {
@@ -157,7 +152,6 @@ export class LobbyKioskGateway implements OnGatewayInit, OnModuleDestroy {
     await this.kiosk.removeShortlist(squadId, userId, data.venueId);
   }
 
-  /** Flag, auth, room, then the per-user rate limit. Null means "drop it". */
   private guard(client: Socket, squadId: unknown): string | null {
     if (!lobbyKioskEnabled(this.config)) return null;
     const userId = authedUserId(client);
@@ -181,7 +175,6 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** Map camera only. A GPS fix is not a field on this payload. */
 function mapCenter(value: unknown): { lat: number; lng: number; zoom: number } | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const c = value as { lat?: unknown; lng?: unknown; zoom?: unknown };

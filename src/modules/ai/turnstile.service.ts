@@ -15,13 +15,6 @@ const MAP_MAX = 5_000;
 export type ChallengeResult = 'ok' | 'failed' | 'error';
 export type SuspicionReason = 'volume' | 'burst' | 'device_churn' | 'no_device';
 
-/**
- * Cloudflare Turnstile for visitors who look automated. Dormant until
- * `TURNSTILE_SECRET_KEY` is set: with no key every method says "nothing to do",
- * so nothing changes for anyone. Signed-in players are never challenged, and
- * if Cloudflare cannot be reached the caller lets the visitor through under a
- * tighter allowance instead of blocking them.
- */
 @Injectable()
 export class TurnstileService {
   private readonly logger = new Logger(TurnstileService.name);
@@ -42,7 +35,6 @@ export class TurnstileService {
     return this.secret.length > 0;
   }
 
-  /** The key the "this visitor passed" memory is stored under: the device when the browser sent one, else the address. */
   private passKey(ip: string | undefined, deviceId: string | undefined): string {
     return deviceId ? `dev:${deviceId}` : `ip:${ip || 'unknown'}`;
   }
@@ -57,10 +49,6 @@ export class TurnstileService {
     this.verified.set(this.passKey(ip, deviceId), now + VERIFIED_FOR_MS);
   }
 
-  /**
-   * Does this visitor look like a script? Records the message for the burst
-   * and device-churn checks, so call it once per visitor message.
-   */
   async suspicion(ip: string | undefined, deviceId: string | undefined, now = Date.now()): Promise<SuspicionReason | null> {
     if (!deviceId) return 'no_device';
     const who = this.passKey(ip, deviceId);
@@ -85,7 +73,6 @@ export class TurnstileService {
     return sent >= threshold ? 'volume' : null;
   }
 
-  /** Asks Cloudflare whether the token a visitor's browser produced is genuine. */
   async verify(token: string, ip?: string): Promise<ChallengeResult> {
     if (!this.enabled) return 'ok';
     if (!token || token.length > 2048) return 'failed';
@@ -107,7 +94,6 @@ export class TurnstileService {
       const json = (await res.json()) as { success?: boolean; 'error-codes'?: string[] };
       if (json.success === true) return 'ok';
       const codes = json['error-codes'] ?? [];
-      // A wrong secret is our configuration problem, not the visitor's: do not punish them for it.
       if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) {
         this.logger.error('[turnstile] TURNSTILE_SECRET_KEY was rejected by Cloudflare — check the key in Coolify');
         return 'error';

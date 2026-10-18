@@ -20,11 +20,9 @@ import {
 
 const DAY_MS = 86_400_000;
 const MIN_DATA_DAYS = 21;
-/** Fewer real bookings than this in the analysis window and an "idle hour" is just a venue nobody has booked yet. */
 const MIN_BOOKINGS = 10;
 const DISMISS_DAYS = 28;
 const WEEKS_PER_MONTH = 52 / 12;
-/** How much of the empty time a discount is assumed to fill. Deliberately modest: an estimate, never a promise. */
 const CONSERVATIVE_FILL = 0.25;
 const OUTCOME_AFTER_DAYS = 14;
 
@@ -79,9 +77,7 @@ interface Ctx {
 export class InsightsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // ------------------------------------------------------------------ read
 
-  /** The occupancy map, the idle windows worth a discount, and how the last weeks compare. */
   async occupancy(user: AuthenticatedUser, venueId: string, weeks = 8) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const ctx = await this.context(venueId);
@@ -89,7 +85,6 @@ export class InsightsService {
     const today = localDate(now, ctx.timeZone);
     const dataSince = await this.dataSince(ctx, venueId);
     const dataDays = Math.max(0, Math.floor((now.getTime() - dataSince.getTime()) / DAY_MS));
-    // Time alone is not data: a venue open for months with almost no bookings has nothing to learn from.
     const bookingsInWindow = await this.prisma.booking.count({
       where: {
         venueId,
@@ -151,7 +146,6 @@ export class InsightsService {
     };
   }
 
-  /** Discounts applied from here (active and recently ended), each with how the window did since. */
   async listDiscounts(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const ctx = await this.context(venueId);
@@ -184,7 +178,6 @@ export class InsightsService {
     return { items };
   }
 
-  // ----------------------------------------------------------------- write
 
   async applyDiscount(user: AuthenticatedUser, dto: ApplyDiscountDto) {
     await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
@@ -220,7 +213,6 @@ export class InsightsService {
       }
       perHour.push({ hour, price: rule.priceAmount, currency: rule.currency });
     }
-    // One rule per stretch of equal price, so a peak boundary inside the window is respected.
     const segments: { from: number; to: number; price: number; currency: string }[] = [];
     for (const h of perHour) {
       const last = segments[segments.length - 1];
@@ -295,7 +287,6 @@ export class InsightsService {
     return { id: discount.id, validUntil, ruleCount: segments.length };
   }
 
-  /** Ends a discount early: the everyday price is back at once. */
   async endDiscount(user: AuthenticatedUser, id: string) {
     const row = await this.prisma.pricingDiscount.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Discount not found');
@@ -317,7 +308,6 @@ export class InsightsService {
     return { ok: true };
   }
 
-  /** "Not now": the suggestion stays hidden for four weeks. */
   async dismiss(user: AuthenticatedUser, dto: WindowDto) {
     await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
     if (dto.endHour <= dto.startHour) throw new BadRequestException('endHour must be after startHour');
@@ -338,7 +328,6 @@ export class InsightsService {
     return { ok: true };
   }
 
-  // -------------------------------------------------------------- internals
 
   private windowSuggestion(
     ctx: Ctx,
@@ -380,7 +369,6 @@ export class InsightsService {
     };
   }
 
-  /** Windows that must not be suggested: a discount is running there, or the owner said "not now". */
   private async hiddenWindows(venueId: string, now: Date) {
     const rows = await this.prisma.pricingDiscount.findMany({
       where: {
@@ -444,7 +432,6 @@ export class InsightsService {
         where: {
           venueId: ctx.venue.id,
           courtId: { in: courtIds },
-          // A no-show still kept the slot away from everyone else, so it counts as occupied.
           status: { in: ['confirmed', 'completed', 'no_show'] },
           slotStart: { lt: rangeEnd },
           slotEnd: { gt: rangeStart },
@@ -506,7 +493,6 @@ export class InsightsService {
     };
   }
 
-  /** Measuring starts when the venue went live, or with its first booking — never before, or it would read as "empty". */
   private async dataSince(ctx: Ctx, venueId: string): Promise<Date> {
     const first = await this.prisma.booking.findFirst({
       where: { venueId, status: { in: ['confirmed', 'completed', 'no_show'] } },

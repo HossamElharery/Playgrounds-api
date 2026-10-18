@@ -27,7 +27,6 @@ import {
 } from './morph-quota.util';
 import { lobbyMorphsEnabled } from './morphs-flag';
 
-/** The client-facing slice of a quota evaluation. */
 export interface MorphQuotaView {
   remainingFree: number | null;
   bonusRolls: number;
@@ -56,7 +55,6 @@ const MARK_SEEN_MAX = 50;
 
 @Injectable()
 export class MorphsService {
-  /** Every change of a user's equipped morph (Lobby World reads it for the keeper's save radius). */
   readonly equipped$ = new Subject<{ userId: string; morphId: string }>();
 
   constructor(
@@ -65,7 +63,6 @@ export class MorphsService {
     private readonly config: ConfigService,
   ) {}
 
-  /** Re-read on every call so a config reload never needs a code change. */
   private policy(): MorphRollPolicy {
     return policyFromEnv(this.config.get<string>('MORPH_DAILY_FREE_ROLLS'));
   }
@@ -95,7 +92,6 @@ export class MorphsService {
       where: { userId },
       orderBy: { firstObtainedAt: 'desc' },
     });
-    // Rows for ids the current catalog no longer knows are hidden, never deleted.
     const known = rows.filter((r) => morphById(r.morphId));
     const now = new Date();
     const quota = await this.quotaFor(
@@ -145,9 +141,7 @@ export class MorphsService {
     const outcome = await this.prisma.$transaction(
       async (tx): Promise<RollOutcome> => {
         await this.ensureProfile(tx, userId);
-        // Serializes double taps and multiple tabs of one user (same idea as the squad seat lock).
         await tx.$executeRaw`SELECT 1 FROM "UserMorphProfile" WHERE "userId" = ${userId} FOR UPDATE`;
-        // A concurrent retry with the same key may have committed while we waited on the lock.
         const raced = await tx.morphRoll.findUnique({
           where: { userId_clientRollId: { userId, clientRollId } },
         });
@@ -324,7 +318,6 @@ export class MorphsService {
     return { updated: count };
   }
 
-  /** Admin: give a user a morph (source GRANT). Does not equip. Audited. */
   async grant(adminId: string, userId: string, morphId: string) {
     if (!morphById(morphId)) {
       throw new ApiException(
@@ -344,8 +337,6 @@ export class MorphsService {
         'User not found',
       );
     const granted = await this.prisma.$transaction(async (tx) => {
-      // skipDuplicates (ON CONFLICT DO NOTHING) stays safe against a roll
-      // granting the same morph at the same moment.
       const { count } = await tx.userMorph.createMany({
         data: [{ userId, morphId, source: 'GRANT' }],
         skipDuplicates: true,
@@ -374,7 +365,6 @@ export class MorphsService {
     return { userId, morphId, granted };
   }
 
-  /** Admin: roll analytics for the last `days` days. */
   async stats(days: number) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const where = { createdAt: { gte: since } };
@@ -409,12 +399,6 @@ export class MorphsService {
     };
   }
 
-  /**
-   * Creates the profile lazily. A Prisma upsert races on the very first
-   * double tap (both inserts collide → 409); ON CONFLICT DO NOTHING waits for
-   * the winner instead, so the loser reaches the row lock and gets a clean
-   * MORPH_COOLDOWN.
-   */
   private async ensureProfile(db: Tx, userId: string): Promise<void> {
     await db.$executeRaw`INSERT INTO "UserMorphProfile" ("userId", "updatedAt") VALUES (${userId}, now()) ON CONFLICT ("userId") DO NOTHING`;
   }
@@ -448,7 +432,6 @@ export class MorphsService {
     };
   }
 
-  /** Same result for a retried `clientRollId`, with no side effects. */
   private async replay(
     db: Tx,
     roll: {

@@ -84,7 +84,6 @@ export class GamingSessionsService {
     return this.commands.command(user,'sessions.start','session.start',dto,async (tx,now) => {
       const venue = await tx.venue.findUniqueOrThrow({where:{id:dto.venueId}});
       if (!venue.gamingSessionsEnabled) throw new ForbiddenException({code:'SESSIONS_DISABLED'});
-      // Immediate manual starts require an explicit offset and may only be recent.
       const startedAt = dto.startMode==='now' ? now : new Date(dto.startsAt ?? '');
       if (!Number.isFinite(startedAt.getTime()) || (dto.startMode==='manual' && !/(Z|[+-]\d{2}:\d{2})$/.test(dto.startsAt ?? '')) || startedAt > now || now.getTime()-startedAt.getTime()>60000) throw new BadRequestException({code:'SESSION_START_TIME_INVALID'});
       const {unit,rule} = await this.rate(tx,dto.venueId,dto.unitId,startedAt,dto.playMode);
@@ -147,7 +146,6 @@ export class GamingSessionsService {
       if(dto.multiHourlyRateMinor!==undefined){next.multiHourlyRateMinor=dto.multiHourlyRateMinor;selectGamingTariff(next,dto.hourlyRateMinor,'multi');}
       const venue=await tx.venue.findUniqueOrThrow({where:{id:dto.venueId}});
       await tx.court.update({where:{id:unit.id},data:{gamingHourlyRateMinor:dto.hourlyRateMinor,...(unit.sport.activityKind==='gaming-station'?{gamingConfig:next as Prisma.InputJsonValue}: {})}});
-      // Booking APIs use the same standard base tariff; running sessions keep their snapshots.
       const baseAmount=Math.round(rescaleMoney(dto.hourlyRateMinor,isoMoneyScale(venue.currency),100));
       const updated=await tx.pricingRule.updateMany({where:{courtId:unit.id,label:'base'},data:{priceAmount:baseAmount}});
       if(!updated.count)await tx.pricingRule.create({data:{courtId:unit.id,label:'base',daysOfWeek:[],startTime:'00:00',endTime:'24:00',priceAmount:baseAmount,currency:venue.currency}});
@@ -201,7 +199,6 @@ export class GamingSessionsService {
       if(dto.targetUnitId===s.unitId) throw new BadRequestException({code:'SAME_UNIT'});
       const playMode=(gamingConfigObject(s.segments[s.segments.length-1]?.rateSnapshot).playMode??'standard') as PlayMode;
       const {unit,rule}=await this.rate(tx,dto.venueId,dto.targetUnitId,now,playMode);
-      // The shared venue lock precedes sorted resource locks for opposite transfers.
       await tx.$queryRaw(Prisma.sql`SELECT id FROM "Court" WHERE id IN (${Prisma.join([s.unitId,unit.id].sort())}) ORDER BY id FOR UPDATE`);
       await tx.usageSegment.updateMany({where:{sessionId:id,endedAt:null},data:{endedAt:now}});
       await tx.usageSegment.create({data:{sessionId:id,unitId:unit.id,startedAt:now,hourlyRateMinor:rule.priceAmount,currency:rule.currency,rateSnapshot:{ruleId:rule.id,label:rule.label,playMode,controllers:playMode==='multi'?4:2}}});

@@ -14,11 +14,6 @@ export interface ApiResponse<T> {
   pagination?: unknown;
 }
 
-/**
- * Wraps every successful response in `{ message, result, pagination? }`.
- * A handler may return `{ message, result, pagination }` directly to
- * override the default message/shape (paginated list endpoints do this).
- */
 @Injectable()
 export class ResponseInterceptor<T>
   implements NestInterceptor<T, ApiResponse<T>>

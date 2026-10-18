@@ -5,10 +5,6 @@ import {
   UpdateGameCatalogEntryDto,
 } from './dto/game-catalog.dto';
 
-/**
- * The game library (§3.6/§7.3) — CMS-managed content (admin add/edit/retire),
- * never user-generated. Used by MatchPost.gameId and per-game skill tiers.
- */
 @Injectable()
 export class GamesService {
   constructor(private readonly prisma: PrismaService) {}

@@ -39,7 +39,6 @@ export interface SocialOutcome {
   abstained: number;
   noResponse: number;
 }
-/** Stored only on the server. Never serialize this object to a socket. */
 export interface SocialState {
   id: string;
   squadId: string;

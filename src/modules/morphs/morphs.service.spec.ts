@@ -1,11 +1,6 @@
 import { MorphsService } from './morphs.service';
 import { MORPH_CATALOG } from './morph-catalog';
 
-/**
- * Minimal in-memory stand-in for the Prisma calls MorphsService makes, so the
- * transaction logic (idempotency, cooldown, quota, ownership) is exercised
- * end to end rather than asserted call by call.
- */
 function fakePrisma() {
   const profiles = new Map<string, any>();
   const morphs: any[] = [];
@@ -209,7 +204,6 @@ function setup(env: Record<string, string | undefined> = {}) {
 const ids = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-/** Lets the next roll pass the 1.2 s cooldown without real waiting. */
 function expireCooldown(prisma: any, userId = 'u1') {
   const p = prisma.profiles.get(userId);
   if (p?.lastRollAt) p.lastRollAt = new Date(p.lastRollAt.getTime() - 5000);

@@ -62,11 +62,6 @@ export class PartnersService {
     @Optional() private readonly venueTexts?: VenueTextService,
   ) {}
 
-  /**
-   * Older partner forms copied the one name the owner entered into both language fields. Repair
-   * that shape before publication, outside the DB transaction, so Explore never receives Arabic
-   * text as `nameEn` (and an AI timeout never keeps a transaction open).
-   */
   private async localizePublicText(payload: PartnerApplicationPayload) {
     if (!this.venueTexts) return;
     const repair = async (
@@ -195,9 +190,6 @@ export class PartnersService {
     });
     const names = this.namesFrom(payload);
     const editingLive = app.status === 'approved';
-    // A live listing saved with nothing changed must stay live. Without this a
-    // stray "send" on an already-approved venue pulled it off discovery and put
-    // a second, empty-looking review in the admin queue.
     if (
       editingLive &&
       isDeepStrictEqual(
@@ -381,8 +373,6 @@ export class PartnersService {
     }
 
     const base = app.payload as PartnerApplicationPayload;
-    // A full `payload` gives the admin control over everything; otherwise fall
-    // back to the legacy field-level overrides.
     const merged: PartnerApplicationPayload = dto.payload
       ? { ...base, ...(dto.payload as unknown as PartnerApplicationPayload) }
       : {
@@ -397,10 +387,6 @@ export class PartnersService {
     const reason = dto.reason?.trim();
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Keep a published venue in sync with content the admin curated. This
-      // updates scalar fields, gallery, sports and amenities but deliberately
-      // never rebuilds courts here (they may carry live bookings) — court
-      // structure changes on live venues go through venue management.
       if (app.venueId) {
         await this.syncVenueContent(tx, app.venueId, payload);
       }
@@ -461,11 +447,6 @@ export class PartnersService {
     return this.toAdminDto(updated);
   }
 
-  /**
-   * Propagates admin-curated content to a live venue without touching courts.
-   * Safe to run repeatedly: scalars are overwritten, gallery/sports/amenities
-   * are rebuilt from the payload.
-   */
   private async replacePhotos(tx:Prisma.TransactionClient,venueId:string,photos:{url?:string;isCover?:boolean}[]){
     const existing=await tx.venuePhoto.findMany({where:{venueId}});
     const incoming=[...new Map(photos.filter(p=>p.url).map(p=>[p.url!,p])).values()];
@@ -816,8 +797,6 @@ export class PartnersService {
     };
 
     let venueId = existingVenueId;
-    // Once a hall is configured or used, its operational inventory is authoritative.
-    // A stale registration application must never remove/duplicate stations or overwrite tariffs.
     const existingCourts = venueId ? await tx.court.findMany({where:{venueId},include:{sport:{select:{activityKind:true}}}}) : [];
     const gamingCourts=existingCourts.filter(c=>['gaming-station','table-game'].includes(c.sport.activityKind??''));
     let preserveGaming=false;
@@ -1038,8 +1017,6 @@ export class PartnersService {
       titleAr: copy[action].ar,
       bodyEn: note,
       bodyAr: note,
-      // Approval / suspension have nothing to resubmit: send the owner to the
-      // live venue, not back into the application wizard's "submit" step.
       deepLink:
         action === 'approve' || action === 'suspend'
           ? venueId

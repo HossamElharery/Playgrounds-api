@@ -18,7 +18,6 @@ function db(venue: Record<string, unknown> | null, assignment = false) {
         venue ? { id: 'b1', venueId: 'v1' } : null,
       ),
     },
-    // Staff reach a venue only through their StaffMember row (same owner, venue in the list).
     staffMember: {
       findUnique: jest.fn().mockResolvedValue(
         assignment

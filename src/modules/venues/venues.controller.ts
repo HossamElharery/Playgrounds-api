@@ -296,7 +296,6 @@ export class VenuesController {
     return this.venues.deletePricingRule(ruleId, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, venueId));
   }
 
-  // ---- Admin ----
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Roles('admin')

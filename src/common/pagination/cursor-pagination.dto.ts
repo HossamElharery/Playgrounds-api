@@ -23,7 +23,6 @@ export interface CursorPage<T> {
   nextCursor?: string;
 }
 
-/** Generic cursor pagination over an id-ordered Prisma findMany call. */
 export async function paginateByCursor<T extends { id: string }>(
   findMany: (args: {
     take: number;

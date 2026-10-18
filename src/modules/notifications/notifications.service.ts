@@ -23,7 +23,6 @@ export interface CreateNotificationInput {
   bodyAr?: string;
   deepLink?: string;
   payload?: Record<string, unknown>;
-  /** Store the notice and show it in the app, but send no push (the caller sends its own, e.g. a missed call). */
   noPush?: boolean;
 }
 
@@ -63,11 +62,6 @@ export class NotificationsService {
     return merged[category] !== false;
   }
 
-  /**
-   * An owner with more than one venue gets "Marina Hub: …" so a reminder is never ambiguous.
-   * Only the venue's owner is tagged (a player's booking notice is not), and a title that
-   * already names the venue is left alone. Best effort: a failure here never blocks the notice.
-   */
   private async tagWithVenue(input: CreateNotificationInput): Promise<CreateNotificationInput> {
     const venueId = input.payload?.['venueId'];
     if (typeof venueId !== 'string') return input;
@@ -147,7 +141,6 @@ export class NotificationsService {
       limit,
       cursor,
     );
-    // Historical staff notices must respect their current venue and money access too.
     if (actor?.roles.includes('staff') && !actor.roles.includes('owner') && !actor.roles.includes('admin')) {
       const scope = await loadStaffScope(this.prisma, userId);
       const money = scope?.permissions.some(p => p === 'payments.record' || p === 'reports.view');
@@ -163,7 +156,6 @@ export class NotificationsService {
           payload: null, deepLink: null };
       });
     }
-    // These older reminders lack an immutable currency. Do not guess it from today's venue.
     page.items = page.items.map(notification => {
       const payload = notification.payload as Record<string, unknown> | null;
       if (!['assistant_overdue', 'assistant_arrival_due'].includes(String(payload?.['kind'])) || typeof payload?.['currency'] === 'string') return notification;
@@ -175,19 +167,13 @@ export class NotificationsService {
         bodyEn: 'Previous reminder; open the venue for its current balance and currency.',
       };
     });
-    // Notices written before the currency label existed carry a bare code ("120 EGP"): say it the
-    // way every other screen does ("120 ج.م"), in the language each text is written in.
     const label = (text: string | null, lang: 'ar' | 'en') =>
       text?.replace(/(\d[\d.,]*)\s(EGP|AED|SAR|KWD|QAR|JOD)\b/g, (_m, n: string, code: string) => `${n} ${currencyLabel(code, lang)}`) ?? text;
     page.items = page.items.map(n => {
       const p = n.payload as Record<string, unknown> | null;
-      // Only the balance reminders carry a plain amount in major units. Cash-drawer notices are corrected
-      // below from their own stored amount, and anything else is left exactly as it was written.
       if (!['assistant_overdue', 'assistant_arrival_due'].includes(String(p?.['kind']))) return n;
       return { ...n, titleAr: label(n.titleAr, 'ar') ?? n.titleAr, titleEn: label(n.titleEn, 'en') ?? n.titleEn, bodyAr: label(n.bodyAr, 'ar'), bodyEn: label(n.bodyEn, 'en') };
     });
-    // Old cash notices embedded minor units in the title. Correct only identified
-    // cash records, using their immutable amount/currency; never guess from prose.
     const payloads = page.items.map(n => n.payload as Record<string, unknown> | null);
     const ids = (key: string) => payloads.flatMap(p => typeof p?.[key] === 'string' ? [p[key] as string] : []);
     const shiftIds = ids('shiftId');
@@ -259,8 +245,6 @@ export class NotificationsService {
   }
 
   async registerDevice(userId: string, token: string, platform = 'web') {
-    // One phone, one owner: a token registered by another account on this
-    // device must stop receiving that account's notifications.
     await this.prisma.deviceToken.deleteMany({ where: { token, userId: { not: userId } } });
     return this.prisma.deviceToken.upsert({
       where: { userId_token: { userId, token } },

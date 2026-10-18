@@ -64,7 +64,6 @@ function finish(s: SocialState, now: number, completed: boolean): void {
   if (actor) actor.turns++;
   if (actor && completed) actor.cycleTurns = (actor.cycleTurns ?? 0) + 1;
   if (completed) s.completed++;
-  // An unrevealed reservation can be freed. Revealed/skipped families stay consumed.
   if (s.phase === 'revealing' && s.question) s.usedFamilies = s.usedFamilies.filter(f => f !== s.question!.familyId);
   s.secret = null; s.votes = {}; s.voteDeadline = null;
   s.question = null; s.outcome = null;
@@ -91,7 +90,6 @@ function deal(s: SocialState, bank: SocialQuestion[], history: Exposure[], now: 
   s.revealAt = now + 850;
   phase(s, 'revealing', now);
 }
-/** Complete one turn without replacing the question everybody is answering. */
 function completeCardTurn(s: SocialState, userId: string, response: 'answered' | 'passed', now: number): void {
   if (!s.cardRound || !s.cardRound.order.includes(userId) || s.cardRound.responses[userId]) return;
   s.cardRound.responses[userId] = response;

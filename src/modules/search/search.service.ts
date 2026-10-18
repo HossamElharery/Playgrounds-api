@@ -8,9 +8,7 @@ import { SmartSearchDto } from './dto/smart-search.dto';
 import { ParsedSearchIntent, SmartSearchResult } from './smart-search.types';
 
 const SESSION_TTL_MS = 10 * 60_000;
-/** Default search radius for a "near me" request, once we actually have coordinates for it. */
 const NEAR_ME_RADIUS_KM = 8;
-/** How far ahead one venue's rating must lead the runner-up before we redirect instead of showing choices. */
 const DOMINANT_RATING_GAP = 0.5;
 
 const RESPONSE_SCHEMA = {
@@ -38,12 +36,6 @@ interface VenueCardLite {
   instantBook: boolean;
 }
 
-/**
- * Turns a free-text player query into real venue results by reusing the
- * same /venues/search infrastructure the rest of the platform already uses
- * — the AI only proposes filters, the real database result count decides
- * whether to redirect, show choices, or say "nothing found".
- */
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
@@ -82,7 +74,6 @@ export class SearchService {
     return this.validate(raw);
   }
 
-  /** Never trust the model's own claims — sport/district must be a real slug or they're dropped. */
   private async validate(raw: string): Promise<ParsedSearchIntent> {
     let parsed: unknown;
     try {
@@ -99,11 +90,6 @@ export class SearchService {
     return { sport, district, nearMe: Boolean(p['nearMe']), cheap: Boolean(p['cheap']), timeHint };
   }
 
-  /**
-   * Session-scoped memory only — no fine-tuning, no cross-session storage.
-   * A follow-up that shares a topic with the stored filters is merged into
-   * it; a request that clearly changes both sport AND district starts over.
-   */
   private mergeWithSession(sessionId: string, parsed: ParsedSearchIntent): ParsedSearchIntent {
     this.sweepExpiredSessions();
     const prior = this.sessions.get(sessionId)?.filters;
@@ -145,8 +131,6 @@ export class SearchService {
       district: hasCoords ? undefined : (filters.district ?? undefined),
       center: hasCoords ? `${dto.lat},${dto.lng}` : undefined,
       radiusKm: hasCoords ? NEAR_ME_RADIUS_KM : undefined,
-      // "Cheap" is a ranking, not a ceiling: prices are stored in whole EGP, so the
-      // old 200_000 cap (written as piasters) never excluded anything.
       sort: hasCoords ? 'distance' : filters.cheap ? 'price' : 'rating',
       pageSize: 3,
       include: 'cards,count',
@@ -188,7 +172,6 @@ export class SearchService {
     return first.ratingAvg - second.ratingAvg >= DOMINANT_RATING_GAP ? first : null;
   }
 
-  /** Built from real data about the venue and the request — never from the model's own prose. */
   private reason(v: VenueCardLite, filters: ParsedSearchIntent, lang: 'ar' | 'en'): string {
     const parts: string[] = [];
     if (filters.district) parts.push(lang === 'ar' ? 'في المنطقة اللي طلبتها' : 'in the area you asked for');

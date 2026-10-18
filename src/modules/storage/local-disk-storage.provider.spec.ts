@@ -1,4 +1,3 @@
-// The backend uses legacy CommonJS resolution; sharp's runtime export is callable.
 const sharp: typeof import('sharp').default = require('sharp');
 import { ConfigService } from '@nestjs/config';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';

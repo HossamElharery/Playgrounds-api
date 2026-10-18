@@ -2,7 +2,6 @@ import { HttpStatus } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ApiException } from '../errors/api-exception';
 
-/** Serialization failures roll the transaction back; never retry a money write implicitly. */
 export function rethrowConcurrentWrite(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2034') {

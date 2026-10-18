@@ -1,7 +1,5 @@
 import { SocialQuestion } from './social.types';
 
-// Reviewed Egyptian conversation prompts: humor, stories and practical connection.
-// Seeds remain drafts; publication is managed through the persistent content editor.
 const texts = [
   "لو «أنا نازل أهو» بقت مدة رسمية على الساعة، تساوي كام دقيقة؟ واحكي لنا أغرب حجة تأخير سمعتها.",
   "إيه أكلة مصرية ممكن تدافع عنها كأنك محاميها؟ وإيه التعديل اللي تعتبره جريمة في حقها؟",

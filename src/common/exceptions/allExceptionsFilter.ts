@@ -37,7 +37,6 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
     };
     console.log(exception);
 
-    // ✅ Handle NestJS HTTP Exceptions
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const exceptionResponse = exception.getResponse();
@@ -54,7 +53,6 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
       return response.status(status).json(myResponseObj);
     }
 
-    // ✅ Handle Prisma Client Errors
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       const { statusCode, message } = handlePrismaErrors(exception);
       myResponseObj.response.message = message;
@@ -63,14 +61,6 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
     }
 
     if (exception instanceof Prisma.PrismaClientValidationError) {
-      // Extract a clean error message
-      // const cleanMessage = exception.message
-      //   .split('\n') // Split the message by lines
-      //   .filter(line => !line.trim().startsWith('at')) // Remove stack trace lines
-      //   .filter(line => !line.includes('invocation in')) // Remove invocation details
-      //   .join(' ') // Join the remaining lines into a single message
-      //   .replace(/\+/g, '') // Remove unnecessary symbols
-      //   .trim();
 
       myResponseObj.response.message = 'Invalid input data';
       myResponseObj.response.error = 'Validation Error';
@@ -93,7 +83,6 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
         .json(myResponseObj);
     }
 
-    // ✅ Catch-all for unhandled exceptions
     console.error('Unhandled Exception:', exception);
     return response
       .status(HttpStatus.INTERNAL_SERVER_ERROR)

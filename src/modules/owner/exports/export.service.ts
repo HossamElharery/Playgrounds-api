@@ -19,7 +19,6 @@ import { COUNTED_PAYMENT_STATUSES, netOf } from '../cash/payment-trail';
 export type ExportLang = 'ar' | 'en';
 export type ExportFormat = 'xlsx' | 'csv';
 
-/** The longest period one export may cover — keeps a single request cheap. */
 export const MAX_EXPORT_DAYS = 366;
 const MAX_BOOKING_ROWS = 20_000;
 
@@ -125,11 +124,6 @@ const WEEKDAYS: [string, string][] = [
 
 const major = (minor: number) => minor / 100;
 
-/**
- * "Export centre": every figure an accountant asks for, for any period, in one workbook.
- * Every number comes from the same services as the screens (summary, expenses, ledger), so
- * the file and the app cannot disagree.
- */
 @Injectable()
 export class ExportService {
   constructor(
@@ -172,7 +166,6 @@ export class ExportService {
     };
   }
 
-  /** The workbook as data — also what the tests compare against the on-screen summary. */
   async sheets(user: AuthenticatedUser, venueId: string, from: string, to: string, lang: ExportLang): Promise<ExportSheet[]> {
     const i = lang === 'ar' ? 0 : 1;
     const t = (k: keyof typeof T) => T[k][i];
@@ -233,7 +226,6 @@ export class ExportService {
       ],
       rows: bookingRows.map((b) => {
         const local = localDateTime(b.slotStart, tz);
-        // The same statement the booking sheet shows: price − your discount = owed − commission = what you keep.
         const { received, refunded } = netOf([...b.payments,...gamingBookingPayments(b.usageSession)]);
         const st = buildBookingStatement(b, received, refunded);
         return [
@@ -257,8 +249,6 @@ export class ExportService {
       }),
     };
 
-    // Money by the day it was received — what actually reached the venue's hands in the period,
-    // each line saying which game it belongs to.
     const paymentRows = await this.prisma.payment.findMany({
       where: {
         status: { in: COUNTED_PAYMENT_STATUSES },

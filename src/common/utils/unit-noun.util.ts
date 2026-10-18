@@ -1,7 +1,3 @@
-/**
- * What a bookable unit is called at a venue: a court, a station, a table. Owners of a PlayStation
- * lounge or a billiards club must never read "ملعب" in their own tools.
- */
 export type UnitNounKind = 'court' | 'station' | 'table' | 'unit';
 
 interface Words {
@@ -22,7 +18,6 @@ export function unitNounKindOf(activityKind?: string | null): Exclude<UnitNounKi
   return 'court';
 }
 
-/** One noun when every unit is the same kind, the neutral «unit» when a venue mixes kinds. */
 export function unitWords(activityKinds: Array<string | null | undefined>): Words & { kind: UnitNounKind } {
   const kinds = new Set(activityKinds.map(unitNounKindOf));
   const kind: UnitNounKind = kinds.size === 1 ? [...kinds][0] : kinds.size === 0 ? 'court' : 'unit';

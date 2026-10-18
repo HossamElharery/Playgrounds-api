@@ -9,17 +9,13 @@ import type { KnowledgeEntry } from '../knowledge/default-knowledge';
 import { checkKnowledge, type KnowledgeInput } from '../knowledge/knowledge.validation';
 
 export interface PreviewResult {
-  /** A model read the sentence (false = the keyword fallback would have been used). */
   modelAnswered: boolean;
   intent: string | null;
   topic: string;
   factIds: string[];
   picked: { id: string; ar: string; en: string; cta: { target: string; labelAr: string; labelEn: string } | null }[];
-  /** The draft entry (when one was given) is among the ones the model chose. */
   draftPicked: boolean;
-  /** The draft is switched off for players in this deployment (its feature flag is off). */
   draftHiddenByFlag: boolean;
-  /** With no knowledge entry chosen: the help-center FAQ Captain would fall back to, else nothing — "unanswered". */
   faqFallback: { id: string; questionAr: string; questionEn: string } | null;
   outcome: 'answered_fact' | 'answered_faq' | 'unanswered' | 'not_a_question';
   model: string | null;
@@ -37,7 +33,6 @@ export interface DraftResult {
   note: 'topics_only' | 'translated';
 }
 
-/** The editor's helpers: ask-as-a-player preview, and AI-assisted drafting the admin always reviews. */
 @Injectable()
 export class AiAdminKnowledgeService {
   private readonly logger = new Logger(AiAdminKnowledgeService.name);
@@ -49,10 +44,6 @@ export class AiAdminKnowledgeService {
     private readonly nlu: CaptainNluService,
   ) {}
 
-  /**
-   * Runs a sentence through the real reading step against the live knowledge
-   * (with the unsaved draft swapped in) and shows exactly what a player would see.
-   */
   async preview(input: { text: string; lang?: 'ar' | 'en'; loggedIn?: boolean; draft?: KnowledgeInput }): Promise<PreviewResult> {
     const text = input.text.trim();
     if (text.length < 2 || text.length > 300) throw new BadRequestException('text must be 2-300 characters');
@@ -62,7 +53,6 @@ export class AiAdminKnowledgeService {
     let draftId: string | null = null;
     if (input.draft) {
       const check = checkKnowledge(input.draft, { requireId: false });
-      // An unfinished draft (a field still empty) cannot be previewed; say which.
       const v = check.value ?? this.looseDraft(input.draft);
       if (!v) throw new BadRequestException({ message: 'VALIDATION_FAILED', code: 'VALIDATION_FAILED', result: { errors: check.errors } });
       draftId = v.id;
@@ -118,18 +108,11 @@ export class AiAdminKnowledgeService {
     };
   }
 
-  /** A draft that only lacks an id is still previewable (the id is just a label for this call). */
   private looseDraft(d: KnowledgeInput) {
     const probe = checkKnowledge({ ...d, id: typeof d.id === 'string' && d.id ? d.id : 'draft_preview' }, { requireId: false });
     return probe.value;
   }
 
-  /**
-   * A starting point for the editor. The model never supplies a fact: it
-   * proposes an id and topic titles, and translates whatever answer the admin
-   * already wrote into the other language. With no answer text it returns
-   * topics only. The admin reviews every word before it is saved.
-   */
   async draft(input: { question?: string; answerAr?: string; answerEn?: string }): Promise<DraftResult> {
     const question = plainLine(input.question, 300);
     const answerAr = plainLine(input.answerAr, 700);
@@ -184,7 +167,6 @@ export class AiAdminKnowledgeService {
         .replace(/^[0-9_]+/, '')
         .slice(0, 40);
     const hasAnswer = !!(answerAr || answerEn);
-    // Whatever language the admin wrote is kept exactly; only the missing one comes from the model.
     return {
       id: slug(p['id']) || 'new_topic',
       topicAr: plainLine(p['topicAr'], 120),

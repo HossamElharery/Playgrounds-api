@@ -83,7 +83,6 @@ export class OwnerService {
     return assertVenueAccess(this.prisma, user, venueId, { write });
   }
 
-  /** @deprecated use requireVenue with the authenticated user */
   private async assertVenueOwnership(venueId: string, ownerId: string) {
     const user = {
       id: ownerId,
@@ -110,10 +109,6 @@ export class OwnerService {
     return { start, end };
   }
 
-  /**
-   * What the signed-in person may do in the owner dashboard. The frontend uses it to
-   * build the menu and hide actions; the API enforces the same keys on every route.
-   */
   async access(user: AuthenticatedUser) {
     if (user.roles.includes('admin') || user.roles.includes('owner')) {
       return {
@@ -247,8 +242,6 @@ export class OwnerService {
       throw new BadRequestException('date must be YYYY-MM-DD');
     }
     await this.requireVenue(user, venueId, false);
-    // Must match the slot grid's window, or a late-evening block shows up in one
-    // view and not the other whenever the server clock is not the venue's.
     const { start: dayStart, end: dayEnd } = zonedDayBounds(
       date,
       await this.venueTimeZone(venueId),
@@ -281,10 +274,6 @@ export class OwnerService {
     return { date, bookings, blocks };
   }
 
-  /**
-   * Every court of a venue with its slot grid for one day, in a single call.
-   * The dashboard used to fetch one grid per court and trip the rate limiter.
-   */
   async board(user: AuthenticatedUser, venueId: string, date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
       throw new BadRequestException('date must be YYYY-MM-DD');
@@ -312,11 +301,6 @@ export class OwnerService {
         payments: { where: { status: 'paid' }, select: { amount: true } },
       },
     });
-    // `BookingsService.getSlotGrid` already knows a cell is 'blocked' but only
-    // as a boolean — it feeds the public availability screen too, so it isn't
-    // the place to widen the contract. The owner board is the one screen that
-    // needs to act on a block (reopen it), so it re-fetches the same rows
-    // here and attaches the id the same way it already attaches `bookingId`.
     const dayBlocks = await this.prisma.calendarBlock.findMany({
       where: {
         venueId,
@@ -330,10 +314,6 @@ export class OwnerService {
       courts.map(async (court) => {
         const slots = await this.bookings.getSlotGrid(court.id, date);
         const kind = court.sport?.activityKind ?? null;
-        // The first grid cell a booking touches is its head; the rest are
-        // continuation cells (spanSlots 0) that the client folds away. Matching
-        // on an exact start time used to lose any booking that did not begin on
-        // a slot boundary — e.g. a walk-in entered at 15:53.
         const headSlotFor = new Map<string, number>();
         const touchedSlots = new Map<string, number>();
         slots.forEach((slot, index) => {
@@ -364,9 +344,6 @@ export class OwnerService {
                   : 'free';
           if (booking?.source === 'platform') state = 'booked_platform';
           else if (booking?.source === 'manual') state = 'booked_manual';
-          // A venue-wide block (courtId null) and a per-court block can both
-          // cover the same cell; either is fine to report back — reopening
-          // either one is the same "free this slot up" action to the owner.
           const block =
             state === 'blocked'
               ? dayBlocks.find(
@@ -419,12 +396,6 @@ export class OwnerService {
     return { venueId, date, timezone: timeZone, courts: rows };
   }
 
-  /**
-   * Turns a spoken/typed sentence into a structured schedule command. Gemini
-   * only proposes — the frontend always shows a confirm-before-execute card,
-   * and every field here is re-validated against this owner's real venue
-   * before it can reach that card (see gemini-nlu.service.ts for the rest).
-   */
   async interpretScheduleCommand(
     user: AuthenticatedUser,
     venueId: string,
@@ -451,7 +422,6 @@ export class OwnerService {
     return { ...result, available: true };
   }
 
-  /** Newest first; the caller derives the current undo token from items[0]. */
   async listAssistantMessages(
     user: AuthenticatedUser,
     venueId: string,
@@ -462,7 +432,6 @@ export class OwnerService {
     return paginateByCursor(
       (args) =>
         this.prisma.assistantMessage.findMany({
-          // The hidden undo-point rows are bookkeeping, not chat: they would eat the page.
           where: { venueId, ...(user.roles.includes('staff') && !user.roles.includes('owner') && !user.roles.includes('admin') ? { ownerId: user.id } : {}), NOT: { text: UNDO_ANCHOR_TEXT } },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           ...args,
@@ -484,7 +453,6 @@ export class OwnerService {
           inverseChange: dto.inverseChange as Prisma.InputJsonValue | undefined,
         },
       });
-      // The admin's permanent copy: the server's own record of the line if it has one, else this one.
       void this.transcript?.mirrorClientLine({
         ownerId: user.id,
         ownerName: user.name,
@@ -497,11 +465,6 @@ export class OwnerService {
     });
   }
 
-  /**
-   * Marks the stored inverse as consumed and hands it back so the frontend can
-   * apply it through the same /owner/calendar/blocks flow it already uses for
-   * every other change — this endpoint only guards against double-undo.
-   */
   async undoAssistantMessage(user: AuthenticatedUser, venueId: string, messageId: string) {
     await this.requireVenue(user, venueId, true);
     const message = await this.prisma.assistantMessage.findUnique({ where: { id: messageId } });
@@ -642,7 +605,6 @@ export class OwnerService {
     return { items, total: items.length, owedTotal: items.reduce((s, c) => s + c.owed, 0), unlinked };
   }
 
-  /** A note on one customer ("always late", "VIP"): the venue's own memory, kept next to the bookings. */
   async setCustomerNote(user: AuthenticatedUser, venueId: string, key: string, note: string | null) {
     await this.requireVenue(user, venueId, true);
     if (!/^(p|m|n):.{1,80}$/.test(key)) throw new BadRequestException('Invalid customer key');

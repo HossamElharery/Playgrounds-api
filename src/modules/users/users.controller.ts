@@ -62,7 +62,6 @@ export class UsersController {
     return this.usersService.updateProfile(user.id, dto);
   }
 
-  /** Self-service account deletion (App Store / Google Play requirement). */
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Delete('users/me')

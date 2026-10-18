@@ -40,7 +40,6 @@ export class AssistantAskDto {
   @Length(2, 400)
   text!: string;
 
-  /** The last few turns, oldest first, so a short answer is read in context. */
   @ApiPropertyOptional({ type: () => [AssistantTurnDto] })
   @IsOptional()
   @IsArray()
@@ -49,18 +48,12 @@ export class AssistantAskDto {
   @Type(() => AssistantTurnDto)
   history?: AssistantTurnDto[];
 
-  /** The `draft` of the previous plan, if it was a question. Re-validated server-side. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()
   draft?: Record<string, unknown>;
 }
 
-/**
- * One confirmed action. Deliberately flat and fully validated: the execute
- * endpoint re-runs every business rule through the owner services, but a
- * malformed body should never get that far.
- */
 export class AssistantActionDto {
   @ApiPropertyOptional()
   @IsOptional()

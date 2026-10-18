@@ -16,24 +16,9 @@ import { lobbyBallEnabled, lobbyMovementEnabled } from './lobby-world-flags';
 import { parseLobbyKick, parseLobbyMove } from './lobby-move.util';
 import { LobbyWorldService, type BallSink } from './lobby-world.service';
 
-/** A socket that is not in the squad room may ask for a snapshot through the DB at most this often. */
 export const SNAPSHOT_DB_CHECK_MS = 1000;
 const MAX_ID = 64;
 
-/**
- * Lobby World messages (`lobby.*`), on the same Socket.IO server as
- * RealtimeGateway, which authenticates every socket (`client.data.userId`)
- * and owns the `squad:<id>` rooms.
- *
- * Membership: `squad.lobby.join` puts a socket into `squad:<id>` only after a
- * database membership check, and leave / kick / the grace-period drop take it
- * out again (`revokeRoomAccess`). So "this socket is in the room" is exactly
- * "this user is a member", checked in memory — no database hit at 10 Hz.
- *
- * Movement never goes through RealtimeGateway's `inOrder` chain: that chain
- * serializes voice signaling, and 10 Hz movement must never delay an ICE
- * candidate. These handlers are synchronous (no database) and need no order.
- */
 @Injectable()
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class LobbyWorldGateway
@@ -48,7 +33,6 @@ export class LobbyWorldGateway
     private readonly world: LobbyWorldService,
   ) {}
 
-  /** Ball ticks broadcast through this gateway (the service owns no socket). */
   afterInit(): void {
     this.world.attachBallSink(this);
   }
@@ -93,11 +77,6 @@ export class LobbyWorldGateway
     }
   }
 
-  /**
-   * On lobby join, every (re)connect and tab re-visible. Answers the requester
-   * only. The request can overtake `squad.lobby.join` (that one waits on a DB
-   * lookup), so a socket not in the room yet gets one DB check instead.
-   */
   @SubscribeMessage('lobby.snapshot.request')
   async snapshotRequest(
     @ConnectedSocket() client: Socket,
@@ -134,12 +113,6 @@ export class LobbyWorldGateway
     );
   }
 
-  /**
-   * `lobby.ball.kick` { squadId, seq, dirX, dirZ, power, px, pz }. Membership is the room;
-   * reach, cooldown and the goal freeze are checked by the service against
-   * its own positions. A refused kick is dropped silently: the kicker's
-   * prediction is corrected by the next authoritative ball state.
-   */
   @SubscribeMessage('lobby.ball.kick')
   kick(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
     if (!lobbyBallEnabled(this.config)) return;
@@ -150,12 +123,6 @@ export class LobbyWorldGateway
     this.world.kick(kick, userId, Date.now());
   }
 
-  /**
-   * `lobby.pen.start` { squadId } — a penalty shootout for everyone standing
-   * in the lobby world; `lobby.pen.cancel` { squadId } — any player in it may
-   * stop it. Membership is the room; the service refuses silently (one at a
-   * time, at least two players) and broadcasts `lobby.pen.state` itself.
-   */
   @SubscribeMessage('lobby.pen.start')
   penStart(
     @ConnectedSocket() client: Socket,
@@ -217,11 +184,6 @@ export class LobbyWorldGateway
     return { squadId, userId };
   }
 
-  /**
-   * The keeper's bigger save radius needs the member's equipped morph: read
-   * once per user (then kept current by MorphsService.equipped$). Only with
-   * Lobby Morphs on — with morphs off everybody is the classic avatar.
-   */
   private async loadMorph(userId: string): Promise<void> {
     if (!lobbyMorphsEnabled(this.config) || this.world.hasMorph(userId)) return;
     const profile = await this.prisma.userMorphProfile

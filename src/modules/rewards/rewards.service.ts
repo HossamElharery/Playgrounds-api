@@ -19,12 +19,6 @@ const STREAK_FREEZE_COST_COINS = 400;
 const REFERRAL_BONUS_COINS = 300;
 const REVIEW_PHOTO_BONUS_COINS = 50;
 
-/**
- * MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §3/§4.1 — the scope/event contract
- * that makes one quest engine work identically across every activity family
- * (football, PlayStation, billiards, ...) instead of forking per activity.
- * Lives inside the existing `Quest.rule` Json column — no schema change.
- */
 interface QuestScope {
   activityKind?: string; // 'field-sport' | 'racket-court' | 'gaming-station' | 'table-game'
   activityId?: string; // a specific SportCategory id (a sport or, later, a game)
@@ -62,7 +56,6 @@ function isoWeekKey(date: Date): string {
 export class RewardsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // ---- Wallet ----
   async wallet(userId: string) {
     const [user, ledger] = await Promise.all([
       this.prisma.user.findUniqueOrThrow({
@@ -91,11 +84,6 @@ export class RewardsService {
     const lastCheckIn = user.streakUpdatedAt;
     const isSameDay =
       lastCheckIn && lastCheckIn.toDateString() === now.toDateString();
-    // The player app calls this on every dashboard load to claim the daily
-    // streak — a second call the same calendar day is an expected no-op,
-    // not a client error. Throwing here used to surface a 400 in production
-    // on every same-day revisit; the frontend already expects this exact
-    // shape with `alreadyCheckedIn: true` (see RewardsApi.dailyCheckIn).
     if (isSameDay) {
       return {
         coins: 0,
@@ -108,9 +96,6 @@ export class RewardsService {
 
     const isConsecutiveDay =
       lastCheckIn && now.getTime() - lastCheckIn.getTime() < 48 * 3_600_000;
-    // MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §2.2/§4.3 — the daily check-in
-    // streak is the single canonical streak; a purchased freeze protects it
-    // from resetting to 1 when exactly one day is missed.
     const canUseFreeze =
       !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
     const newStreak =
@@ -152,7 +137,6 @@ export class RewardsService {
     };
   }
 
-  /** 400 coins -> one streak-freeze token (§4.3). */
   async purchaseStreakFreeze(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
@@ -182,7 +166,6 @@ export class RewardsService {
     };
   }
 
-  // ---- Quests ----
   async myQuests(userId: string) {
     const weekKey = isoWeekKey(new Date());
     const quests = await this.prisma.quest.findMany({
@@ -202,7 +185,6 @@ export class RewardsService {
     });
   }
 
-  /** Manual/admin-triggered bump of one specific quest by key. */
   async bumpQuestProgress(userId: string, questKey: string, amount = 1) {
     const quest = await this.prisma.quest.findUnique({
       where: { key: questKey },
@@ -211,13 +193,6 @@ export class RewardsService {
     await this.bumpSingleQuest(userId, quest, amount);
   }
 
-  /**
-   * The real trigger point (MATCHENA_ENGAGEMENT_ENGINE_BLUEPRINT.md §4.1):
-   * bumps every active quest whose `rule.event` matches the event that just
-   * happened and whose `rule.scope` (if any) matches the activity it happened
-   * on. Call this from booking completion, daily check-in, MVP awarding,
-   * referral settlement and review submission — not `bumpQuestProgress`.
-   */
   async bumpQuestsForEvent(
     userId: string,
     event: QuestRule['event'],
@@ -294,7 +269,6 @@ export class RewardsService {
     }
   }
 
-  /** Admin management (list every quest definition, not one user's progress). */
   listQuestDefinitions() {
     return this.prisma.quest.findMany({ orderBy: { createdAt: 'desc' } });
   }
@@ -306,7 +280,6 @@ export class RewardsService {
     });
   }
 
-  // ---- Badges ----
   async myBadges(userId: string) {
     const rows = await this.prisma.userBadge.findMany({
       where: { userId },
@@ -332,13 +305,6 @@ export class RewardsService {
     });
   }
 
-  /**
-   * Same as `awardBadge` but never throws when the badge definition doesn't
-   * exist yet — badge keys referenced from event hooks (§4.2) are only
-   * awarded once an admin has actually created that badge via
-   * `POST /admin/badges`, keeping the trigger list safe to ship ahead of the
-   * content team populating it.
-   */
   async awardBadgeIfExists(userId: string, badgeKey: string) {
     const badge = await this.prisma.badge.findUnique({
       where: { key: badgeKey },
@@ -351,7 +317,6 @@ export class RewardsService {
     });
   }
 
-  /** Admin management (list every badge definition). */
   listBadgeDefinitions() {
     return this.prisma.badge.findMany({ orderBy: { key: 'asc' } });
   }
@@ -360,13 +325,6 @@ export class RewardsService {
     return this.prisma.badge.update({ where: { id }, data: dto });
   }
 
-  // ---- Leaderboards ----
-  /**
-   * `friendsUserId`, when set (§4.4 — the requesting user's own id, only
-   * passed by the controller when `friendsOnly=true`), restricts the ranked
-   * pool to that user's accepted friends plus themselves. Same ranking logic
-   * either way — just a narrower candidate set.
-   */
   async leaderboard(
     sportId?: string,
     scope: 'weekly' | 'monthly' = 'weekly',
@@ -475,7 +433,6 @@ export class RewardsService {
     }));
   }
 
-  // ---- Promo codes (admin/owner) ----
   async createPromoCode(
     createdById: string,
     dto: CreatePromoCodeDto,
@@ -584,7 +541,6 @@ export class RewardsService {
     });
   }
 
-  // ---- Quest/badge admin CRUD ----
   createQuest(dto: CreateQuestDto) {
     return this.prisma.quest.create({
       data: { ...dto, rule: dto.rule as any },
@@ -595,7 +551,6 @@ export class RewardsService {
     return this.prisma.badge.create({ data: dto });
   }
 
-  // ---- Platform settings (admin) ----
   async getPlatformSetting() {
     return this.prisma.platformSetting.upsert({
       where: { id: 1 },
@@ -612,14 +567,6 @@ export class RewardsService {
     });
   }
 
-  // ---- Event hooks (§4.1 — call these from the modules where the event actually happens) ----
-
-  /**
-   * Call from `BookingsService` right after `awardCompletionCoins` /
-   * `matchesPlayed` increment. `isFirstBooking` is passed in rather than
-   * recomputed here because the caller already counted prior completions for
-   * its own first-booking coin bonus.
-   */
   async onBookingCompleted(params: {
     bookingId: string;
     userId: string;
@@ -641,12 +588,6 @@ export class RewardsService {
     }
   }
 
-  /**
-   * §5.1's "Referral: friend completes first match — 300 (both sides)".
-   * `User.referredById` is only ever set at signup (auth.service.ts
-   * verifyOtp); this is the only place the bonus actually gets paid, on the
-   * referred user's first completed booking.
-   */
   private async settleReferralIfAny(userId: string, bookingId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -684,13 +625,11 @@ export class RewardsService {
     await this.bumpQuestsForEvent(referrerId, 'referral.completed');
   }
 
-  /** Call from `ReviewsService.ratePlayer` right after the `mvps` increment. */
   async onMvpAwarded(userId: string, newMvpCount: number) {
     await this.bumpQuestsForEvent(userId, 'match.mvp.awarded');
     if (newMvpCount >= 5) await this.awardBadgeIfExists(userId, 'mvp-x5');
   }
 
-  /** Call from `ReviewsService.createVenueReview`. §5.1: 50 coins for a review with a photo. */
   async onReviewSubmitted(
     userId: string,
     hasPhoto: boolean,

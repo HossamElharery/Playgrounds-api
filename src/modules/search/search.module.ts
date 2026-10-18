@@ -11,7 +11,6 @@ import { VenuesModule } from '../venues/venues.module';
   imports: [AiModule, VenuesModule],
   providers: [SearchService, GlobalSearchService, CaptainService, CaptainNluService],
   controllers: [SearchController],
-  // The admin AI module runs the same reading step for the live knowledge preview and the quality runs.
   exports: [CaptainNluService],
 })
 export class SearchModule {}

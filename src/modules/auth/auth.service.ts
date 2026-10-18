@@ -54,12 +54,6 @@ const OTP_MAX_ATTEMPTS = 5;
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  // Verifies Google id_tokens locally against Google's cached public keys
-  // (refreshed internally by the library) instead of calling the
-  // `tokeninfo` endpoint per login — that endpoint is undocumented/rate
-  // limited and explicitly not recommended by Google for production traffic;
-  // hitting it synchronously on every login was adding a multi-second
-  // round trip (and occasional failures) to Google sign-in.
   private readonly googleOAuthClient = new OAuth2Client();
 
   constructor(
@@ -72,7 +66,6 @@ export class AuthService {
     private readonly squad: SquadService,
   ) {}
 
-  // ---------- password / token primitives ----------
 
   private hashPassword(password: string): Promise<string> {
     return bcrypt.hash(password, this.config.get<number>('SALT_ROUNDS', 10));
@@ -179,7 +172,6 @@ export class AuthService {
     return match.code;
   }
 
-  // ---------- Phone-OTP (primary player auth) ----------
 
   async requestOtp(phone: string): Promise<{ purpose: OtpPurpose }> {
     const existingUser = await this.prisma.user.findUnique({
@@ -213,7 +205,6 @@ export class AuthService {
       },
     });
 
-    // Delivered out-of-band only — the code is NEVER returned in this method's result.
     await this.otpDelivery.send(phone, code);
 
     return { purpose };
@@ -289,7 +280,6 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Email/password (owner, staff, admin) ----------
 
   async registerOwner(
     dto: RegisterOwnerDto,
@@ -320,7 +310,6 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Email/password (player, phone optional) ----------
 
   async requestEmailRegistrationOtp(rawEmail: string): Promise<void> {
     const email = rawEmail.trim().toLowerCase();
@@ -376,7 +365,6 @@ export class AuthService {
       if (!user?.isGuest || user.status !== 'active' || user.email || user.passwordHash) {
         throw new ForbiddenException('This session is not a guest account');
       }
-      // Serialize requests for an email even if two guest sessions request it together.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${email}))::text`;
       if (await tx.user.findUnique({ where: { email } })) throw new ConflictException('Email already in use');
       const recent = await tx.otpCode.count({
@@ -424,7 +412,6 @@ export class AuthService {
           return { error: 'Too many attempts, request a new code' } as const;
         }
         if (!(await bcrypt.compare(dto.code, otp.codeHash))) {
-          // Commit the failed attempt before returning the error outside the transaction.
           await tx.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
           return { error: 'Invalid code' } as const;
         }
@@ -638,12 +625,8 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  // ---------- Password reset (email or phone OTP, never leaks the code) ----------
-
   async requestPasswordReset(identifier: ForgotPasswordDto): Promise<void> {
     const target = this.passwordResetTarget(identifier);
-    // Check before looking up the account so an outage cannot reveal its existence
-    // or create an OTP that was never delivered.
     if (identifier.email) this.email.assertDeliveryAvailable();
     const user = await this.prisma.user.findUnique({
       where: identifier.email ? { email: target } : { phone: target },
@@ -757,7 +740,6 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     this.assertActive(user);
-    // Accounts created with Google/Apple/Facebook or phone OTP have no password to change.
     if (!user.passwordHash) {
       throw new ApiException(HttpStatus.BAD_REQUEST, 'NO_PASSWORD', 'This account signs in without a password');
     }
@@ -796,7 +778,6 @@ export class AuthService {
       : identifier.phone!;
   }
 
-  // ---------- Refresh / logout ----------
 
   async refresh(refreshToken: string): Promise<TokenPair> {
     let payload: { sub: string };
@@ -841,9 +822,6 @@ export class AuthService {
       where: { tokenHash, revokedAt: null },
       data: { revokedAt: new Date() },
     });
-    // Signing out ends the voice lobby too. Doing it server-side means it also
-    // holds when the tab is closed mid-request or the client never gets to run
-    // its own teardown.
     if (stored) await this.squad.leaveCurrentSquad(stored.userId).catch(() => undefined);
   }
 
@@ -854,12 +832,6 @@ export class AuthService {
     });
   }
 
-  /**
-   * "Play as guest" from a squad invite link: validates the link first (so no
-   * junk accounts are minted for dead links), creates a throw-away player and
-   * seats it in the squad. The nickname is optional; without one the guest
-   * gets a neutral "Guest 1234" label. Cleaned up by SquadService.sweepGuests.
-   */
   async joinSquadAsGuest(
     dto: GuestJoinDto,
     deviceInfo?: string,
@@ -894,7 +866,6 @@ export class AuthService {
     return { ...rest, hasPassword: !!passwordHash };
   }
 
-  /** Used by WebAuthn and other sibling auth flows. */
   assertAccountActive(user: Pick<User, 'status'>): void {
     this.assertActive(user);
   }
@@ -928,8 +899,6 @@ export class AuthService {
       passkeys: { enabled: true },
     };
   }
-
-  // ---------- OAuth (wired, inert until client IDs are configured) ----------
 
   async oauthGoogle(
     dto: OAuthGoogleDto,
@@ -989,11 +958,6 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
-  /**
-   * Sign in with Apple (required by App Store guideline 4.8 next to Google /
-   * Facebook). Audiences: `APPLE_CLIENT_IDS` (comma separated), defaulting to
-   * the iOS bundle ID.
-   */
   async oauthApple(
     dto: OAuthAppleDto,
     guestUserId?: string,

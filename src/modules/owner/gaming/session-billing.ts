@@ -1,5 +1,4 @@
 import type { UsageSession,UsageSegment } from '@prisma/client';
-/** Financial time is supplied by the server. No intermediate segment rounding. */
 export interface BillingSegment {
   startedAtMs: number;
   endedAtMs: number;
@@ -17,7 +16,6 @@ const MAX_AMOUNT = 2_147_483_647n;
 function integer(value: number, min = 0): void {
   if (!Number.isSafeInteger(value) || value < min) throw new RangeError('Invalid billing integer');
 }
-/** Extra billable time is charged at the final segment rate, once for the session. */
 export function calculateSessionCharge(segments: readonly BillingSegment[], policy: SessionBillingPolicy) {
   if (policy.version !== 1 || !['exact-time', 'ceil-started-minute', 'step-minutes'].includes(policy.mode)) throw new RangeError('Invalid billing policy');
   integer(policy.minimumMinutes ?? 0);
@@ -51,7 +49,6 @@ export function calculateSessionCharge(segments: readonly BillingSegment[], poli
   return { amountMinor: Number(amount), currency, elapsedMs: Number(elapsedMs), billableMs: Number(billableMs), policyVersion: 1 as const };
 }
 
-/** Deterministic largest-remainder allocation; ties preserve the input line order. */
 export function allocatePayment(amountMinor: number, outstandingMinor: readonly number[]): number[] {
   integer(amountMinor);
   outstandingMinor.forEach(v => integer(v));

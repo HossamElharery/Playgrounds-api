@@ -147,7 +147,6 @@ export class PartnersController {
         resolve();
       });
     });
-    // Photos may be up to the interceptor's 10 MB (high-resolution covers); documents keep their own cap.
     const maxBytes =
       kind === 'document'
         ? (options.limits?.fileSize ?? file.size)

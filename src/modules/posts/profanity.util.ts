@@ -1,5 +1,3 @@
-/** Lightweight denylist used only to exclude posts from the coins engine.
- *  This is not a full moderation pipeline — reports still go to admins. */
 const BLOCKED = [
   'spam',
   'scam',

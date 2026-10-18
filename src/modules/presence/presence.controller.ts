@@ -15,7 +15,6 @@ export class PresenceController {
     private readonly presence: PresenceService,
   ) {}
 
-  /** Cheap HTTP keepalive so presence works even when the websocket proxy is down. */
   @SkipThrottle()
   @Post('heartbeat')
   async heartbeat(@CurrentUser() user: AuthenticatedUser) {

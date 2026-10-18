@@ -10,7 +10,6 @@ export class ExtendSubscriptionDto {
   @Max(3650)
   days!: number;
 
-  /** What was actually received, in minor units. Leave out for a free extension. */
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
@@ -46,7 +45,6 @@ export class UpdateSubscriptionTermsDto {
   @Max(1_000_000_000)
   listPriceAmount?: number;
 
-  /** `null` clears the agreed price. */
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @ValidateIf((_o, v) => v !== null)

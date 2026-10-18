@@ -20,25 +20,12 @@ import { loadStaffScope } from '../access/staff-scope';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
-/** API paths a guest identity may call (after the global prefix). */
 const GUEST_ALLOWED = /^\/api\/v1\/(squad|realtime|presence|morphs|lobby)(\/|\?|$)/;
 const GUEST_SQUAD_WRITE = /^\/api\/v1\/squad\/(start|invite-link(?:\/reset)?|invites|join-requests\/[^/]+\/(approve|decline)|[^/]+\/(kick|make-leader|mute)\/[^/]+)(\?|$)/;
 const GUEST_AUTH = /^\/api\/v1\/auth\/(guest\/(email\/otp|complete|oauth\/(google|facebook|apple))|logout-all)(\?|$)/;
 const GUEST_SELF = /^\/api\/v1\/users\/me(\?|$)/;
-/** Read-only extras the player shell polls on boot; empty for a fresh guest. */
 const GUEST_READ_ONLY = /^\/api\/v1\/(friends|friend-requests|notifications)(\/|\?|$)/;
 
-/**
- * Single generic guard for the whole API:
- * - @Public() routes always pass.
- * - Otherwise a valid `request.user` (set by AuthContextMiddleware) is required.
- * - @Roles(...) restricts by top-level role (player/owner/staff/admin).
- * - @RequirePermission(...) checks the permission keys held by a `staff` user's
- *   StaffMember row. Owners and admins hold every key.
- * - Routes open to `staff` are FAIL-CLOSED: they must declare @RequirePermission,
- *   @OwnerOnly or @AnyStaff, otherwise a staff account is refused. A new route
- *   therefore cannot leak to staff by omission.
- */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -67,8 +54,6 @@ export class AuthGuard implements CanActivate {
     if (!current || current.status !== 'active')
       throw new UnauthorizedException('Account is not active');
     user = request.user = { ...user, roles: current.roles };
-    // Guests (squad-link visitors) are confined to the squad/auth surface so a
-    // throw-away identity can never reach bookings, wallet, chat, etc.
     const url: string = request.originalUrl ?? request.url ?? '';
     if (
       current.isGuest &&
@@ -80,8 +65,6 @@ export class AuthGuard implements CanActivate {
     ) {
       throw new ApiException(HttpStatus.FORBIDDEN, 'GUEST_ACCOUNT_REQUIRED', 'Create an account to use this feature');
     }
-    // "Edit as this venue" is an explicit, per-request opt-in the admin UI sends only
-    // while its edit mode is switched on; it means nothing for anyone who is not admin.
     if (current.roles.includes('admin') && request.headers?.['x-admin-edit'] === '1') {
       user.adminEdit = true;
     }

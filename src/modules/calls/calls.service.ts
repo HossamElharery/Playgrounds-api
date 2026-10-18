@@ -31,33 +31,25 @@ export interface CallPeer {
   id: string;
   name: string;
   avatarUrl: string | null;
-  /** `admin` = the platform team (Matchena), who may call any owner or staff member. */
   role: 'owner' | 'staff' | 'admin';
   title: string | null;
 }
 
 export interface DirectoryMember extends CallPeer {
   online: boolean;
-  /** In another call right now. */
   busy: boolean;
-  /** I muted this person's calls until then (they are never told). */
   mutedUntil: string | null;
 }
 
-/** Somebody the platform admin can call: an owner or a staff member, with enough context to pick the right one. */
 export interface AdminCallTarget extends CallPeer {
   online: boolean;
   busy: boolean;
-  /** Do-not-disturb is on (an admin call still rings; this is only information). */
   dnd: boolean;
-  /** For staff: who they work for. */
   ownerName: string | null;
-  /** Up to three venue names of the organisation. */
   venues: { id: string; nameAr: string; nameEn: string }[];
 }
 
 export interface CallDirectory {
-  /** True for the platform admin: the team list is empty because they search instead. */
   admin?: boolean;
   enabled: boolean;
   members: DirectoryMember[];
@@ -73,22 +65,17 @@ export interface CallView {
   createdAt: string;
   answeredAt: string | null;
   endedAt: string | null;
-  /** Ringing calls only: when the call stops ringing by itself. */
   expiresAt: string | null;
-  /** Incoming missed/cancelled call the user has not opened yet. */
   unseen: boolean;
 }
 
-/** In-memory mirror of a call that is ringing or in progress (the database row stays the truth). */
 interface LiveCall {
   id: string;
   ownerId: string;
   callerId: string;
   calleeId: string;
   status: 'ringing' | 'answered';
-  /** A push (FCM / web) was sent for this ring, so a replacement is owed when it ends. */
   pushed: boolean;
-  /** The callee's device confirmed it is ringing, per kind. */
   ackNative: boolean;
   ackWeb: boolean;
   ringingEmitted: boolean;
@@ -96,12 +83,6 @@ interface LiveCall {
 
 const ACTIVE_STATUSES: StaffCallStatus[] = ['ringing', 'answered'];
 
-/**
- * Owner <-> team voice calls (1:1). This service is the single source of truth for who may call whom
- * (same organisation only), the call state machine, mutes / do-not-disturb, and when a phone is
- * pushed. The audio itself is peer-to-peer WebRTC; the gateway only relays SDP/ICE between the two
- * parties of an answered call.
- */
 @Injectable()
 export class CallsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallsService.name);
@@ -111,7 +92,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private sweepTimer: NodeJS.Timeout | null = null;
   private connectionSub: Subscription | null = null;
-  /** Calls are rare; creating them one at a time makes "both call each other at once" impossible. */
   private createChain: Promise<unknown> = Promise.resolve();
   private lastRetentionRun = 0;
 
@@ -162,9 +142,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  // ---------------------------------------------------------------- organisation
-
-  /** The organisation (venue owner) a user belongs to, or null for players, guests, admins, inactive accounts. */
   async resolveOrg(
     userId: string,
   ): Promise<{ ownerId: string; kind: 'owner' | 'staff' } | null> {
@@ -184,7 +161,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
-  /** Is `userId` the owner of this organisation or one of its staff, and is the account active? */
   private async inOrg(ownerId: string, userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -199,7 +175,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return row?.ownerId === ownerId;
   }
 
-  /** Name, picture, role and job title of people, whichever organisation they belong to. */
   private async peerInfo(ids: string[]): Promise<Map<string, CallPeer>> {
     const unique = [...new Set(ids)];
     const [users, staff] = await Promise.all([
@@ -233,7 +208,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** An active, non-guest platform admin. */
   private async isActiveAdmin(userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -247,7 +221,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** How a caller is named on the other person's screen and push: the platform team shows as "Matchena". */
   private displayName(
     user: { name?: string | null; roles?: string[] } | null,
     ar: boolean,
@@ -260,8 +233,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (platform) return ar ? 'إدارة ماتشنا' : 'Matchena team';
     return user?.name ?? '';
   }
-
-  // ---------------------------------------------------------------- directory
 
   async directory(userId: string): Promise<CallDirectory> {
     const off: CallDirectory = {
@@ -335,8 +306,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  // ---------------------------------------------------------------- availability
-
   private async busyUserIds(ids: string[]): Promise<Set<string>> {
     if (!ids.length) return new Set();
     const rows = await this.prisma.staffCall.findMany({
@@ -356,7 +325,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return busy;
   }
 
-  /** Rows that really are ringing or in progress (anything older is a leftover the sweeper will close). */
   private activeWhere(now = Date.now()) {
     return {
       OR: [
@@ -401,8 +369,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ---------------------------------------------------------------- state machine
-
   create(callerId: string, calleeId: string) {
     const run = this.createChain.then(() => this.createNow(callerId, calleeId));
     this.createChain = run.catch(() => undefined);
@@ -417,7 +383,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         'CALL_SELF',
         'You cannot call yourself',
       );
-    // The platform admin may call any owner or staff member; everybody else only their own organisation.
     const byAdmin = await this.isActiveAdmin(callerId);
     const org = byAdmin
       ? await this.resolveOrg(calleeId)
@@ -447,8 +412,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const peers = await this.peerInfo([callerId, calleeId]);
     const callee = peers.get(calleeId)!;
 
-    // Muted / do-not-disturb: log it for the caller only; the callee is never bothered and never told.
-    // The platform admin is never held back by either.
     if (!byAdmin && (await this.unavailableFor(calleeId, callerId))) {
       const row = await this.record(
         org.ownerId,
@@ -495,7 +458,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       createdAt: row.createdAt.toISOString(),
       expiresAt,
     });
-    // Offline phones ring from a push at once; online ones get a short window to confirm first.
     const online = this.presence.isReachable(calleeId, 15_000);
     this.setTimer(
       this.pushTimers,
@@ -527,7 +489,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** The callee's device says it is ringing. Native confirmation = no push needed at all. */
   async markRinging(
     userId: string,
     callId: string,
@@ -573,7 +534,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         body: ar ? 'اضغط للرد' : 'Tap to answer',
         deepLink: `/${ar ? 'ar' : 'en'}/owner`,
       };
-      // The phone always rings. A browser tab that is open (it confirmed) must not also get a system toast.
       await Promise.all([
         this.fcm.sendCall(live.calleeId, message),
         live.ackWeb
@@ -662,7 +622,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
-  /** Hang up. Either party; a ringing call is cancelled (caller) or declined (callee). Idempotent. */
   async end(userId: string, callId: string) {
     this.assertEnabled();
     const row = await this.ownedRow(callId, userId, 'either');
@@ -681,10 +640,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     await this.finish(callId, 'ringing', 'missed', 'timeout', true);
   }
 
-  /**
-   * Moves a call out of `from` into a final state exactly once (an atomic conditional update, so a
-   * timer, a hang-up and a disconnect racing each other cannot double-finish), then tells both sides.
-   */
   private async finish(
     callId: string,
     from: 'ringing' | 'answered',
@@ -693,8 +648,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     notify = true,
   ): Promise<boolean> {
     const live = this.live.get(callId);
-    // A socket send or a push-provider acceptance does not prove the callee's screen rang.
-    // Only the device acknowledgement may turn an unanswered attempt into a missed call.
     const unconfirmed = from === 'ringing' &&
       (to === 'missed' || to === 'cancelled') &&
       !live?.ackNative && !live?.ackWeb;
@@ -717,7 +670,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       this.emitter.emitToUser(row.callerId, event);
       this.emitter.emitToUser(row.calleeId, event);
     }
-    // Rung but never answered: the callee gets a "missed call" (it also replaces the ringing push).
     if (from === 'ringing' && (finalStatus === 'missed' || finalStatus === 'cancelled')) {
       await this.missedNotice(row, live?.pushed ?? false).catch((err) =>
         this.logger.warn(`missed-call notice failed: ${String(err)}`),
@@ -752,7 +704,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       payload: { kind: 'missed_call', callId: row.id, callerId: row.callerId },
       noPush: true,
     });
-    // Only phones/tabs that were pushed (or are offline) need the replacement; an open app shows the bell.
     if (pushed || !this.presence.isReachable(row.calleeId, 15_000)) {
       const message = {
         callId: row.id,
@@ -811,9 +762,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ---------------------------------------------------------------- signaling relay
-
-  /** The other party of an ANSWERED call that `userId` belongs to; null for anything else. */
   async relayPeer(userId: string, callId: string): Promise<string | null> {
     if (!this.enabled()) return null;
     const live = await this.liveCall(callId);
@@ -846,9 +794,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return live;
   }
 
-  // ---------------------------------------------------------------- reads
 
-  /** What is ringing for me / in progress right now (the app asks after boot, reconnect or a push tap). */
   async active(userId: string) {
     if (!this.enabled()) return { incoming: null, current: null };
     const rows = await this.prisma.staffCall.findMany({
@@ -947,8 +893,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  // ---------------------------------------------------------------- platform admin
-
   private async requireAdmin(userId: string): Promise<void> {
     this.assertEnabled();
     if (!(await this.isActiveAdmin(userId))) {
@@ -960,7 +904,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Owners and staff matching a name, email, phone, username or venue name. The admin picks who to call. */
   async adminSearch(userId: string, query: string): Promise<AdminCallTarget[]> {
     await this.requireAdmin(userId);
     const q = (query ?? '').trim().slice(0, 80);
@@ -1009,7 +952,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     return (await this.adminTargets(wanted, owningIds, staffRows)).slice(0, 30);
   }
 
-  /** The people of one venue (its owner and the staff who work there): "call the venue" from a booking. */
   async adminVenue(userId: string, venueId: string) {
     await this.requireAdmin(userId);
     const venue = await this.prisma.venue.findUnique({
@@ -1101,8 +1043,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ---------------------------------------------------------------- mute / do-not-disturb
-
   async setMute(userId: string, targetId: string, minutes: number) {
     this.assertEnabled();
     const org = await this.resolveOrg(userId);
@@ -1167,9 +1107,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ---------------------------------------------------------------- housekeeping
-
-  /** A party's last socket went away: forgive a flap, end the call if they do not come back. */
   private onConnectionChange(userId: string, connected: boolean): void {
     if (connected) {
       this.clear(this.disconnectTimers, userId);
@@ -1199,7 +1136,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** Closes rows no timer will ever close (a restart, a lost timer) and trims the old log. */
   async sweep(now = Date.now()): Promise<void> {
     try {
       await this.prisma.staffCall.updateMany({

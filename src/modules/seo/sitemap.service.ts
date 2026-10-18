@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocalLandingService } from './local-landing.service';
 
-/** Same rule the post page uses to decide `noindex`: emoji-only / hashtag-only posts are thin content. */
 export function isIndexablePost(text: string, mediaCount: number): boolean {
   if (mediaCount > 0) return true;
   const letters = text.replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[#@]\S+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
@@ -47,7 +46,6 @@ export class SitemapService {
 </urlset>`;
   }
 
-  /** Public, indexable community posts (same filter the public feed uses). */
   private readonly publicPostWhere = {
     status: 'active' as const,
     visibility: 'public',
@@ -74,8 +72,6 @@ export class SitemapService {
       ['blog', blog._max.updatedAt],
       ['posts', post._max.updatedAt],
     ];
-    // Never advertise an empty child sitemap; and never invent a lastmod ("now" on every
-    // request tells crawlers nothing changed-or-everything changed, so they learn to ignore it).
     if (hashtagCount > 0) entries.push(['hashtags', hashtag._max.updatedAt]);
     const items = entries
       .map(([name, date]) =>
@@ -107,7 +103,6 @@ ${items}
     );
   }
 
-  /** One hub page per sport (`/sports/:slug`). */
   async sports(): Promise<string> {
     const sports = await this.prisma.sportCategory.findMany({ select: { slug: true, createdAt: true } });
     return this.urlset(
@@ -115,10 +110,6 @@ ${items}
     );
   }
 
-  /**
-   * Local landing pages (/egypt/cairo/nasr-city/football) that pass the index rules.
-   * Filtered explore URLs are not listed: they 301 to these pages.
-   */
   async landings(): Promise<string> {
     const entries = (await this.landingPages?.sitemapEntries()) ?? [];
     return this.urlset(entries.map((entry) => this.localizedEntry(entry.path, entry.lastmod, entry.images)).join(''));
@@ -144,7 +135,6 @@ ${items}
     );
   }
 
-  /** Public community posts. Each post is a single URL; the renderer localises the shell. */
   async posts(): Promise<string> {
     const posts = await this.prisma.post.findMany({
       where: this.publicPostWhere,

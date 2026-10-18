@@ -25,11 +25,6 @@ export class LobbyKioskModule implements OnModuleInit, OnModuleDestroy {
     private readonly world: LobbyWorldService,
   ) {}
 
-  /**
-   * Squads already announce leave / empty on `membershipEnded$` (the same path
-   * Lobby World uses). The kiosk drops its memory there instead of a second leave hook.
-   * The banner hangs in the air, so the ball is not given a solid.
-   */
   onModuleInit(): void {
     this.subs.add(
       this.squads.membershipEnded$.subscribe(({ squadId, userId, squadEmptied }) => {

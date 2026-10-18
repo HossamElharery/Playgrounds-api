@@ -15,7 +15,6 @@ class ReplyDto {
   reply?: string;
 }
 
-/** Platform admin only — the owner side of these requests lives in `OwnerController`. */
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)
@@ -50,7 +49,6 @@ export class PlatformRequestsController {
   }
 }
 
-/** Admin-only overview of every real venue: activity, subscription, onboarding, open requests. */
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)

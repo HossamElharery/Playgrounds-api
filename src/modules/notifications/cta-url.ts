@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { ValidateBy, buildMessage } from 'class-validator';
 
-/** In-app path (`/en/...`) or http(s) URL. Rejects `javascript:`, spaces, and bare text. */
 export function isSafeNotificationCtaUrl(raw: string): boolean {
   const value = raw.trim();
   if (!value) return false;

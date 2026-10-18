@@ -252,7 +252,6 @@ export class AdminFinanceService {
     };
   }
 
-  /** Audit trail for one venue: its own settings/ledger events plus bookings and settlements that belong to it. */
   async venueAudit(venueId: string, cursor?: string, limit = 30) {
     await this.requireVenue(venueId);
     const take = Math.min(Math.max(limit, 1), 100);
@@ -279,8 +278,6 @@ export class AdminFinanceService {
     const currency = venue?.currency ?? 'EGP';
     const balance = await this.ledger.getBalance(venueId, currency);
     const page = await this.ledger.listEntries(venueId, { cursor, limit });
-    // On later pages the first row is not the newest entry, so its running
-    // balance is the current balance minus everything newer than that row.
     let running = balance;
     if (cursor && page.items.length) {
       const first = page.items[0];
@@ -859,7 +856,6 @@ export class AdminFinanceService {
         orderBy: { _sum: { totalAmount: 'desc' } },
         take: 5,
       }),
-      // Money in different currencies is never added together: one figure per currency.
       this.prisma.booking.groupBy({
         by: ['currency'],
         where: { source: 'platform', status: { not: 'cancelled' }, slotStart: { gte: monthAgo } },
@@ -915,8 +911,6 @@ export class AdminFinanceService {
     };
   }
 
-  /** Venues with units but no booking activity for a week — returned with their
-   *  names, because a screen full of UUIDs tells the admin nothing. */
   private async staleVenues() {
     const cutoff = new Date(Date.now() - 7 * 86_400_000);
     const active = await this.prisma.booking.findMany({

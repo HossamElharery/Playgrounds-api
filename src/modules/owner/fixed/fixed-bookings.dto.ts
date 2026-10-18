@@ -26,7 +26,6 @@ export class FixedSeriesShapeDto {
   @IsUUID()
   courtId!: string;
 
-  /** First session, as an instant. Weekday and hour are read in the venue's timezone. */
   @ApiProperty()
   @IsDateString()
   startsAt!: string;
@@ -84,7 +83,6 @@ export class CreateFixedSeriesDto extends FixedSeriesShapeDto {
   @IsIn(['per_session', 'prepaid'])
   paymentPlan?: 'per_session' | 'prepaid';
 
-  /** Deposit taken on the first session when the plan is `prepaid` (minor units). */
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

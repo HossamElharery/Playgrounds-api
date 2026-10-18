@@ -1,10 +1,3 @@
-/**
- * Live check of the money trail against a real (dev) database: partial payments, the received-money
- * book, the cash drawer and shift close. It creates its own bookings on an existing venue and
- * deletes them again. Refuses to run when NODE_ENV=production.
- *
- *   npx ts-node src/scripts/qa-cash-live.ts
- */
 /* eslint-disable no-console */
 import type { AuthenticatedUser } from '../common/types/authenticated-user.interface';
 
@@ -42,7 +35,6 @@ async function main() {
       roles: ['owner'],
     };
     const venueId = court.venueId;
-    // A far-away day nobody booked; the three bookings sit on different hours of it.
     const day = new Date(Date.now() + 200 * 86_400_000);
     day.setUTCHours(0, 0, 0, 0);
     const at = (h: number) => new Date(day.getTime() + h * 3_600_000).toISOString();
@@ -96,7 +88,6 @@ async function main() {
     const afterVoid = await cash.drawer(owner, venueId);
     check('the refund nets out of the same open drawer', (afterVoid.mine as { cash: { net: number } }).cash.net === startingCash, afterVoid.mine);
 
-    // 5. Close the shift on what is counted; it must balance and stamp every row.
     const expected = (afterVoid.mine as { cash: { expected: number } }).cash.expected;
     const hasMovements = (afterVoid.mine as { count: number }).count > 0;
     if (hasMovements) {

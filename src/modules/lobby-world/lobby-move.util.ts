@@ -1,16 +1,11 @@
-/** Walkable disc of the lobby floor (scene units). Mirrors the client's WALK_RADIUS. */
 export const LOBBY_WALK_RADIUS = 8.2;
-/** Run speed 4.0 u/s + 15 % slack. */
 export const LOBBY_MAX_SPEED = 4.6;
-/** Teleport allowance: `maxSpeed × dt × 1.5 + 0.5`. */
 export const LOBBY_SPEED_SLACK = 1.5;
 export const LOBBY_TELEPORT_SLACK = 0.5;
-/** Unused travel time carried between messages is capped here (see LobbyWorldService). */
 export const LOBBY_MAX_CREDIT_S = 1;
 
 export type LobbyMoveMode = 0 | 1 | 2 | 3;
 
-/** A `lobby.move` payload after validation, rounded like the wire format. */
 export interface LobbyMove {
   squadId: string;
   seq: number;
@@ -33,7 +28,6 @@ function finite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
-/** Heading into (−π, π]. */
 export function wrapAngle(a: number): number {
   const t = Math.PI * 2;
   let r = a % t;
@@ -42,7 +36,6 @@ export function wrapAngle(a: number): number {
   return r;
 }
 
-/** Clamp a point to the walkable disc. */
 export function clampToDisc(
   x: number,
   z: number,
@@ -54,12 +47,6 @@ export function clampToDisc(
   return { x: x * k, z: z * k };
 }
 
-/**
- * Shape check + clamps for a client `lobby.move`. Returns null for anything
- * malformed (wrong types, non-finite numbers, unknown mode): the message is
- * dropped silently. Positions are clamped to the disc, velocity to
- * LOBBY_MAX_SPEED, the heading wrapped; a stop (`m: 0`) carries zero velocity.
- */
 export function parseLobbyMove(data: unknown): LobbyMove | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
@@ -97,16 +84,8 @@ export function parseLobbyMove(data: unknown): LobbyMove | null {
   return move;
 }
 
-/** A kick direction shorter than this carries no direction: dropped. */
 const MIN_KICK_DIR = 0.01;
 
-/**
- * Shape check for a client `lobby.ball.kick` ({ squadId, seq, dirX, dirZ,
- * power, px, pz }): a finite direction (normalized here), power clamped to
- * [0, 1]. Null for anything malformed. The client's px/pz are not trusted:
- * reach, cooldown and the goal freeze are checked by LobbyWorldService
- * against its own last accepted position.
- */
 export function parseLobbyKick(data: unknown): {
   squadId: string;
   seq: number;
@@ -136,7 +115,6 @@ export function parseLobbyKick(data: unknown): {
   };
 }
 
-/** uint32 serial-number order: true when `a` comes after `b` (wraparound safe). */
 export function seqAfter(a: number, b: number): boolean {
   const diff = (a - b) >>> 0;
   return diff !== 0 && diff < 0x80000000;

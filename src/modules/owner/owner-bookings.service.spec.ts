@@ -375,7 +375,6 @@ describe('OwnerBookingsService', () => {
       const rows = tx.payment.create.mock.calls.map((c: [{ data: Record<string, unknown> }]) => c[0].data);
       expect(rows).toEqual([
         expect.objectContaining({ method: 'instapay', amount: -150, reversesPaymentId: 'bb' }),
-        // Only part of this payment goes back, so it is not a whole reversal and carries no link.
         expect.not.objectContaining({ reversesPaymentId: expect.anything() }),
       ]);
       expect(rows[1]).toEqual(expect.objectContaining({ method: 'cash', amount: -10 }));
@@ -677,7 +676,7 @@ describe('phone numbers need customers.view', () => {
 });
 
 describe('the bookings list: what is coming first', () => {
-  const NOW = new Date('2026-10-02T21:30:00.000Z'); // 00:30 on 3 Oct in Cairo — "today" there is 3 Oct, not 2 Oct
+  const NOW = new Date('2026-10-02T21:30:00.000Z');
   function build() {
     const findMany = jest.fn().mockResolvedValue([]);
     const prisma: any = {

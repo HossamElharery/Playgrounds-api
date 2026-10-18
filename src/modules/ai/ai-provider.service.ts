@@ -12,7 +12,6 @@ import {
 
 const OWNER_TIMEOUT_MS = 12_000;
 const PUBLIC_TIMEOUT_MS = 9_000;
-/** No new route is tried after this long: an answer that late is worse than the keyword fallback. */
 const TOTAL_DEADLINE_MS = 22_000;
 const BREAKER_FAILURES = 3;
 const BREAKER_OPEN_MS = 120_000;
@@ -20,16 +19,10 @@ const BREAKER_OUT_OF_CREDIT_MS = 10 * 60_000;
 const BREAKER_RATE_LIMIT_MS = 30_000;
 const CACHE_MAX = 300;
 
-/**
- * Where each audience's sentences may go, best first. The owner assistant sees
- * customer names and amounts, so it stays on Google's models; players and
- * visitors send search intent only, so a cheaper second opinion is fine there.
- */
 const DEFAULT_MODELS: Record<AiProfile, string[]> = {
   owner: ['google/gemini-3.8-flash', 'google/gemini-3.6-flash', 'google/gemini-3.5-flash'],
   public: ['google/gemini-3.8-flash', 'google/gemini-3.6-flash', 'deepseek/deepseek-v4.1-flash'],
 };
-/** Last resort for public traffic only: free, rate-limited, and never given private data. */
 const PUBLIC_FREE_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 
 const DEFAULT_REASONING: Record<AiProfile, AiReasoningEffort> = {
@@ -39,7 +32,6 @@ const DEFAULT_REASONING: Record<AiProfile, AiReasoningEffort> = {
 
 type Step = { kind: 'openrouter'; model: string } | { kind: 'gemini'; model: string };
 
-/** A failure we fall back on. `status` tells an auth/credit problem from a rate limit or an outage. */
 class AiCallFailure extends Error {
   constructor(
     message: string,
@@ -55,13 +47,6 @@ function extractJson(text: string): unknown {
   return JSON.parse(candidate);
 }
 
-/**
- * Single entry point for every AI call in the app. It walks a per-audience
- * chain of models (OpenRouter first, the direct Gemini key as an extra), skips
- * routes whose breaker is open, enforces the day's budget, and hands back the
- * same shape whichever model answered. Callers re-validate every field — this
- * layer proves the reply is well-formed JSON, never that it is right.
- */
 @Injectable()
 export class AiProviderService {
   private readonly logger = new Logger(AiProviderService.name);
@@ -79,7 +64,6 @@ export class AiProviderService {
     this.geminiApiKey = this.config.get<string>('GEMINI_API_KEY') ?? '';
     this.geminiModel = this.config.get<string>('GEMINI_MODEL') ?? 'gemini-3.8-flash';
     this.openRouterApiKey = this.config.get<string>('OPENROUTER_API_KEY') ?? '';
-    // TEST ONLY — see .env.example. Must never be set in a deployed environment.
     this.forceFailure = this.config.get<string>('AI_FORCE_FAILURE') ?? '';
   }
 
@@ -87,7 +71,6 @@ export class AiProviderService {
     return this.geminiApiKey.length > 0 || this.openRouterApiKey.length > 0;
   }
 
-  /** The routes this audience may use, in order. Exposed for the admin view and the tests. */
   chain(profile: AiProfile, override?: string[]): Step[] {
     const steps: Step[] = [];
     if (override?.length && profile === 'public' && this.openRouterApiKey) {
@@ -163,7 +146,6 @@ export class AiProviderService {
     throw new AiUnavailableError();
   }
 
-  /** Which routes are paused right now and why, for the admin overview. */
   breakerStates(): { id: string; kind: string; model: string; reason: 'credit' | 'rate_limit' | 'auth' | 'errors'; openUntil: number }[] {
     const now = Date.now();
     const out: { id: string; kind: string; model: string; reason: 'credit' | 'rate_limit' | 'auth' | 'errors'; openUntil: number }[] = [];
@@ -182,7 +164,6 @@ export class AiProviderService {
       : DEFAULT_REASONING[profile];
   }
 
-  // ---------------------------------------------------------- breaker ----
 
   private breakerOpen(id: string): boolean {
     const b = this.breakers.get(id);
@@ -216,7 +197,6 @@ export class AiProviderService {
     }
   }
 
-  // ------------------------------------------------------------ cache ----
 
   private cacheKey(profile: AiProfile, req: StructuredIntentRequest): string {
     return `${profile}\u0000${req.systemPrompt.length}\u0000${req.systemPrompt.slice(-200)}\u0000${req.userPrompt}`;
@@ -230,7 +210,6 @@ export class AiProviderService {
     this.cache.set(key, { exp: Date.now() + ttl, value });
   }
 
-  // ---------------------------------------------------------- routes ----
 
   private async callOpenRouter(
     model: string,
@@ -259,7 +238,6 @@ export class AiProviderService {
           temperature: 0.2,
           response_format: { type: 'json_object' },
           usage: { include: true },
-          // Reasoning is billed as output: "minimal" keeps a search reading at a fraction of a cent.
           reasoning: { effort: reasoning },
           messages: [
             { role: 'system', content: req.systemPrompt + schemaHint },

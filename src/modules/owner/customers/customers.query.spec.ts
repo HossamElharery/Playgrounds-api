@@ -29,7 +29,6 @@ describe('customer directory identity', () => {
     expect(c.nextBooking?.toISOString()).toBe('2030-01-01T17:00:00.000Z');
     expect(c.lastVisit?.toISOString()).toBe('2026-09-01T17:00:00.000Z');
     const sql = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-    // The query itself must separate the past from the future, not just the mapper.
     expect(sql).toContain('FILTER');
     expect(sql).toContain('nextBooking');
   });

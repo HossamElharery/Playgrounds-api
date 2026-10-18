@@ -1,11 +1,5 @@
 import { screenMessage } from '../../search/captain/captain-guard';
 
-/**
- * What stands out about one exchange between an owner and the assistant, as
- * short codes the admin can filter by. Plain rules, no model: the point is to
- * surface "this owner is typing nonsense", "the assistant keeps not
- * understanding", "the numbers do not add up" — not to judge anyone.
- */
 export type TranscriptFlag =
   | 'unrecognized'
   | 'low_confidence'
@@ -47,9 +41,7 @@ export interface FlagInput {
   intent?: string;
   outcome?: TranscriptOutcome;
   confidence?: number;
-  /** Code of the first blocking issue the plan raised (numbers that do not add up, a slot taken, …). */
   blockingCode?: string;
-  /** How many times this owner already sent exactly this sentence in the last ten minutes. */
   recentSame?: number;
 }
 

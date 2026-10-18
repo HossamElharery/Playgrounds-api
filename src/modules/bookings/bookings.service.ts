@@ -51,13 +51,9 @@ import {
 
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
-/** The first-booking bonus needs a real booking (50 EGP in minor units), not a near-free one. */
 const FIRST_BOOKING_MIN_TOTAL = 5000;
-/** Max share of the court price (not the fee) that coins may discount. */
 const MAX_COIN_DISCOUNT_PCT = 30;
 
-/** PSP methods that cannot be used when the venue is `at_venue`. Wallet is the
- *  legacy player confirm path and is accepted as "pay at the venue" (no debit). */
 const ONLINE_ONLY_METHODS = new Set([
   'card',
   'apple_pay',
@@ -77,11 +73,9 @@ const ONLINE_ONLY_METHODS = new Set([
 export interface SlotCell {
   start: string;
   end: string;
-  /** Venue-local HH:mm. Bundle checkout sends this back as the start time. */
   hhmm: string;
   priceAmount: number;
   currency: string;
-  /** `unpriced`: inside opening hours but no price rule covers it — nobody can book it until the tariff does. */
   state: 'available' | 'booked' | 'held' | 'past' | 'blocked' | 'unpriced';
 }
 
@@ -98,7 +92,6 @@ export class BookingsService {
     private readonly ledger: LedgerService,
   ) {}
 
-  // ---------- Slot grid ----------
 
   async getSlotGrid(courtId: string, dateStr: string): Promise<SlotCell[]> {
     const court = await this.prisma.court.findUnique({
@@ -190,7 +183,6 @@ export class BookingsService {
     return cells;
   }
 
-  // ---------- Hold -> confirm (the money path) ----------
 
   async holdSlot(userId: string, dto: HoldSlotDto): Promise<Booking> {
     const court = await this.prisma.court.findUnique({
@@ -198,8 +190,6 @@ export class BookingsService {
       include: { sport: true, pricingRules: true, venue: { include: { country: true } } },
     });
     if (!court) throw new NotFoundException('Court not found');
-    // A suspended or still-pending venue is off discovery; knowing a court id
-    // (a cached page, a direct API call) must not let a player book it anyway.
     if (court.venue.status !== 'active') {
       throw new ConflictException({
         code: 'VENUE_UNAVAILABLE',
@@ -276,9 +266,6 @@ export class BookingsService {
         court.venue.country.coinToMajorRate ??
         platformSetting?.coinToEgpRate ??
         20;
-      // Coin discounts are platform-funded, so they are capped to a share of
-      // the court price (never the service fee) and never stack past what is
-      // still owed after any promo. Only the coins actually needed are taken.
       const maxCoinDiscount = Math.max(
         0,
         Math.min(
@@ -322,10 +309,6 @@ export class BookingsService {
           });
           if (overlap) throw new ConflictException('SLOT_ALREADY_HELD');
 
-          // Coins have to be reserved the moment the price is locked in, not
-          // at confirm — otherwise two concurrent holds can each price in the
-          // same coin balance, and whichever confirms second finds the coins
-          // already gone from under a total it already showed the player.
           if (coinsRedeemed > 0) {
             const spent = await tx.user.updateMany({
               where: { id: userId, coinsBalance: { gte: coinsRedeemed } },
@@ -603,8 +586,6 @@ export class BookingsService {
         await this.ledger.syncBookingLedger(tx, bookingId, 'payment_paid');
         return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
     });
-    // Paid-for bookings are the one thing a player must be able to find again:
-    // the notification carries the code and deep-links to the QR.
     await this.notifications
       .create({
         userId,
@@ -620,7 +601,6 @@ export class BookingsService {
     return confirmedBooking;
   }
 
-  // ---------- Split payment ----------
 
   async paySplitShare(shareLinkToken: string, payerUserId?: string) {
     if (!payerUserId) throw new BadRequestException('LOGIN_REQUIRED');
@@ -670,7 +650,6 @@ export class BookingsService {
     });
   }
 
-  // ---------- Check-in / completion ----------
 
   async checkIn(staffUser: AuthenticatedUser, qrPayload: string, method?: string) {
     const { valid, bookingId } = verifyQrPayload(
@@ -716,11 +695,6 @@ export class BookingsService {
     return updated;
   }
 
-  /**
-   * A Matchena booking paid AT the venue: the player hands the money over when they arrive, so
-   * it enters the drawer of whoever checked them in (and the shift close counts it). Online-paid
-   * bookings were already paid through the wallet and add nothing here.
-   */
   private async recordAtVenueCollection(
     tx: Prisma.TransactionClient,
     booking: { id: string; source: string; paymentModeSnapshot: string | null; totalAmount: number; currency: string },
@@ -881,8 +855,6 @@ export class BookingsService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
     await assertBookingAccess(this.prisma, staffUser, bookingId, { write: true });
-    // A Matchena booking belongs to the player as well: the venue may not cancel
-    // it (and trigger a refund) on its own — it asks the admin instead.
     if (booking.source === 'platform') {
       throw new ApiException(
         HttpStatus.FORBIDDEN,
@@ -939,7 +911,6 @@ export class BookingsService {
     return { isFirstBooking };
   }
 
-  // ---------- Cancellation ----------
 
   refundPreviewPct(slotStart: Date): number {
     const hoursUntil = (slotStart.getTime() - Date.now()) / 3_600_000;
@@ -1055,9 +1026,6 @@ export class BookingsService {
           },
         });
       }
-      // Coins are reserved the moment a hold is created (see `holdSlot()`),
-      // not just on confirm — so cancelling a still-`held` booking must give
-      // them back too, or they vanish for a booking that was never even paid.
       if (booking.coinsRedeemed > 0) {
         await tx.user.update({
           where: { id: booking.userId },
@@ -1084,9 +1052,6 @@ export class BookingsService {
       return tx.booking.findUniqueOrThrow({ where: { id: booking.id } });
     });
 
-    // A cancellation moves money and frees a slot the player was counting on.
-    // When the venue or an admin cancels, this is the only way they find out;
-    // when they cancel themselves, it's the receipt for what was refunded.
     await this.notifications
       .create({
         userId: booking.userId,
@@ -1106,7 +1071,6 @@ export class BookingsService {
     return settled;
   }
 
-  // ---------- Reads ----------
 
   async getById(id: string, user: AuthenticatedUser) {
     const booking = await this.prisma.booking.findUnique({
@@ -1138,11 +1102,6 @@ export class BookingsService {
     };
     return this.prisma.booking.findMany({
       where,
-      // The player's own booking list renders the venue's name and cover photo,
-      // so ship them with the booking instead of making the client hunt for the
-      // venue in a separate paginated search (where it may not even appear).
-      // `reviews` (the player's own, at most one) lets the card show "reviewed"
-      // on any device instead of offering a review the API will reject.
       include: {
         court: true,
         venue: {
@@ -1218,7 +1177,6 @@ export class BookingsService {
     });
   }
 
-  // ---------- Recurring series ----------
 
   createRecurringSeries(userId: string, dto: CreateRecurringSeriesDto) {
     return this.prisma.recurringBookingSeries.create({

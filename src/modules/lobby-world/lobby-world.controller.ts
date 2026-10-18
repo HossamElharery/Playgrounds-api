@@ -12,10 +12,6 @@ import { lobbyBallEnabled, lobbyMovementEnabled } from './lobby-world-flags';
 export class LobbyWorldController {
   constructor(private readonly config: ConfigService) {}
 
-  /**
-   * Which Lobby World stages are live. Guests may ask (they sit in lobbies too).
-   * `kiosk` is independent of movement: the dock can open the panel when walking is off.
-   */
   @Get('features')
   features(): { movement: boolean; ball: boolean; kiosk: boolean } {
     return {

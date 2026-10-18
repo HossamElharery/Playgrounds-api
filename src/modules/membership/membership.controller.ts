@@ -98,8 +98,6 @@ export class MembershipController {
     return this.membership.cancel(user.id);
   }
 
-  // Stand-in for a real PSP webhook (§7.6) — see MembershipService doc.
-  // Never trust this endpoint without a real signature check once a PSP is wired in.
   @Public()
   @Post('webhooks/renewal')
   webhookRenewal(

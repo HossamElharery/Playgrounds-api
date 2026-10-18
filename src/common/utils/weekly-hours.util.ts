@@ -16,7 +16,6 @@ export function isValidHhmm(value?: string, allowEndOfDay = false): boolean {
   return ALLOWED_MINUTES.has(minutes);
 }
 
-/** Earlier closing time means overnight (next civil day). */
 export function isOvernight(open: string, close: string): boolean {
   return close < open;
 }

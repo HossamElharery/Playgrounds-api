@@ -2,11 +2,6 @@ import type { WeeklyHours } from './weekly-hours.util';
 import { hasPricedHours, pricingGaps, type PricingGap } from './pricing-coverage.util';
 import type { PricingRuleLike } from './pricing-rule.util';
 
-/**
- * What a venue must have before anyone can book it. Without opening hours the system
- * used to treat the venue as open 24 hours, so a half-set-up venue showed an empty
- * night as bookable. "No hours" now means "not bookable", never "always open".
- */
 export type BookingBlocker = 'hours' | 'courts' | 'prices' | 'location';
 
 export interface ReadinessVenue {
@@ -28,11 +23,6 @@ export function hasLocation(venue: Pick<ReadinessVenue, 'lat' | 'lng' | 'address
 
 export type ReadinessRule = Pick<PricingRuleLike, 'daysOfWeek' | 'startTime' | 'endTime' | 'kind'>;
 
-/**
- * The things still missing before players can book. Empty list = bookable. Pure.
- * `rules` (when given) lets "prices" also mean "the price list misses every hour the venue is open";
- * a partial gap is not a blocker — it is a warning (`venuePricingGaps`).
- */
 export function bookingBlockers(
   venue: ReadinessVenue,
   courts: Array<{ pricingRules: number; rules?: ReadinessRule[] }>,
@@ -53,7 +43,6 @@ export function bookingBlockers(
   return missing;
 }
 
-/** Hours of a court that no everyday price covers, per court — what to fix, in the owner's words. */
 export function venuePricingGaps(
   weeklyHours: unknown,
   courts: Array<{ id: string; name: string; rules: ReadinessRule[] }>,
@@ -64,7 +53,6 @@ export function venuePricingGaps(
     .filter((c) => c.gaps.length > 0);
 }
 
-/** Loads what `bookingBlockers` needs for one venue. Shared by the admin approval and the owner checklist. */
 export async function loadBookingBlockers(
   prisma: {
     venue: { findUnique(args: any): Promise<ReadinessVenue | null> };

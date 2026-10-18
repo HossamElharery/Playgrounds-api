@@ -1,26 +1,14 @@
 import { GOAL_HALF_WIDTH, GOAL_LINE_Z } from './ball-sim';
 
-/*
- * Lobby penalty shootout — the pure rules (no sockets, no timers): who shoots,
- * who keeps goal, how many rounds, sudden death and the winners. The service
- * drives it with the clock and the ball; everything here is deterministic and
- * unit-tested on its own.
- */
-
-/** The penalty spot, 4.4 u in front of the goal line (the pitch is a lobby-sized one). */
 export const PENALTY_SPOT = { x: 0, z: GOAL_LINE_Z + 4.4 } as const;
-/** Where the shooter walks to: a short run-up behind the ball. */
 export const SHOOTER_SPOT = { x: 0, z: PENALTY_SPOT.z + 0.8 } as const;
-/** Where the keeper walks to: on the line, in the middle. */
 export const KEEPER_SPOT = { x: 0, z: GOAL_LINE_Z + 0.45 } as const;
-/** During the kick the keeper stays on the line, between (just past) the posts. */
 export const KEEPER_BOX = {
   minX: -(GOAL_HALF_WIDTH + 0.35),
   maxX: GOAL_HALF_WIDTH + 0.35,
   minZ: GOAL_LINE_Z + 0.2,
   maxZ: GOAL_LINE_Z + 1.1,
 } as const;
-/** …and the shooter behind the ball (a run-up, no walking it into the net). */
 export const SHOOTER_BOX = {
   minX: -1.6,
   maxX: 1.6,
@@ -28,22 +16,15 @@ export const SHOOTER_BOX = {
   maxZ: PENALTY_SPOT.z + 3,
 } as const;
 
-/** Players walk to their spots; the kick phase starts when both arrive or after this long. */
 export const SETUP_MS = 7000;
-/** "Arrived": within this distance of the spot. */
 export const ARRIVE_DISTANCE = 0.4;
-/** Time to take the kick. */
 export const AIM_MS = 8000;
-/** After the kick: the outcome is decided by then at the latest. */
 export const FLIGHT_MS = 3500;
-/** The result splash before the next turn. */
 export const RESULT_MS = 2600;
-/** The final table stays up this long before free play resumes. */
 export const ENDED_MS = 9000;
 export const GATHERING_MS = 12000;
 export const PENALTY_MIN_PLAYERS = 2;
 export const PENALTY_MAX_PLAYERS = 6;
-/** Sudden-death rounds before a still-level shootout is shared. */
 export const MAX_SUDDEN_DEATH_ROUNDS = 3;
 export const DIVE_DISTANCE = 1.4;
 export const DIVE_MS = 450;
@@ -57,7 +38,6 @@ export interface PenaltyDive {
   finished: boolean;
 }
 
-/** The authoritative keeper pose. No client movement can extend the dive. */
 export function divePose(dive: PenaltyDive, now: number): { x: number; z: number; r: number; locked: boolean } {
   const elapsed = Math.max(0, now - dive.at);
   const t = Math.min(1, elapsed / DIVE_MS);
@@ -76,23 +56,18 @@ export type PenaltyOutcome = 'goal' | 'saved' | 'missed' | 'timeout';
 export interface PenaltyState {
   squadId: string;
   starterId: string;
-  /** Everyone taking part, in kicking order. */
   order: string[];
   candidates: string[];
   accepted: string[];
   declined: string[];
   spectatorSpots: Record<string, { x: number; z: number }>;
-  /** Shots each player takes before sudden death. */
   rounds: number;
-  /** Kicks each kicker has taken in the current stage (regular, or this sudden-death round). */
   stageShots: Record<string, number>;
-  /** Players still kicking: everyone, or the tied ones in sudden death. */
   kickers: string[];
   suddenDeath: number;
   shooterId: string;
   keeperId: string;
   phase: PenaltyPhase;
-  /** Server time (ms) the phase ends at (its deadline). */
   phaseUntil: number;
   goals: Record<string, number>;
   shots: Record<string, PenaltyOutcome[]>;
@@ -102,11 +77,9 @@ export interface PenaltyState {
   winners: string[];
   cancelled: boolean;
   dive: PenaltyDive | null;
-  /** Increments on every change (clients ignore stale states). */
   rev: number;
 }
 
-/** 5 shots each for 2–3 players (like the real thing), 3 for bigger squads (it stays short). */
 export function roundsFor(players: number): number {
   return players <= 3 ? 5 : 3;
 }
@@ -155,17 +128,10 @@ export function createPenalty(
   return s;
 }
 
-/** Kicks each kicker takes in the current stage. */
 function stageKicks(s: PenaltyState): number {
   return s.suddenDeath === 0 ? s.rounds : 1;
 }
 
-/**
- * The pair for the next kick: the shooter is the first kicker (in order) with
- * the fewest kicks this stage — a plain rotation that survives players
- * leaving — and the keeper is the next one in the full order (so everybody
- * keeps goal in turn, and nobody ever keeps against themselves).
- */
 export function beginTurn(s: PenaltyState, now: number): void {
   s.dive = null;
   s.lastPanenka = false;
@@ -188,7 +154,6 @@ export function beginAim(s: PenaltyState, now: number): void {
   s.rev++;
 }
 
-/** Once per kick, including an early guess during aim. */
 export function beginDive(s: PenaltyState, userId: string, dir: number, x: number, z: number, now: number): boolean {
   if (userId !== s.keeperId || (s.phase !== 'aim' && s.phase !== 'flight') || s.dive || !Number.isInteger(dir) || dir < -1 || dir > 1) return false;
   s.dive = { dir: dir as -1 | 0 | 1, at: now, x, z, finished: false };
@@ -202,7 +167,6 @@ export function beginFlight(s: PenaltyState, now: number): void {
   s.rev++;
 }
 
-/** The shot's outcome: recorded, then the result splash. */
 export function resolveShot(
   s: PenaltyState,
   outcome: PenaltyOutcome,
@@ -219,7 +183,6 @@ export function resolveShot(
   s.rev++;
 }
 
-/** After the splash: the next turn, sudden death, or the end. */
 export function advance(s: PenaltyState, now: number): void {
   const done = s.kickers.every(
     (id) => (s.stageShots[id] ?? 0) >= stageKicks(s),
@@ -240,10 +203,6 @@ export function advance(s: PenaltyState, now: number): void {
   beginTurn(s, now);
 }
 
-/**
- * Regular stage only: stop as soon as nobody can catch the leader any more
- * (the remaining kicks could not close the gap), as in a real shootout.
- */
 export function decidedEarly(s: PenaltyState): boolean {
   if (s.suddenDeath > 0) return false;
   const leaders = leadersAmong(s, s.kickers);
@@ -277,10 +236,6 @@ export function cancel(s: PenaltyState, now: number): void {
   finish(s, [], now);
 }
 
-/**
- * A player left mid-shootout. Fewer than two left: it ends (no winner). If they
- * were in the current pair, the turn is replayed with the new pair.
- */
 export function removePlayer(
   s: PenaltyState,
   userId: string,
@@ -306,7 +261,6 @@ export function removePlayer(
   else s.rev++;
 }
 
-/** Clamp into a box: the corrected point, or null when already inside. */
 export function clampToBox(
   x: number,
   z: number,
@@ -317,7 +271,6 @@ export function clampToBox(
   return cx === x && cz === z ? null : { x: cx, z: cz };
 }
 
-/** What clients receive (`lobby.pen.state`): everything is public. */
 export interface PenaltyView {
   type: 'lobby.pen.state';
   squadId: string;

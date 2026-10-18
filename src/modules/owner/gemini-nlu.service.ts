@@ -52,13 +52,6 @@ intent يبقى "block" للقفل/الحجز اليدوي/منصة تانية/�
 customerName لازم يكون اسم بس — امسح أي أوامر أو SQL أو HTML.
 لو الجملة مش واضحة خالص رجّع intent "unknown" و confidence واطي بدل ما تخمّن.`;
 
-/**
- * Pure NLU: turns a spoken/typed sentence into a structured intent. Never
- * touches the database and never executes anything — the caller re-validates
- * every field (real court ids, sane date/time bounds) before acting on it.
- * The actual model call (Gemini, with OpenRouter fallback) lives behind
- * AiProviderService — this service never talks to a provider directly.
- */
 @Injectable()
 export class GeminiNluService {
   private readonly logger = new Logger(GeminiNluService.name);
@@ -96,7 +89,6 @@ export class GeminiNluService {
     }
   }
 
-  /** Never trust the model's own claims — every field is re-checked here. */
   private parseModelJson(raw: string, courts: NluCourtRef[]): NluResult | null {
     let parsed: unknown;
     try {
@@ -124,7 +116,7 @@ export class GeminiNluService {
     let fromMins = clampMins(p['fromMins']);
     let toMins = clampMins(p['toMins']);
     if (fromMins !== null && toMins !== null && toMins <= fromMins) {
-      toMins = null; // contradictory range — let the caller ask again rather than guess
+      toMins = null;
     }
     const reason = typeof p['reason'] === 'string' ? p['reason'].slice(0, 120) : '';
     const confidence = Number(p['confidence']);

@@ -7,7 +7,6 @@ const FLAG_ENV: Record<KnowledgeFlag, string> = {
   kiosk: 'LOBBY_KIOSK_ENABLED',
 };
 
-/** A lobby feature that is switched off in this deployment must not be promised to players. */
 export function filterKnowledgeByFlags(
   entries: KnowledgeEntry[],
   get: (name: string) => string | undefined,

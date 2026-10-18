@@ -5,10 +5,8 @@ export interface LayoutFloor { id: string; name: string; width: number; depth: n
 export interface LayoutPlacement { id: string; floorId: string; roomId?: string; unitId?: string; assetKey: LayoutAsset; x: number; z: number; rotation: number; width: number; depth: number; height: number; }
 export const LAYOUT_AMBIENCES = ['neon', 'cafe', 'industrial', 'majlis'] as const;
 export type LayoutAmbience = typeof LAYOUT_AMBIENCES[number];
-/** `ambience` is optional so every document saved before it existed stays valid; absent means `neon`. */
 export interface LayoutDocument { schemaVersion: 1; venueId: string; units: 'm'; ambience?: LayoutAmbience; signLogoPhotoId?: string; floors: LayoutFloor[]; placements: LayoutPlacement[]; }
 
-/** Closed schema protects storage/rendering; no arbitrary asset URLs or financial IDs. */
 export function validateLayoutDocument(value: unknown, venueId: string, unitIds: ReadonlySet<string>): LayoutDocument {
   const fail = () => { throw new RangeError('Invalid layout document'); };
   const object = (v: unknown, allowed: string[], required: string[]): Record<string, any> => {

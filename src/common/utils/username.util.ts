@@ -1,4 +1,3 @@
-/** Blueprint §20.5: Latin letter, then 3–29 letters/digits/underscore/dot. */
 export const USERNAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.]{3,29}$/;
 
 export function normalizeUsername(raw: string): string {

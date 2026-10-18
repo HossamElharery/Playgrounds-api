@@ -40,7 +40,6 @@ export class ReviewsController {
   ) {
     let ownerId = user.id;
     if (!user.roles.includes('admin') && !user.roles.includes('owner') && user.roles.includes('staff')) {
-      // A staff reply needs the "reply to reviews" key on one of their own venues.
       const review = await this.prisma.venueReview.findUnique({ where: { id }, select: { venueId: true } });
       if (!review) throw new NotFoundException('Review not found');
       const scope = await requireStaffVenue(this.prisma, user, review.venueId);

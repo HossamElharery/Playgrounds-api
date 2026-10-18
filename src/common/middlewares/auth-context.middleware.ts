@@ -3,13 +3,6 @@ import { NextFunction, Request, Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 
-/**
- * Attaches `request.user` when a valid access token is present.
- * Never throws — an expired/missing/invalid token just means an
- * anonymous request, and it is AuthGuard's job (not this middleware's)
- * to decide whether the route requires auth. This is what lets public
- * routes keep working for a visitor carrying a stale token.
- */
 @Injectable()
 export class AuthContextMiddleware implements NestMiddleware {
   constructor(

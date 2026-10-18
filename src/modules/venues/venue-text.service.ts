@@ -6,11 +6,6 @@ export interface BilingualText { ar: string; en: string }
 const ARABIC = /[؀-ۿ]/g;
 const LATIN = /[A-Za-z]/g;
 
-/**
- * Owners write a venue's name and description once, in the language they think in. This gives the
- * public pages both languages: the other one is translated (public-data profile, never PII) and,
- * when no translator is reachable, the original is shown in both so nothing is ever left empty.
- */
 @Injectable()
 export class VenueTextService {
   private readonly log = new Logger(VenueTextService.name);

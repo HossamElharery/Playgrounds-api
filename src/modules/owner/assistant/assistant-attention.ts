@@ -1,6 +1,5 @@
 import type { PrismaService } from '../../prisma/prisma.service';
 
-/** A manual booking with money still owed on it. All amounts are minor units. */
 export interface OwedRow {
   id: string;
   venueId: string;
@@ -17,12 +16,6 @@ export interface OwedRow {
 
 const SIXTY_DAYS_MS = 60 * 86_400_000;
 
-/**
- * Bookings that still owe money. `overdue` = already played (the owner is
- * chasing cash), `upcoming` = starting inside the window (the owner can collect
- * at the door). Shared by the chat ("فكرني"), the dashboard digest and the
- * push reminders, so all three always agree on who owes what.
- */
 export async function findOwed(
   prisma: Pick<PrismaService, 'booking'>,
   scope: { venueId?: string },
@@ -78,12 +71,6 @@ export async function findOwed(
 
 const UPCOMING_DAYS = 30;
 
-/**
- * Everything the venue is owed, in one place: finished bookings that were never paid in full,
- * and bookings still to come that already carry a balance. "Who owes me?" in the chat, the
- * dashboard digest and the push reminders all read this — a question must never answer
- * "nobody owes you" while the reminder next to it lists a debt.
- */
 export async function findAllOwed(
   prisma: Pick<PrismaService, 'booking'>,
   venueId: string,
@@ -91,7 +78,6 @@ export async function findAllOwed(
 ): Promise<{ overdue: OwedRow[]; upcoming: OwedRow[] }> {
   const [overdue, upcoming] = await Promise.all([
     findOwed(prisma, { venueId }, { kind: 'overdue', now }),
-    // `ahead` includes a game being played right now, which is neither finished nor yet to start.
     findOwed(prisma, { venueId }, { kind: 'ahead', now, to: new Date(now.getTime() + UPCOMING_DAYS * 86_400_000) }),
   ]);
   return { overdue, upcoming };

@@ -17,11 +17,8 @@ import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
 import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
 import { lobbyMovementEnabled } from '../lobby-world/lobby-world-flags';
 
-/** Per-user gap between two lobby emotes (signature moves). */
 export const SQUAD_EMOTE_COOLDOWN_MS = 3000;
-/** Per-user gap between two Lobby World emote-wheel emotes (a separate budget). */
 export const SQUAD_WHEEL_EMOTE_COOLDOWN_MS = 1200;
-/** The Lobby World emote wheel (v1). */
 export const LOBBY_EMOTE_IDS = [
   'wave',
   'clap',
@@ -36,16 +33,8 @@ export type LobbyEmoteId = (typeof LOBBY_EMOTE_IDS)[number];
 const EMOTE_IDS: ReadonlySet<string> = new Set(LOBBY_EMOTE_IDS);
 const EMOTE_PRUNE_EVERY_MS = 60_000;
 
-/**
- * Single Socket.IO gateway. JWT handshake; each socket joins `user:<id>`
- * and `presence`. Feature rooms (chat/squad) are joined only after a
- * server-side membership check. Voice is WebRTC signaling (SDP/ICE)
- * relayed between squad members — no media server.
- */
 @Injectable()
 @WebSocketGateway({
-  // CORS is owned by SocketIoAdapter (CORS_ORIGINS). Do not use `origin: '*'`
-  // with credentials — browsers reject that combination.
   cors: { origin: true, credentials: true },
 })
 export class RealtimeGateway
@@ -53,7 +42,6 @@ export class RealtimeGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
 {
   private readonly logger = new Logger(RealtimeGateway.name);
-  /** userId -> time of the last relayed emote (Lobby Morphs signature move). */
   private readonly lastEmoteAt = new Map<string, number>();
   private emotePruneTimer: NodeJS.Timeout | null = null;
 
@@ -69,13 +57,6 @@ export class RealtimeGateway
     super();
   }
 
-  /**
-   * Socket.IO starts delivering a socket's messages before this resolves, so
-   * the pending auth is kept on the socket and every handler waits for it.
-   * A `squad.lobby.join` sent right after connecting used to be dropped here
-   * (no userId yet): the client never entered `squad:<id>` and missed voice
-   * and lobby events for the whole session.
-   */
   handleConnection(client: Socket): Promise<void> {
     const ready = this.authenticate(client);
     (client.data as { authReady?: Promise<void> }).authReady = ready;
@@ -247,15 +228,6 @@ export class RealtimeGateway
     });
   }
 
-  /**
-   * Lobby Morphs signature move, relayed to the squad. Rate limited per user
-   * (all tabs share the budget) and silently ignored while the feature is off.
-   *
-   * With an `emoteId` it is a Lobby World emote-wheel emote instead: only the
-   * whitelisted ids, only while lobby movement is on, with its own 1.2 s
-   * budget. Without one it is exactly the signature move above, so older
-   * clients keep working.
-   */
   @SubscribeMessage('squad.member.emote')
   memberEmote(
     @ConnectedSocket() client: Socket,
@@ -291,11 +263,6 @@ export class RealtimeGateway
     });
   }
 
-  /**
-   * Room membership (checked in memory, see LobbyWorldGateway) instead of a
-   * database lookup, so wheel emotes never queue behind voice signaling in
-   * the `inOrder` chain.
-   */
   private wheelEmote(
     client: Socket,
     data: { squadId: string; emoteId?: unknown },
@@ -339,14 +306,6 @@ export class RealtimeGateway
     this.emotePruneTimer.unref?.();
   }
 
-  /**
-   * Relays one socket's squad/voice messages strictly in the order they were
-   * sent. Handlers are async (membership lookups), and socket.io runs them
-   * concurrently — an ICE candidate (one lookup) used to overtake the offer
-   * it belongs to (two lookups) and reach the peer before that peer had a
-   * connection to add it to, so it was dropped. Losing the first candidates
-   * is how a fresh lobby sometimes connected with no audio at all.
-   */
   private inOrder(client: Socket, task: () => Promise<void>): Promise<void> {
     const data = client.data as { signalChain?: Promise<void> };
     const next = (data.signalChain ?? this.authReady(client))
@@ -366,7 +325,6 @@ export class RealtimeGateway
     });
   }
 
-  /** WebRTC mesh signaling — offer/answer/ICE between two squad members. */
   @SubscribeMessage('voice.offer')
   voiceOffer(
     @ConnectedSocket() client: Socket,
@@ -477,7 +435,6 @@ export class RealtimeGateway
     });
   }
 
-  /** Resolves once the socket's handshake auth has finished (either way). */
   private authReady(client: Socket): Promise<void> {
     const ready = (client.data as { authReady?: Promise<void> } | undefined)
       ?.authReady;

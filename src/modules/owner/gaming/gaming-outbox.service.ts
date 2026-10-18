@@ -4,7 +4,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { withJobLock } from '../../../common/utils/job-lock.util';
-/** Minimal invalidations to authorized personal rooms; no customer/money payload. */
 @Injectable()
 export class GamingOutboxService {
  private readonly logger=new Logger(GamingOutboxService.name);

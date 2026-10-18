@@ -34,7 +34,6 @@ function tzOffsetMs(instant: Date, timeZone: string): number {
   return asUtc - instant.getTime();
 }
 
-/** Convert a civil wall-clock time in `timeZone` to a UTC Date. */
 export function zonedWallTimeToUtc(
   dateStr: string,
   hhmm: string,

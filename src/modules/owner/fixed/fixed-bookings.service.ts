@@ -38,7 +38,6 @@ export interface PreviewSession {
   endsAt: string;
   priceAmount: number | null;
   conflict: Conflict | 'SLOT_IN_PAST' | null;
-  /** Booked now (inside the horizon) vs. generated later by the daily job. */
   bookedNow: boolean;
   skipped: boolean;
 }
@@ -71,8 +70,6 @@ export class FixedBookingsService {
     private readonly ledger: LedgerService,
     private readonly notifications: NotificationsService,
   ) {}
-
-  // ---- preview / create ---------------------------------------------------
 
   async preview(user: AuthenticatedUser, dto: FixedSeriesShapeDto) {
     await assertVenueAccess(this.prisma, user, dto.venueId, { write: false });
@@ -143,8 +140,6 @@ export class FixedBookingsService {
     return { ...(await this.toDto(series.id)), created: result.created, conflicts: result.conflicts };
   }
 
-  // ---- list ---------------------------------------------------------------
-
   async list(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const tz = await this.venueTz(venueId);
@@ -181,9 +176,6 @@ export class FixedBookingsService {
     );
   }
 
-  // ---- actions ------------------------------------------------------------
-
-  /** Leave one date out: cancels that session and makes sure the job never books it again. */
   async skipDate(user: AuthenticatedUser, seriesId: string, date: string) {
     const series = await this.loadWritable(user, seriesId);
     const tz = await this.venueTz(series.venueId!);
@@ -201,7 +193,6 @@ export class FixedBookingsService {
     return this.toDto(seriesId);
   }
 
-  /** Stop the series from this date on (the date itself is cancelled too). */
   async cancelFrom(user: AuthenticatedUser, seriesId: string, date: string) {
     const series = await this.loadWritable(user, seriesId);
     const tz = await this.venueTz(series.venueId!);
@@ -219,11 +210,6 @@ export class FixedBookingsService {
     return this.toDto(seriesId);
   }
 
-  /**
-   * New time (and optionally court/length) from a date onward. The old series keeps its
-   * past, a new series takes over — so history is never rewritten. `preview` only reports
-   * which of the new dates would clash.
-   */
   async reschedule(user: AuthenticatedUser, seriesId: string, dto: RescheduleSeriesDto) {
     const series = await this.loadWritable(user, seriesId);
     const venueId = series.venueId!;
@@ -284,8 +270,6 @@ export class FixedBookingsService {
     return { ...(await this.toDto(created.id)), created: filled.created, conflicts: filled.conflicts };
   }
 
-  // ---- the daily job ------------------------------------------------------
-
   @Cron('30 3 * * *', { timeZone: 'Africa/Cairo' })
   async dailyExtend(): Promise<void> {
     try {
@@ -297,7 +281,6 @@ export class FixedBookingsService {
     }
   }
 
-  /** Keeps every active series booked {@link FIXED_HORIZON_WEEKS} weeks ahead; tells the owner once per new clash. */
   async extendAll(now: Date = new Date()): Promise<{ series: number; created: number; conflicts: number }> {
     const rows = await this.prisma.recurringBookingSeries.findMany({
       where: { kind: 'manual', status: 'active', venueId: { not: null } },
@@ -323,13 +306,6 @@ export class FixedBookingsService {
     return { series: rows.length, created, conflicts };
   }
 
-  // ---- internals ----------------------------------------------------------
-
-  /**
-   * Books every date inside the horizon that has no booking yet. A date that already
-   * has a booking row of ANY status was handled (an owner who cancelled one session by
-   * hand does not get it back). Returns the dates that could not be booked.
-   */
   private async fillHorizon(
     series: RecurringBookingSeries,
     court: CourtCtx,
@@ -489,7 +465,6 @@ export class FixedBookingsService {
     }
   }
 
-  /** Soft-cancels a series' upcoming sessions (one date, or from a date on). */
   private async cancelSessions(
     tx: Prisma.TransactionClient,
     seriesId: string,

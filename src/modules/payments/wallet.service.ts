@@ -153,10 +153,6 @@ export class WalletService {
     });
   }
 
-  /** Reserves the funds immediately (so they can't be spent twice while an
-   *  admin reviews this) and files a request. There's no payout provider
-   *  wired up yet — `resolveWithdrawal` is how an admin marks it actually
-   *  paid out, or rejects it and the funds come back. */
   async requestWithdrawal(userId: string, amount: number, destination: string) {
     return this.prisma.$transaction(async (tx) => {
       await this.debit(tx, { userId, amount, reason: 'withdrawal' });
@@ -189,9 +185,6 @@ export class WalletService {
       throw new ForbiddenException('Already resolved');
 
     const resolved = await this.prisma.$transaction(async (tx) => {
-      // Claim the pending request before moving any money. Two admins can open
-      // the same row, but only one may transition it and (on rejection) refund
-      // the reserved balance.
       const claimed = await tx.walletWithdrawalRequest.updateMany({
         where: { id, status: 'pending' },
         data: {

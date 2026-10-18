@@ -5,7 +5,6 @@ export interface QrPayload {
   issuedAt: number;
 }
 
-/** Signs a compact, verifiable QR payload for a booking (HMAC-SHA256, not a bare bookingId). */
 export function signQrPayload(bookingId: string, secret: string): string {
   const issuedAt = Date.now();
   const body = `${bookingId}.${issuedAt}`;

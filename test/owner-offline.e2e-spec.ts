@@ -54,7 +54,6 @@ describe('Owner offline replay on real PostgreSQL', () => {
   it('accepts a late replay within a server-issued grant, rejecting forged and out-of-range grants', async () => {
     const grant = await service.prepareOffline(user, venueId, randomUUID());
     const dto = { ...draft(), startsAt: new Date(Date.now() - 2 * 3600_000).toISOString(), offlineGrant: grant.token };
-    // Simulate an earlier prepared shift using server-owned grant timestamps, not a client clock.
     await prisma.ownerOfflineGrant.updateMany({ where: { venueId }, data: { issuedAt: new Date(Date.now() - 3 * 3600_000) } });
     const saved = await service.createManualBooking(user, dto);
     expect(saved.money.outstanding).toBe(50000);

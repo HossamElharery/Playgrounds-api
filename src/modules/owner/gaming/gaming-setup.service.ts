@@ -42,7 +42,6 @@ export class GamingSetupService {
   try{validateSetupPlan(d);}catch{throw new BadRequestException({code:'SETUP_INVALID'});}
   await this.permissions(this.commands.prisma as never,user);
   return this.commands.command(user,'venue.manage','hall.setup',d,async tx=>{
-   // Same lock order as normal layout publishing; serialize setup, layout and operational writes.
    await tx.$queryRaw`SELECT id FROM "Venue" WHERE id=${d.venueId} FOR UPDATE`;
    await this.permissions(tx,user);
    const layout=await tx.gamingLayout.findUnique({where:{venueId:d.venueId}});
@@ -77,7 +76,6 @@ export class GamingSetupService {
     const u=source?await tx.court.update({where:{id:source.id},data}):await tx.court.create({data:{...data,venueId:d.venueId,sportId:sport.id,name,slotDurationMins:60,pricingRules:{create:pricing}}});
     used.add(u.id);
     if(source){
-      // Reuse keeps identity and any custom schedule rules; only replace the standard base tariff.
       await tx.pricingRule.deleteMany({where:{courtId:u.id,label:'base'}});
       await tx.pricingRule.create({data:{...pricing,courtId:u.id}});
       if(await tx.pricingRule.count({where:{courtId:u.id}})===1)await tx.court.update({where:{id:u.id},data:{gamingHourlyRateMinor:rate}});

@@ -22,7 +22,6 @@ function build(bookings: ReturnType<typeof row>[], sent: Array<{ userId?:string;
     booking: { findMany: jest.fn().mockResolvedValue(bookings) },
     venue: { findUnique: jest.fn().mockResolvedValue({ ownerId: 'o1', nameAr: 'مارينا', nameEn: 'Marina', country: { timezone: 'Asia/Dubai' } }) },
     notification: {
-      // Answers "was a notification with this kind/key/value created inside the window?" from `sent`.
       findFirst: jest.fn().mockImplementation(({ where }: { where: { userId: string; createdAt: { gte: Date }; AND: Array<{ payload: { path: string[]; equals: string } }> } }) => {
         const hit = sent.find(
           (n) => (n.userId ?? 'o1') === where.userId && n.createdAt >= where.createdAt.gte && where.AND.every((c) => n.payload[c.payload.path[0]] === c.payload.equals),
@@ -59,7 +58,6 @@ describe('AssistantRemindersService — unpaid digest', () => {
   it('does not announce the same unpaid bookings again the next morning', async () => {
     const { service, notifications, sent } = build([row('1', 12_000)]);
     await service.sendOverdue(NOW);
-    // Next day, same debt: the 10-hour venue window has passed but nothing changed.
     sent[0].createdAt = new Date(NOW.getTime() - 24 * HOUR);
     await expect(service.sendOverdue(NOW)).resolves.toBe(0);
     expect(notifications.create).toHaveBeenCalledTimes(1);
@@ -88,7 +86,6 @@ describe('AssistantRemindersService — the digest follows each venue\'s own clo
 
   it('stays quiet when it is not 11:00 or 20:00 where the venue is', async () => {
     const { service, notifications } = build([row('1', 12_000)]);
-    // 09:00Z is 13:00 in Dubai — neither moment.
     await expect(service.sendOverdue(NOW, HOURS)).resolves.toBe(0);
     expect(notifications.create).not.toHaveBeenCalled();
   });
@@ -122,7 +119,6 @@ describe('AssistantRemindersService — arrival with a balance', () => {
     expect(notifications.create.mock.calls[0][0].deepLink).toBe('/owner/today?venue=v1&booking=9');
   });
 });
-
 
 describe('settled arrivals and refunded balances', () => {
   it('reminds the owner and booking staff about a fully paid arrival without asking for money', async () => {

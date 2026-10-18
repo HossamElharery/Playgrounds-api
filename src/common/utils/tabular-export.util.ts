@@ -1,6 +1,5 @@
 import { strToU8, zipSync } from 'fflate';
 
-/** A cell is text, a number (kept numeric so Excel can sum it) or empty. */
 export type Cell = string | number | null | undefined;
 
 export interface ExportSheet {
@@ -9,13 +8,11 @@ export interface ExportSheet {
   rows: Cell[][];
 }
 
-/** Characters XML 1.0 does not allow (control characters and the two non-characters). */
 const XML_ILLEGAL = new RegExp('[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]', 'g');
 const BOM = String.fromCharCode(0xfeff);
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 
-/** Strips characters XML 1.0 forbids and escapes the rest. */
 function xml(text: string): string {
   return text
     .replace(XML_ILLEGAL, '')
@@ -25,7 +22,6 @@ function xml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** 0 -> A, 25 -> Z, 26 -> AA */
 function colName(i: number): string {
   let n = i + 1;
   let s = '';
@@ -37,7 +33,6 @@ function colName(i: number): string {
   return s;
 }
 
-/** Excel sheet names: at most 31 chars, none of []:*?/\ and unique (case-insensitive). */
 export function sheetNames(names: string[]): string[] {
   const seen = new Set<string>();
   return names.map((raw, i) => {
@@ -53,11 +48,6 @@ const NS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const NS_PKG_REL = 'http://schemas.openxmlformats.org/package/2006/relationships';
 
-/**
- * A small, dependency-free .xlsx writer: one worksheet per sheet, a bold frozen header row,
- * column widths, numbers kept numeric, and `rtl` to open right-to-left for Arabic. Strings
- * are inline (never formulas), so a cell that starts with "=" cannot execute in Excel.
- */
 export function buildXlsx(sheets: ExportSheet[], opts: { rtl?: boolean } = {}): Uint8Array {
   const names = sheetNames(sheets.map((s) => s.name));
   const files: Record<string, Uint8Array> = {};
@@ -118,7 +108,6 @@ export function buildXlsx(sheets: ExportSheet[], opts: { rtl?: boolean } = {}): 
   return zipSync(files, { level: 6 });
 }
 
-/** One CSV cell. Text that could be read as a formula gets a leading quote; numbers stay numeric. */
 export function csvCell(value: Cell): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
@@ -126,14 +115,12 @@ export function csvCell(value: Cell): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
-/** UTF-8 with BOM (Excel opens Arabic correctly) and CRLF line ends. */
 export function buildCsv(sheet: ExportSheet): string {
   const lines = [sheet.columns.map((c) => csvCell(c.header)).join(',')];
   for (const row of sheet.rows) lines.push(row.map(csvCell).join(','));
   return `${BOM}${lines.join('\r\n')}\r\n`;
 }
 
-/** Every sheet as its own CSV inside a zip. */
 export function buildCsvZip(sheets: ExportSheet[]): Uint8Array {
   const names = sheetNames(sheets.map((s) => s.name));
   const files: Record<string, Uint8Array> = {};

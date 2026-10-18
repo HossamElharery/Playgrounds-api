@@ -3,13 +3,6 @@ import { PaymentMethod } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { ChargeResult, PaymentProvider } from './payment-provider.interface';
 
-/**
- * Mock Egypt-localized checkout: card/wallet/InstaPay settle instantly,
- * Fawry is a pay-code (pending until the user pays at an outlet — modeled
- * here as instantly "paid" for demo purposes), cash-at-venue stays pending
- * until check-in. Swap for a real PSP integration by implementing
- * PaymentProvider and pointing PAYMENT_PROVIDER at it.
- */
 @Injectable()
 export class MockPaymentProvider implements PaymentProvider {
   readonly isLive = false;

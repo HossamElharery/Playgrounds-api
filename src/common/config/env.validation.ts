@@ -72,68 +72,43 @@ export const envValidationSchema = Joi.object({
     .uri()
     .default('https://api.indexnow.org/indexnow'),
 
-  /** Legacy, unused: Google shut the server-key FCM API down in 2024. */
   FCM_SERVER_KEY: Joi.string().allow('').optional(),
-  /** Firebase service-account JSON (raw or base64) for native push over FCM HTTP v1. */
   FIREBASE_SERVICE_ACCOUNT: Joi.string().allow('').optional(),
-  /** Sign in with Apple audiences, comma separated (default com.matchena.app). */
   APPLE_CLIENT_IDS: Joi.string().allow('').optional(),
-  /** Lobby Morphs feature flag: exactly `true` enables it; anything else keeps it off. */
   LOBBY_MORPHS_ENABLED: Joi.string().allow('').optional(),
-  /** Free morph rolls per Cairo day. Unset/empty = unlimited (current production behavior). */
   MORPH_DAILY_FREE_ROLLS: Joi.string().allow('').optional(),
-  /** Lobby World movement (Stage 1): exactly `true` enables it; anything else keeps the lobby as before. */
   LOBBY_MOVEMENT_ENABLED: Joi.string().allow('').optional(),
-  /** Lobby World ball (Stage 2): exactly `true` enables it, and only while movement is on too. */
   LOBBY_BALL_ENABLED: Joi.string().allow('').optional(),
-  /** Booking kiosk in the lobby: exactly `true` enables it. Independent of movement. */
   LOBBY_KIOSK_ENABLED: Joi.string().allow('').optional(),
   LOBBY_SOCIAL_ENABLED: Joi.string().valid('true', 'false', '').default('false'),
   LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT: Joi.string().valid('true', 'false', '').default('false'),
-  /** Owner/staff calls: exactly `true` enables them; anything else keeps the API as it was. */
   STAFF_CALLS_ENABLED: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),
   TURN_USERNAME: Joi.string().allow('').optional(),
   TURN_CREDENTIAL: Joi.string().allow('').optional(),
-  /** Shared secret with coturn (`static-auth-secret`): short-lived TURN credentials per user. */
   TURN_SECRET: Joi.string().allow('').optional(),
-  /** Lifetime of a TURN credential in seconds (default 12 h). */
   TURN_TTL_SECONDS: Joi.string().allow('').optional(),
-  /** Diagnostics: exactly `true` forces every client through TURN (relay-only). Leave unset normally. */
   TURN_FORCE_RELAY: Joi.string().allow('').optional(),
 
-  // Direct Google key: optional extra route behind OpenRouter (the free tier allows ~20 requests/day).
   GEMINI_API_KEY: Joi.string().allow('').optional(),
   GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
 
-  // --- OpenRouter: the main route for every AI call (see modules/ai/ai-provider.service.ts) ---
   OPENROUTER_API_KEY: Joi.string().allow('').optional(),
-  /** Comma-separated OpenRouter model ids, best first. Defaults live in ai-provider.service.ts. */
   AI_OWNER_MODELS: Joi.string().allow('').optional(),
   AI_PUBLIC_MODELS: Joi.string().allow('').optional(),
-  /** minimal | low | medium | high — how long the model may think (billed as output). */
   AI_OWNER_REASONING: Joi.string().allow('').optional(),
   AI_PUBLIC_REASONING: Joi.string().allow('').optional(),
-  /** Daily spend ceilings in USD; past them the assistants fall back to keyword matching until midnight UTC. */
   AI_OWNER_DAILY_BUDGET_USD: Joi.string().allow('').optional(),
   AI_PUBLIC_DAILY_BUDGET_USD: Joi.string().allow('').optional(),
-  /** Captain message allowances (visitors / signed-in players). */
   CAPTAIN_GUEST_PER_DAY: Joi.string().allow('').optional(),
   CAPTAIN_GUEST_PER_MINUTE: Joi.string().allow('').optional(),
   CAPTAIN_GUEST_IP_PER_DAY: Joi.string().allow('').optional(),
   CAPTAIN_GUEST_IP_PER_MINUTE: Joi.string().allow('').optional(),
   CAPTAIN_USER_PER_DAY: Joi.string().allow('').optional(),
   CAPTAIN_USER_PER_MINUTE: Joi.string().allow('').optional(),
-  /**
-   * The limits and budgets above can also be changed live from the admin AI tab; a value set there beats these.
-   * Salt for the one-way hashes kept instead of addresses and device ids (defaults to the access-token secret).
-   */
   AI_HASH_SALT: Joi.string().allow('').optional(),
-  /** Cloudflare Turnstile secret. Unset = the check is dormant and nobody is ever challenged. */
   TURNSTILE_SECRET_KEY: Joi.string().allow('').optional(),
 
-  // TEST ONLY — simulates a Gemini failure to exercise the OpenRouter fallback
-  // path without waiting for a real outage. Must be unset in production.
   AI_FORCE_FAILURE: Joi.string().allow('').optional(),
 }).unknown(true);

@@ -3,12 +3,10 @@ import { isTimeWithinDayHours, type WeeklyHours } from '../../../common/utils/we
 
 const QUARTER_MS = 15 * 60_000;
 
-/** Without opening hours on record a venue is assumed open 06:00–24:00, so empty nights do not drown the picture. */
 const DEFAULT_DAY = { closed: false, open: '06:00', close: '23:59' } as const;
 
 export interface GridInput {
   timeZone: string;
-  /** Venue-local calendar dates (yyyy-mm-dd), any order. */
   dates: string[];
   weeklyHours: WeeklyHours | null;
   courtIds: string[];
@@ -16,14 +14,12 @@ export interface GridInput {
   blocks: { courtId: string | null; startsAt: Date; endsAt: Date }[];
 }
 
-/** One venue-local hour on one date, in quarter-hours: how many were open, and how many were booked. */
 export interface HourSample {
   date: string;
   open: number;
   occ: number;
 }
 
-/** `grid[courtId][weekday][hour]` → samples, most recent date first. */
 export type OccupancyGrid = Record<string, HourSample[][][]>;
 
 export interface DayTotal {
@@ -36,7 +32,6 @@ export interface DayTotal {
 export interface GridResult {
   grid: OccupancyGrid;
   days: DayTotal[];
-  /** Hours (venue-local) in which the venue is ever open, for drawing the map. */
   openHours: { from: number; to: number };
 }
 
@@ -48,11 +43,6 @@ function markRange(arr: Uint8Array, base: number, from: Date, to: Date) {
   for (let i = first; i < last; i += 1) arr[i] = 1;
 }
 
-/**
- * Turns bookings, blocks and opening hours into per-court, per-weekday, per-hour samples.
- * Booked = any booking (Matchena or the venue's own) covering the quarter-hour; a quarter
- * that is closed or blocked does not count as open, so maintenance never reads as "empty".
- */
 export function buildOccupancyGrid(input: GridInput): GridResult {
   const dates = [...new Set(input.dates)].sort();
   const grid: OccupancyGrid = {};
@@ -128,7 +118,6 @@ export function cellStats(samples: readonly HourSample[]): { open: number; occ: 
 export const IDLE_BELOW = 0.3;
 export const MIN_SAMPLE_WEEKS = 3;
 
-/** An hour is idle when, among the last 4 times it was open on this weekday, at least 3 were under 30 % full. */
 export function isIdleHour(samples: readonly HourSample[]): boolean {
   const recent = samples.filter((s) => s.open > 0).slice(0, 4);
   if (recent.length < MIN_SAMPLE_WEEKS) return false;
@@ -138,15 +127,11 @@ export function isIdleHour(samples: readonly HourSample[]): boolean {
 export interface IdleWindow {
   weekday: number;
   startHour: number;
-  /** Exclusive. */
   endHour: number;
-  /** 0..1 over every sample of those hours. */
   occupancy: number;
-  /** How many dates of that weekday the window has been measured on. */
   days: number;
 }
 
-/** Runs of at least two consecutive idle hours on one weekday of one court. */
 export function findIdleWindows(courtGrid: HourSample[][][]): IdleWindow[] {
   const out: IdleWindow[] = [];
   for (let weekday = 0; weekday < 7; weekday += 1) {
@@ -173,7 +158,6 @@ export function findIdleWindows(courtGrid: HourSample[][][]): IdleWindow[] {
   return out;
 }
 
-/** The discount worth trying at this occupancy (0..1); null when the window is busy enough already. */
 export function suggestedPercent(occupancy: number): number | null {
   if (occupancy < 0.15) return 25;
   if (occupancy < 0.3) return 20;
@@ -181,10 +165,6 @@ export function suggestedPercent(occupancy: number): number | null {
   return null;
 }
 
-/**
- * Days that came in well below that weekday's usual. Needs 4+ dates of the weekday; the
- * newest date is compared with the average of the older ones.
- */
 export function weekdayDips(days: readonly DayTotal[]): { weekday: number; date: string; belowPct: number }[] {
   const byWeekday = new Map<number, DayTotal[]>();
   for (const d of days) byWeekday.set(d.weekday, [...(byWeekday.get(d.weekday) ?? []), d]);

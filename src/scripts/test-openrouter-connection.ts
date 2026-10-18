@@ -1,18 +1,7 @@
-/**
- * Manual smoke test — NOT part of the Jest suite. Run with:
- *   npm run test:openrouter
- *
- * Sends one real request to OpenRouter (the free Nemotron fallback model —
- * see the note in ai-provider.types.ts about why this isn't Llama/Qwen) with
- * a fixed Egyptian Arabic test sentence and prints whether it worked, which
- * model answered, how long it took, and the full parsed JSON. Use this once
- * to confirm OPENROUTER_API_KEY actually works before relying on it as a
- * fallback for Gemini.
- */
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const MODEL = 'nvidia/nemotron-3-super-120b-a12b:free'; // the primary OpenRouter fallback — see ai-provider.service.ts
+const MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 const TEST_SENTENCE = 'اقفل ملعب 2 بكرة من 5 لـ 7';
 
 const SYSTEM_PROMPT = `أنت محلل نوايا لجدول ملعب رياضي مصري. رجّع JSON فقط بالشكل ده:

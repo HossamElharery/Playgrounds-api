@@ -4,7 +4,6 @@ import {
   SQUAD_WHEEL_EMOTE_COOLDOWN_MS,
 } from './realtime.gateway';
 
-/** Lobby World emote wheel on top of the Lobby Morphs signature relay. */
 describe('RealtimeGateway emote wheel (squad.member.emote + emoteId)', () => {
   function setup(
     opts: { movement?: boolean; morphs?: boolean; inRoom?: boolean } = {},
@@ -78,7 +77,7 @@ describe('RealtimeGateway emote wheel (squad.member.emote + emoteId)', () => {
     jest.setSystemTime(new Date('2026-09-25T10:00:01.100Z'));
     await gateway.memberEmote(client, { squadId: 's1', emoteId: 'dance' }); // < 1.2 s: dropped
     jest.setSystemTime(new Date('2026-09-25T10:00:01.200Z'));
-    await gateway.memberEmote(client, { squadId: 's1', emoteId: 'dance' }); // allowed
+    await gateway.memberEmote(client, { squadId: 's1', emoteId: 'dance' });
     await gateway.memberEmote(client, { squadId: 's1' }); // signature still cooling down
     expect(sent.map((s) => s.payload.emoteId ?? 'signature')).toEqual([
       'signature',

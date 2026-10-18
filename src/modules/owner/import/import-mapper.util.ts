@@ -1,12 +1,5 @@
 import { asciiDigits } from '../../../common/utils/guest-phone.util';
 
-/**
- * Understands what an Egyptian venue's spreadsheet means: Arabic or English headers, Arabic or
- * Western digits, day-first dates, "6 م" hours, "ساعة ونص" durations, "1,500 ج" prices. Every parser
- * is pure and returns null instead of guessing wildly, so the preview can tell the owner exactly
- * which cell it did not understand.
- */
-
 export const BOOKING_FIELDS = [
   'date',
   'time',
@@ -42,7 +35,6 @@ const HEADER_WORDS: Record<BookingField, string[]> = {
 
 const ASSIGN_ORDER: BookingField[] = ['date', 'time', 'endTime', 'duration', 'court', 'phone', 'customerName', 'price', 'paid', 'method', 'source', 'notes'];
 
-/** Lower-case, no diacritics, no "ال", one spelling of alef/yaa/taa-marbuta, single spaces. */
 export function normalizeHeader(text: string): string {
   return asciiDigits(text)
     .normalize('NFKC')
@@ -62,7 +54,6 @@ const WORDS: Record<BookingField, Set<string>> = Object.fromEntries(
 
 const stripAl = (h: string) => h.replace(/^ال/, '');
 
-/** Which column is which, judged by the header row alone. Each column is used at most once. */
 export function suggestMapping(headers: string[]): { mapping: ColumnMapping; matched: number } {
   const norm = headers.map(normalizeHeader);
   const used = new Set<number>();
@@ -84,10 +75,6 @@ export function suggestMapping(headers: string[]): { mapping: ColumnMapping; mat
   for (const f of BOOKING_FIELDS) if (mapping[f] == null) mapping[f] = null;
   return { mapping, matched };
 }
-
-// ---------------------------------------------------------------------------------------------
-// Dates
-// ---------------------------------------------------------------------------------------------
 
 const MONTHS: Record<string, number> = {
   يناير: 1, jan: 1, january: 1, كانون: 1,
@@ -114,7 +101,6 @@ function validYmd(y: number, m: number, d: number): string | null {
 
 const isNumeric = (t: string) => /^-?\d+(\.\d+)?$/.test(t);
 
-/** Excel's day counter (1900 system, with its famous leap-year bug) → a plain date. */
 export function excelSerialToYmd(serial: number): string | null {
   if (!(serial >= 36526 && serial < 73051)) return null; // 2000-01-01 … 2099-12-31
   const ms = Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000;
@@ -124,7 +110,6 @@ export function excelSerialToYmd(serial: number): string | null {
 
 export interface ParsedDate {
   ymd: string;
-  /** Minutes after midnight, when the cell was a date-time (Excel stores both in one number). */
   minutes?: number;
 }
 
@@ -144,7 +129,6 @@ export function parseDate(raw: string, now: Date = new Date()): ParsedDate | nul
     const ymd = validYmd(+m[1], +m[2], +m[3]);
     return ymd ? { ymd } : null;
   }
-  // 5/10/2026 or 5-10-26 — Egyptian sheets are day-first.
   m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})(?:[T\s].*)?$/.exec(text);
   if (m) {
     const year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
@@ -177,17 +161,11 @@ export function parseDate(raw: string, now: Date = new Date()): ParsedDate | nul
   return null;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Times and durations
-// ---------------------------------------------------------------------------------------------
-
 export interface ParsedTime {
   minutes: number;
-  /** An hour from 1 to 11 with no morning/evening marker: the caller decides which one it is. */
   ambiguous: boolean;
 }
 
-/** "18:30", "6:30 PM", "٦ م", "6.30 مساءً", "0.75" (Excel's fraction of a day). */
 export function parseTime(raw: string): ParsedTime | null {
   const text = asciiDigits(raw).trim().toLowerCase();
   if (!text) return null;
@@ -215,7 +193,6 @@ export function parseTime(raw: string): ParsedTime | null {
   return { minutes: hour * 60 + minute, ambiguous: hour >= 1 && hour <= 11 };
 }
 
-/** Minutes. `unit` comes from the header ("المدة بالساعات" / "mins"); a bare small number is hours. */
 export function parseDuration(raw: string, unit?: 'hours' | 'minutes'): number | null {
   const text = asciiDigits(raw).trim().toLowerCase();
   if (!text) return null;
@@ -242,7 +219,6 @@ export function parseDuration(raw: string, unit?: 'hours' | 'minutes'): number |
   return n <= 8 ? Math.round(n * 60) : Math.round(n);
 }
 
-/** How a duration header reads: "المدة (دقيقة)" → minutes, "عدد الساعات" → hours. */
 export function durationUnitFromHeader(header: string): 'hours' | 'minutes' | undefined {
   const h = normalizeHeader(header);
   if (/دقيقه|دقايق|دقائق|min/.test(h)) return 'minutes';
@@ -250,16 +226,10 @@ export function durationUnitFromHeader(header: string): 'hours' | 'minutes' | un
   return undefined;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Money, payment method, source
-// ---------------------------------------------------------------------------------------------
-
-/** "1,500 ج" / "١٥٠٠" / "300.50" → minor units (piastres). Null when it is not an amount. */
 export function parseMoneyMinor(raw: string): number | null {
   let text = asciiDigits(raw).trim().toLowerCase();
   if (!text) return null;
   text = text.replace(/(جنيه|جنية|ج\.?م\.?|ج|egp|l\.?e\.?|le|pound|pounds)/g, '').replace(/\s+/g, '');
-  // 1,500 or 1.500,50 → plain number
   if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) text = text.replace(/,/g, '');
   else if (/^\d+,\d{1,2}$/.test(text)) text = text.replace(',', '.');
   if (!/^\d+(\.\d+)?$/.test(text)) return null;
@@ -274,7 +244,6 @@ export function parsePaymentMethod(raw: string): ImportMethod | null {
   const t = normalizeHeader(raw);
   if (!t) return null;
   if (/انستا|insta|ipn/.test(t)) return 'instapay';
-  // "فودافون كاش" is a mobile wallet, not cash in the drawer — so wallets are checked before "cash".
   if (/فودافون|vodafone|محفظ|wallet|اورنج|orange|اتصالات|etisalat|we pay|ويفي|فوري|fawry/.test(t)) return 'wallet';
   if (/كارت|كرت|فيزا|visa|card|ماستر|master|بطاق/.test(t)) return 'card';
   if (/كاش|نقد|cash|عدي/.test(t)) return 'cash';
@@ -283,7 +252,6 @@ export function parsePaymentMethod(raw: string): ImportMethod | null {
 
 export type ImportSourceKey = 'walk_in' | 'phone' | 'whatsapp' | 'other_platform';
 
-/** A recognised channel becomes its preset; anything else is kept as the owner's own label. */
 export function parseSource(raw: string): { key?: ImportSourceKey; label?: string } {
   const t = normalizeHeader(raw);
   if (!t) return {};
@@ -296,7 +264,6 @@ export function parseSource(raw: string): { key?: ImportSourceKey; label?: strin
 
 const COURT_WORDS = new Set(['ملعب', 'court', 'pitch', 'field', 'ترابيزه', 'طاوله', 'table', 'ستاد', 'استاد']);
 
-/** Court names compare without "ملعب"/"Court", "ال", spacing, case or Arabic spelling variants. */
 export function courtKey(name: string): string {
   const words = normalizeHeader(name).split(' ').filter(Boolean);
   const core = words.map(stripAl).filter((w) => w && !COURT_WORDS.has(w)).join('');

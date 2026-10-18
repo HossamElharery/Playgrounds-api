@@ -86,7 +86,6 @@ describe('CashService.closeShift', () => {
   it('closes my own drawer: expected includes the float, every counted payment is stamped with the shift', async () => {
     const { service, tx } = setup({ lastCarry: 200 });
     const shift = await service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 640, carryOver: 100 });
-    // float 200 (what the last close left) + 450 cash in = 650 expected; counted 640 → 10 short.
     expect(shift.openingFloat).toBe(200);
     expect(shift.expectedCash).toBe(650);
     expect(shift.difference).toBe(-10);
@@ -173,7 +172,6 @@ describe('CashService.closeShift', () => {
     const off = setup();
     await off.service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 400 });
     expect(off.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', titleAr: expect.stringContaining('ناقصة') }));
-    // 50 minor units is half a pound — written with the venue's currency label, not "50 EGP".
     const sent = off.notifications.create.mock.calls[0][0];
     expect(sent.titleAr).toContain('0.5 ج.م');
     expect(sent.titleAr).not.toContain('EGP');
@@ -221,7 +219,6 @@ describe('CashService.openShift — a documented handover', () => {
   it('the closing shift starts from the counted float, begins at the handover and links it', async () => {
     const { service, tx } = setup({ lastCarry: 200, openHandover: { id: 'h0', countedFloat: 150, openedAt: at(8), shiftId: null } });
     const shift = await service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 600 });
-    // 150 counted at takeover + 450 cash in = 600 expected → balanced, though the last close said 200.
     expect(shift.openingFloat).toBe(150);
     expect(shift.expectedCash).toBe(600);
     expect(shift.difference).toBe(0);

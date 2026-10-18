@@ -32,7 +32,6 @@ export class PartnerLinksController {
     private readonly prisma: PrismaService,
   ) {}
 
-  /** Compact card for the embeddable widget on partner sites. */
   @Public()
   @Get('venues/:slug/embed')
   embed(@Param('slug') slug: string) {

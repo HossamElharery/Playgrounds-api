@@ -428,7 +428,6 @@ describe('CallsService', () => {
       await jest.advanceTimersByTimeAsync(CALL_RING_MS + 10);
       expect(fcm.sendCall).not.toHaveBeenCalled();
       expect(prisma.staffCall.rows).toHaveLength(1);
-      // The muted person does not see it in their own history; the callee never learns of it.
       await expect(service.recent(ALICE)).resolves.toMatchObject({ items: [] });
       await expect((await service.recent(OWNER)).items[0]).toMatchObject({
         status: 'unavailable',
@@ -908,7 +907,6 @@ describe('CallsService', () => {
           [ALICE, BOB, OWNER].sort(),
         );
         const shorouk = await service.adminVenue(ADMIN, 'v2');
-        // Alice is limited to venue v1; Bob has no venue list, so he works everywhere.
         expect(shorouk.targets.map((t) => t.id).sort()).toEqual(
           [BOB, OWNER].sort(),
         );

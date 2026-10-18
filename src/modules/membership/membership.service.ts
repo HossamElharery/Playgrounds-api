@@ -14,13 +14,6 @@ import {
 
 const PERIOD_DAYS = 30;
 
-/**
- * Membership / subscription tier (§3.8/§7.3), additive to the coins economy.
- *
- * Player subscribe debits the prepaid EGP wallet. PSP methods are wallet
- * top-up only. There is still no live PSP recurring-billing integration —
- * `POST /membership/webhooks/renewal` remains the mock renewal stand-in.
- */
 @Injectable()
 export class MembershipService {
   constructor(
@@ -134,11 +127,6 @@ export class MembershipService {
     return updated;
   }
 
-  /**
-   * Mock renewal webhook — see class doc. `sharedSecret` stands in for a
-   * verified PSP signature; wrong/missing secret is rejected the same way a
-   * bad webhook signature would be.
-   */
   async handleRenewalWebhook(userId: string, success: boolean) {
     const membership = await this.prisma.userMembership.findUnique({
       where: { userId },

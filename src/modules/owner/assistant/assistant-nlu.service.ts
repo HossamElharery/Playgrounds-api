@@ -7,29 +7,22 @@ import type { AssistantIntentKind, AssistantReading } from './assistant.types';
 export interface NluCourtRef {
   id: string;
   name: string;
-  /** Console type, room tier, sport, format — what the owner might call it instead of its name. */
   details?: string;
-  /** Arabic sport name: tells apart two units that share a name («Table 1» for billiards and for ping-pong). */
   sportAr?: string;
 }
 
-/** One earlier turn of the conversation, oldest first. */
 export interface NluTurn {
   from: 'owner' | 'assistant';
   text: string;
 }
 
-/** Everything besides the sentence itself that changes how it should be read. */
 export interface NluExtra {
   venueName?: string;
-  /** Wall-clock time at the venue right now, HH:mm. */
   nowHhmm?: string;
   history?: NluTurn[];
-  /** The unfinished reading the assistant asked a question about last turn. */
   draft?: AssistantReading | null;
 }
 
-/** Names already on the day's sheet, so "حصّل من محمد" resolves to a person the venue actually has. */
 export interface NluKnownBooking {
   name: string;
   courtName: string;
@@ -83,13 +76,6 @@ const RESPONSE_SCHEMA = {
   required: ['intent', 'courtIds', 'allCourts', 'date', 'reason', 'confidence'],
 };
 
-/**
- * The single hardest call in this prompt is "احجز": an Egyptian owner uses the
- * same verb for "put a customer in" and "take this slot off the market". The
- * rule below (is there a person and/or money in the sentence?) is what stops
- * the assistant closing a court when the owner meant to record a customer —
- * the bug this module was rebuilt to fix.
- */
 const SYSTEM_PROMPT = `أنت مساعد إدارة ذكي لصاحب منشأة رياضية أو ترفيهية في مصر (بادل، كرة، بلايستيشن، بلياردو...). الأونر بيتكلم عامية مصرية، والنص ممكن يكون تفريغ صوتي فيه أخطاء أو تصحيحات في نص الجملة.
 مهمتك: تفهم قصده وترجّع JSON فقط مطابق للـ schema. أنت بتقترح بس — النظام بيتحقق من كل رقم بنفسه قبل ما ينفذ.
 
@@ -128,12 +114,6 @@ const SYSTEM_PROMPT = `أنت مساعد إدارة ذكي لصاحب منشأة
 - question: لو ناقص حاجة ضرورية (الملعب، الوقت، أو أنهي حجز)، اكتب سؤال واحد قصير بالعامية المصرية (أو بالإنجليزي لو كتب إنجليزي) بيسأل عن الناقص بس، وبيذكر اللي فهمته بالفعل. مثال: «تمام، بكرة 9 الصبح — أي غرفة بالظبط، PS5 Room 1 ولا 2؟». ماتسألش عن الاسم أو الفلوس لأنهم اختياريين. لو الكلام عادي (شكرًا، أهلاً) رد ردّ قصير ودود في question. ماتكتبش أبدًا «أنا مساعدك في إدارة المكان» ولا تعيد قايمة أمثلة.
 - لو مش فاهم ارجّع "unknown" و confidence واطي وسؤال يوضح، بدل ما تخمّن.`;
 
-/**
- * Pure NLU for the owner assistant: a sentence in, a structured reading out.
- * Touches no database and executes nothing — every field is re-checked here
- * against the venue's real courts, and again in OwnerAssistantService against
- * the venue's real money.
- */
 @Injectable()
 export class AssistantNluService {
   private readonly logger = new Logger(AssistantNluService.name);
@@ -205,7 +185,6 @@ export class AssistantNluService {
     };
   }
 
-  /** Never trust the model's own claims — every field is re-checked here. */
   private parse(
     raw: string,
     courts: NluCourtRef[],
@@ -242,8 +221,6 @@ export class AssistantNluService {
       const n = Number(value);
       return Number.isFinite(n) && n >= 0 && n <= 1440 ? Math.round(n) : null;
     };
-    // Money arrives as whatever the owner said out loud: reject negatives and
-    // absurd magnitudes, keep piastre precision (some venues price at 12.50).
     const money = (value: unknown): number | null => {
       if (value === null || value === undefined || value === '') return null;
       const n = Number(value);

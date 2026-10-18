@@ -48,7 +48,6 @@ export interface SnapshotVenue {
   photoCount: number;
   courtCount: number;
   sportSlugs: string[];
-  /** Cheapest hourly base price per sport, minor units. */
   sportPrice: Record<string, number>;
   amenities: string[];
   hours: HoursSummary | null;
@@ -83,10 +82,6 @@ const snippet = (value: string | null | undefined, max = 220): string => {
   return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 40)).trim()}…`;
 };
 
-/**
- * Local landing pages are generated from live inventory. Everything is computed from one
- * cached snapshot of public venues, so a busy landing page costs no database work.
- */
 @Injectable()
 export class LocalLandingService {
   private snapshots = new Map<string, { until: number; value: Promise<Snapshot> }>();
@@ -286,7 +281,6 @@ export class LocalLandingService {
 
   // ───────────────────────────── directory ─────────────────────────────
 
-  /** Every governorate and named area with live counts: drives the footer, home, explore filter and HTML sitemap. */
   async directory(countryCode = 'EG') {
     const s = await this.snapshot(countryCode);
     const p = this.paths(s);
@@ -294,8 +288,6 @@ export class LocalLandingService {
     const governorates = this.governoratesOf(s).map((gov) => {
       const govVenues = s.venues.filter((v) => v.governorateId === gov.id);
       const govSports = this.sportCounts(govVenues);
-      // Every named area is listed (the explore filter needs them), but fields are only sent
-      // when they say something: this payload is inlined into every server-rendered page.
       const round = (n: number | null) => (n == null ? null : Math.round(n * 10_000) / 10_000);
       const areas = this.areasOf(s, gov.id).map((area) => {
         const areaVenues = govVenues.filter((v) => v.areaId === area.id);
@@ -344,7 +336,6 @@ export class LocalLandingService {
 
   // ───────────────────────────── landing ─────────────────────────────
 
-  /** Resolves `/egypt[/gov[/area|sport[/sport]]]` and builds the page from live inventory. */
   async landing(countrySlug: string, rawSegments: string[], page = 1) {
     const countryCode = countryCodeForSlug(countrySlug);
     if (!countryCode) throw new NotFoundException('Unknown country');
@@ -416,7 +407,6 @@ export class LocalLandingService {
           venueCount: sportVenues.length,
           priceMin: sportStats.priceMin,
           priceMax: sportStats.priceMax,
-          // The country level has no "/egypt/football": its sport hub is /sports/:slug.
           path: kind === 'country' ? `/sports/${x.slug}` : p.sport(placePath, x),
           indexable:
             kind === 'country'
@@ -446,7 +436,6 @@ export class LocalLandingService {
     return {
       kind,
       path,
-      // A sport page identical to its parent points search engines at the parent.
       canonicalPath: decision.reason === 'same-as-parent' ? placePath : path,
       indexable: decision.indexable,
       indexReason: decision.reason as IndexReason,
@@ -500,7 +489,6 @@ export class LocalLandingService {
     };
   }
 
-  /** Narrower places with inventory: governorates of the country, areas of a governorate. */
   private childrenOf(s: Snapshot, kind: LandingKind, govId?: string, sport?: string): LandingPlaceLink[] {
     const p = this.paths(s);
     const match = (v: SnapshotVenue) => !sport || v.sportSlugs.includes(sport);
@@ -541,7 +529,6 @@ export class LocalLandingService {
     return [];
   }
 
-  /** Neighbouring places (by centre distance) that have venues, same sport first when on a sport page. */
   private nearbyOf(s: Snapshot, kind: LandingKind, govId?: string, area?: CatalogDistrict, sport?: string): LandingPlaceLink[] {
     const p = this.paths(s);
     const match = (v: SnapshotVenue) => !sport || v.sportSlugs.includes(sport);
@@ -594,7 +581,6 @@ export class LocalLandingService {
     return [];
   }
 
-  /** Latest written reviews for the venues on a page (text only; first name for privacy). */
   private reviewsFor(key: string, venueIds: string[]) {
     const hit = this.reviewCache.get(key);
     if (hit && hit.until > Date.now()) return hit.value;
@@ -632,7 +618,6 @@ export class LocalLandingService {
 
   // ───────────────────────────── sitemap ─────────────────────────────
 
-  /** Indexable landing pages only, with the freshest venue change and a few real photos each. */
   async sitemapEntries(): Promise<{ path: string; lastmod: Date | null; images: string[] }[]> {
     const entries: { path: string; lastmod: Date | null; images: string[] }[] = [];
     for (const countryCode of Object.keys(COUNTRY_SLUGS)) {
@@ -672,7 +657,6 @@ export class LocalLandingService {
     return entries;
   }
 
-  /** Landing path for a venue's place, used to repair legacy `/explore?district=` links. */
   async pathForPlace(countryCode: string, params: { governorate?: string; district?: string; sport?: string }): Promise<string | null> {
     const slug = COUNTRY_SLUGS[countryCode];
     if (!slug) return null;
@@ -688,7 +672,6 @@ export class LocalLandingService {
       if (!district) return null;
       const areaId = s.catalog.areaOf.get(district.id);
       const area = areaId ? s.catalog.areaById.get(areaId) : undefined;
-      // A census sub-area outside every named area still belongs to a governorate page.
       const gov = s.catalog.governorateById.get(area?.governorateId ?? district.governorateId);
       if (!gov?.slug) return null;
       const base = area ? p.area(gov as Named, area as Named) : p.governorate(gov as Named);

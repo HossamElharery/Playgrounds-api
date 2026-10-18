@@ -10,18 +10,12 @@ export interface OwnerCustomerItem {
   name: string | null;
   phone: string | null;
   phoneMasked: string | null;
-  /** Games booked (cancelled ones do not count), played or not yet. */
   bookings: number;
-  /** Games that really happened: past, not cancelled, not a no-show. */
   visits: number;
-  /** The next game booked from now, if any. */
   nextBooking: Date | null;
-  /** Money actually earned from this customer: what was received on their bookings. */
   spent: number;
-  /** What this customer still owes the venue for games already played. */
   owed: number;
   noShows: number;
-  /** The latest game that really happened — a booking for later is not a visit. */
   lastVisit: Date | null;
   firstVisit: Date | null;
   sources: string[];
@@ -42,12 +36,6 @@ interface Row {
   firstVisit: Date | null;
 }
 
-/**
- * The venue's people: everyone who booked (Matchena players and the venue's own callers) plus
- * anyone imported or annotated. "Spent" is money received, not the price of the bookings — a
- * no-show who never paid is not a good customer — and "owed" is what is still unpaid for games
- * that already happened.
- */
 export async function queryCustomers(prisma: PrismaService, venueId: string, ownerId: string): Promise<OwnerCustomerItem[]> {
   const rows = await prisma.$queryRaw<Row[]>(Prisma.sql`
     WITH b AS (
@@ -98,7 +86,6 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
     if (!key) continue;
     (sources.get(key) ?? sources.set(key, new Set()).get(key)!).add(sourceDisplay(s.source, s.sourceKey, s.sourceLabel).label);
   }
-  // Keep the original contact name stable: another person's booking on a shared phone must not rename its owner.
   const manualKeys = rows.filter((r) => !r.key.startsWith('p:')).map((r) => r.key);
   const names = new Map<string, string>();
   if (manualKeys.length) {
@@ -167,16 +154,10 @@ export async function queryCustomers(prisma: PrismaService, venueId: string, own
 }
 
 export interface UnlinkedBookings {
-  /** Bookings with neither a name nor a phone: they appear in no customer's file. */
   bookings: number;
-  /** What those bookings still owe for games already played — money with nobody to chase. */
   owed: number;
 }
 
-/**
- * The bookings a customer list cannot show because nobody wrote down who they were for. They are
- * the reason "15 bookings" can become "2 customers": counted here so the owner can see it and fix it.
- */
 export async function queryUnlinkedBookings(prisma: PrismaService, venueId: string): Promise<UnlinkedBookings> {
   const [row] = await prisma.$queryRaw<{ bookings: number; owed: number }[]>(Prisma.sql`
     SELECT COUNT(*)::int AS bookings,

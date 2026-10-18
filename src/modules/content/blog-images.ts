@@ -1,13 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-// The backend uses legacy CommonJS resolution; sharp's runtime export is callable.
 const sharp: typeof import('sharp').default = require('sharp');
 
-/**
- * Public blog reads add what the editor never stores on inline article images: `width`/`height`
- * (so the browser reserves the space and the page does not jump), `alt`, and lazy decoding.
- * Applies only to the response; the saved article HTML is never rewritten.
- */
 const UPLOAD_SRC =
   /^(?:https?:\/\/[^/]+)?\/uploads\/([a-z0-9-]+\/[a-z0-9-]+\.(?:png|jpe?g|webp|avif))(?:[?#].*)?$/i;
 const sizeCache = new Map<string, { width: number; height: number } | null>();
@@ -51,7 +45,6 @@ export async function enrichArticleImages(
       const size = await imageSize(uploadsRoot, key);
       if (size) extras.push(`width="${size.width}"`, `height="${size.height}"`);
     }
-    // An empty alt="" is a deliberate "decorative" marker and stays as written.
     if (!has('alt') && fallbackAlt)
       extras.push(`alt="${escapeAttr(fallbackAlt)}"`);
     if (!has('loading')) extras.push('loading="lazy"');

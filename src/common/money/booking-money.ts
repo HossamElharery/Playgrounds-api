@@ -1,9 +1,3 @@
-/**
- * Single source of truth for booking money math.
- * Pure module: no Nest / Prisma imports. All amounts are integer minor units.
- *
- * Rounding: round-half-up on the real line (0.5 → 1, -0.5 → -1).
- */
 
 export const DEFAULT_COMMISSION_BPS = 1000;
 export const MIN_COMMISSION_BPS = 0;
@@ -76,7 +70,6 @@ function assertNonNegativeInt(n: number, name: string): void {
   if (n < 0) throw new MoneyInputError(`${name} must be >= 0`);
 }
 
-/** Round half up for both signs: 33.5 → 34, -33.5 → -34, 33.3 → 33. */
 export function roundHalfUp(n: number): number {
   if (typeof n !== 'number' || Number.isNaN(n) || !Number.isFinite(n)) {
     throw new MoneyInputError('roundHalfUp requires a finite number');
@@ -146,10 +139,6 @@ export function bookingSnapshotFields(money: BookingMoney, paymentMode: VenuePay
   };
 }
 
-/**
- * Desired signed delta on the venue ledger (Matchena owes owner).
- * Rules: MATCHENA_OWNER_PLATFORM_PROMPTS/00_README_MASTER_CONTEXT.md §4.
- */
 export function desiredLedgerDelta(s: LedgerBookingState): number {
   if (s.source === 'manual') return 0;
 

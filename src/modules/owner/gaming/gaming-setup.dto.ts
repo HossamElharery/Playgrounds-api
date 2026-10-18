@@ -14,7 +14,6 @@ export class SetupGroupDto {
  @IsOptional() @IsInt() @Min(1) @Max(10000000) multiHourlyRateMinor?: number;
  @IsOptional() @IsInt() @Min(1) @Max(10000000) privateHourlyRateMinor?: number;
  @IsOptional() @IsInt() @Min(1) @Max(10000000) privateMultiHourlyRateMinor?: number;
- /** Zero based floor for the remaining open-hall stations. */
  @IsInt() @Min(0) @Max(19) floorIndex!: number;
  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsInt({each:true}) @Min(0,{each:true}) @Max(100,{each:true}) floorCounts?:number[];
 }

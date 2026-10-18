@@ -8,7 +8,6 @@ export interface PublicActivity {
   avgElo: number;
 }
 
-/** Mirrors PROJECT_BLUEPRINT §15.11 — public XP from activity, never from coins. */
 export function computeXp(p: PublicActivity): number {
   return (
     p.matchesPlayed * 40 +

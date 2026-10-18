@@ -66,7 +66,6 @@ function mapPaymentMethod(
   if (method === 'instapay' || method === 'wallet' || method === 'card' || method === 'cash' || method === 'fawry') {
     return method;
   }
-  // "Other" is never cash: a mislabelled payment must not inflate the money the drawer should hold.
   if (method === 'other') return 'wallet';
   return 'cash';
 }
@@ -224,7 +223,6 @@ export class OwnerBookingsService {
     if (dto.paymentStatus === 'paid' && dto.paidAmount != null && dto.paidAmount !== dto.priceAmount) {
       throw new BadRequestException('A paid booking must collect its exact total');
     }
-    // A schedule with no opening hours is not a schedule: refuse instead of offering 03:00.
     if (!hasOpeningHours(venue.weeklyHours)) {
       throw new ApiException(
         HttpStatus.CONFLICT,
@@ -319,7 +317,6 @@ export class OwnerBookingsService {
                 amount: dto.priceAmount,
                 currency: created.currency,
                 paymentStatus: dto.paymentStatus ?? 'unpaid',
-                // What was taken at the desk while booking: the trail must show it as money, not hide it in the price.
                 paid: dto.paymentStatus === 'paid' ? dto.priceAmount : dto.paymentStatus === 'partial' ? dto.paidAmount ?? 0 : 0,
                 paymentMethod: dto.paymentMethod ?? 'cash',
                 customer: dto.customerName?.trim() || null,
@@ -344,11 +341,6 @@ export class OwnerBookingsService {
     }
   }
 
-  /**
-   * The one place a manual booking row (plus its first payment and ledger sync) is
-   * written, shared by the single-booking flow and fixed-booking series so both apply
-   * the same conflict check and payment rules. Runs inside the caller's transaction.
-   */
   async insertManualBooking(
     tx: Prisma.TransactionClient,
     input: {
@@ -369,15 +361,12 @@ export class OwnerBookingsService {
       sourceLabel?: string | null;
       notes?: string | null;
       recurringSeriesId?: string;
-      /** Who took the first payment. Defaults to `userId`; `null` for imported history (never in a drawer). */
       paymentRecordedBy?: string | null;
-      /** When the first payment was taken (imports back-date it to the play date). */
       paidAt?: Date;
       importBatchId?: string;
     },
   ) {
     await this.assertSlotFree(tx, input.courtId, input.venueId, input.slotStart, input.slotEnd);
-    // The booking is written in the venue's own currency — never the column default.
     const venueRow = await tx.venue.findUnique({ where: { id: input.venueId }, select: { currency: true, countryCode: true } });
     if (!venueRow) throw new NotFoundException('Venue not found');
     let code = generateManualCode();
@@ -444,7 +433,6 @@ export class OwnerBookingsService {
     return created;
   }
 
-  /** @deprecated thin alias of createManualBooking */
   async createWalkInAlias(user: AuthenticatedUser, dto: CreateWalkInDto) {
     const startsAt = new Date(dto.slotStart);
     const endsAt = new Date(dto.slotEnd);
@@ -466,7 +454,6 @@ export class OwnerBookingsService {
     });
   }
 
-  /** One booking by id, for the owner sheet — no date guessing. */
   async getBooking(user: AuthenticatedUser, bookingId: string) {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -502,8 +489,6 @@ export class OwnerBookingsService {
     if (!timedCourt || timedCourt.venueId !== booking.venueId) throw new BadRequestException('Court does not belong to this venue');
     assertActivityDuration(durationMinutes, timedCourt.sport?.activityKind);
     const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
-    // Money/notes on an old booking stay editable (e.g. recording a late payment);
-    // moving it to a time that already passed is not.
     const moved =
       slotStart.getTime() !== booking.slotStart.getTime() ||
       slotEnd.getTime() !== booking.slotEnd.getTime() ||
@@ -583,15 +568,6 @@ export class OwnerBookingsService {
     return this.toOwnerBookingDto(updated, user);
   }
 
-  /**
-   * Takes back one payment (the assistant's Undo, or a refund the owner hands over). Nothing is
-   * deleted: a negative `refunded` row answers the original, so the cash drawer, the shift
-   * history and the audit trail all stay true. The booking's status is re-derived from what
-   * is left, exactly as `addManualPayment` derived it on the way in.
-   *
-   * A staff member can take back only their own payment that is still in their open drawer;
-   * the owner (and anyone with `shifts.review`) can take back anybody's.
-   */
   async voidManualPayment(
     user: AuthenticatedUser,
     bookingId: string,
@@ -630,8 +606,6 @@ export class OwnerBookingsService {
             method: payment.method,
             status: 'refunded',
             reversesPaymentId: payment.id,
-            // Same drawer as the original while that drawer is still open, so the two net out
-            // there; once it was closed, the correction belongs to whoever hands the money back.
             recordedByUserId: payment.shiftId == null ? payment.recordedByUserId : user.id,
             note: reason?.trim() ? reason.trim().slice(0, 200) : null,
           },
@@ -666,20 +640,11 @@ export class OwnerBookingsService {
     );
   }
 
-  /** Owner, admin, or staff holding `shifts.review`. */
   private async canManageEveryonesCash(user: AuthenticatedUser): Promise<boolean> {
     if (user.roles.includes('admin') || user.roles.includes('owner')) return true;
     return scopeCan(await loadStaffScope(this.prisma, user.id), 'shifts.review');
   }
 
-  /**
-   * Cancels a manual booking. When money has already been received the caller must say what
-   * happens to it (`settlement.refundAmount`): hand all of it back, none of it (the venue keeps
-   * the deposit) or any amount in between. Nothing is silently kept or silently returned, and
-   * every refund is a negative `refunded` row so the drawer, the cashbook and the audit trail
-   * stay true. Venues differ — a padel club may refund a full day ahead, a billiards hall may
-   * keep a deposit — so the policy is the owner's call, shown to them, never assumed.
-   */
   async deleteManualBooking(
     user: AuthenticatedUser,
     bookingId: string,
@@ -696,7 +661,6 @@ export class OwnerBookingsService {
         orderBy: { createdAt: 'asc' },
       });
       const { received } = netOf(rows);
-      // `all` = hand back whatever was received (undoing a booking seconds after making it).
       const refundAmount = settlement?.refundAmount === 'all' ? Math.max(received, 0) : settlement?.refundAmount;
       if (received > 0 && refundAmount === undefined) {
         throw new ApiException(
@@ -710,10 +674,8 @@ export class OwnerBookingsService {
       }
       let handedBack = 0;
       if (refundAmount && refundAmount > 0) {
-        // Walk the payments newest first so a partial refund comes out of the latest money.
         const reversed = new Set(rows.filter((r) => r.reversesPaymentId).map((r) => r.reversesPaymentId as string));
         const open = rows.filter((r) => r.amount > 0 && !reversed.has(r.id)).reverse();
-        // Un-tied earlier refunds (partial ones) are netted per method, not per payment.
         const methodNet = new Map<string, number>();
         for (const r of rows) methodNet.set(r.method, (methodNet.get(r.method) ?? 0) + r.amount);
         let remaining = refundAmount;
@@ -736,7 +698,6 @@ export class OwnerBookingsService {
               currency: row.currency,
               method: row.method,
               status: 'refunded',
-              // A whole payment taken back keeps the link (and can never be taken back twice).
               ...(take === row.amount ? { reversesPaymentId: row.id } : {}),
               recordedByUserId: row.shiftId == null ? row.recordedByUserId : user.id,
             },
@@ -861,8 +822,6 @@ export class OwnerBookingsService {
         if (await existingRequest(tx)) return;
         const current = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
         if (current.status === 'cancelled') throw new BadRequestException('Restore the booking before recording a payment');
-        // Read inside the transaction so two quick taps cannot both pass the
-        // "does not exceed the balance" check.
         const { received: already } = await netReceived(tx, bookingId);
         if (already + amount > current.totalAmount) {
           throw new ApiException(HttpStatus.BAD_REQUEST, 'OVERPAYMENT', 'Payment exceeds remaining balance');
@@ -896,7 +855,6 @@ export class OwnerBookingsService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ).catch(async error => {
-      // A concurrent duplicate can lose the transaction race after the other request committed.
       if (requestKey && error instanceof Prisma.PrismaClientKnownRequestError && ['P2002', 'P2034'].includes(error.code) && await existingRequest(this.prisma)) return;
       rethrowConcurrentWrite(error);
     });
@@ -906,11 +864,6 @@ export class OwnerBookingsService {
     );
   }
 
-  /**
-   * Keeps `paymentStatus` truthful after an edit. The status is always derived
-   * from the payments actually recorded, so a booking can never read "paid"
-   * while money is still owed (or the reverse).
-   */
   private async reconcilePayment(
     tx: Prisma.TransactionClient,
     booking: Booking,
@@ -963,11 +916,6 @@ export class OwnerBookingsService {
     }
   }
 
-  /**
-   * Matchena bookings belong to the player and to Matchena, so the venue cannot
-   * cancel or reshape them itself. This is the sanctioned route: it tells the
-   * admin (in-app + email) and leaves the booking untouched.
-   */
   async requestPlatformChange(
     user: AuthenticatedUser,
     bookingId: string,
@@ -1123,7 +1071,6 @@ export class OwnerBookingsService {
       q?: string;
       cursor?: string;
       limit?: number;
-      /** `upcoming` (nearest first), `today`, `past` (latest first), or `all` (latest first, the default). */
       scope?: string;
     },
   ) {
@@ -1138,7 +1085,6 @@ export class OwnerBookingsService {
     const tz = venueRow?.country?.timezone ?? 'Africa/Cairo';
     const now = new Date();
     const slotStart: Prisma.DateTimeFilter = {};
-    // A plain calendar day ("2026-10-05") means that day on the VENUE's clock, not UTC midnight.
     const ymd = /^\d{4}-\d{2}-\d{2}$/;
     if (query.from) {
       if (ymd.test(query.from)) slotStart.gte = zonedDayBounds(query.from, tz).start;
@@ -1164,7 +1110,6 @@ export class OwnerBookingsService {
     else if (scope === 'upcoming' || scope === 'today') where.status = { not: 'cancelled' };
     if (query.courtId) where.courtId = query.courtId;
     if (query.paymentStatus === 'owing') {
-      // "Who still owes me": something unpaid or only partly paid, on a booking that still stands.
       where.paymentStatus = { in: ['pending', 'partial'] };
       if (!query.status) where.status = { in: ['confirmed', 'completed', 'held'] };
     } else if (query.paymentStatus) {
@@ -1185,7 +1130,6 @@ export class OwnerBookingsService {
     const phonesVisible = await this.canSeePhones(user);
     if (query.q?.trim()) {
       const q = query.q.trim();
-      // Searching by number would reveal it one digit at a time, so it needs the same right.
       where.OR = [
         { code: { contains: q, mode: 'insensitive' } },
         { guestName: { contains: q, mode: 'insensitive' } },
@@ -1354,10 +1298,6 @@ export class OwnerBookingsService {
     };
   }
 
-  /**
-   * A customer's phone number is a `customers.view` matter: a staff account without it
-   * still sees the booking (name, time, money) but never the number.
-   */
   private async canSeePhones(user: AuthenticatedUser): Promise<boolean> {
     if (!user.roles.includes('staff') || user.roles.includes('admin') || user.roles.includes('owner')) return true;
     return scopeCan(await loadStaffScope(this.prisma, user.id), 'customers.view');
@@ -1498,7 +1438,6 @@ export class OwnerBookingsService {
         paidAmount,
         outstanding: statement.outstanding,
         refunded,
-        // Owner-funded discount, shown as its own line so base − discount − commission = net adds up.
         ownerFundedDiscount: statement.ownerDiscount,
         statement,
         currency: b.currency,
@@ -1516,7 +1455,6 @@ export class OwnerBookingsService {
     };
   }
 
-  /** Why a slot cannot be taken, or null when it is free. */
   async slotConflict(
     db: Prisma.TransactionClient | PrismaService,
     courtId: string,

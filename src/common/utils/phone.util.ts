@@ -1,4 +1,3 @@
-/** Blank / placeholder phones become `null` so the unique column stays nullable. */
 export function normalizeOptionalPhone(
   value: unknown,
 ): string | null | undefined {
@@ -9,7 +8,6 @@ export function normalizeOptionalPhone(
   return trimmed;
 }
 
-/** Mask a platform player's phone for owner views: `+20 10••• ••34`. */
 export function maskPlayerPhone(phone: string | null | undefined): string | null {
   if (!phone) return null;
   const digits = phone.replace(/\D/g, '');

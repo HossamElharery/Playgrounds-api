@@ -28,8 +28,6 @@ describe('RealtimeGateway voice relay ordering', () => {
   }
 
   it('relays an ICE candidate only after the offer it belongs to', async () => {
-    // The offer does two slow membership lookups, the candidate one fast one.
-    // Unordered, the candidate reached the peer first and was dropped.
     const { gateway, client, sent } = setup((n) => (n < 2 ? 30 : 0));
     const offer = gateway.voiceOffer(client, {
       squadId: 's',

@@ -6,7 +6,6 @@ import { KNOWLEDGE, type KnowledgeEntry } from './default-knowledge';
 import { filterKnowledgeByFlags } from './knowledge-flags';
 import { checkKnowledge, type KnowledgeCheck, type KnowledgeInput, type KnowledgeValue, type KnowledgeWarning } from './knowledge.validation';
 
-/** The filter forwards `code` and `result`, so the editor can show each field's problem next to the field. */
 export function validationError(errors: Record<string, string>): BadRequestException {
   return new BadRequestException({ message: 'VALIDATION_FAILED', code: 'VALIDATION_FAILED', result: { errors } });
 }
@@ -19,9 +18,7 @@ export interface KnowledgeRow extends KnowledgeValue {
   position: number;
   updatedAt: string | null;
   updatedById: string | null;
-  /** This id exists in the built-in pack. */
   inFile: boolean;
-  /** …and the stored text differs from the built-in one (an admin edited it). */
   editedFromFile: boolean;
 }
 
@@ -78,11 +75,6 @@ function snapshotOf(r: AssistantKnowledge): Record<string, unknown> {
   };
 }
 
-/**
- * The platform facts Captain may state. Edited by an admin in the database,
- * read through a 60-second cache, and never a single point of failure: an
- * empty table or an unreachable database serves the built-in pack instead.
- */
 @Injectable()
 export class AssistantKnowledgeService implements OnModuleInit {
   private readonly logger = new Logger(AssistantKnowledgeService.name);
@@ -97,19 +89,15 @@ export class AssistantKnowledgeService implements OnModuleInit {
     await this.seedMissing();
   }
 
-  // -------------------------------------------------------------- read ----
 
-  /** Every active entry, whatever deployment flags say. */
   async entries(): Promise<KnowledgeEntry[]> {
     return (await this.load()).entries;
   }
 
-  /** Where the answers currently come from (the admin screen shows it). */
   async source(): Promise<'db' | 'file'> {
     return (await this.load()).source;
   }
 
-  /** What this deployment may actually promise: a lobby feature that is switched off is left out. */
   async forPlayers(): Promise<KnowledgeEntry[]> {
     return this.forDeployment((await this.load()).entries);
   }
@@ -141,13 +129,7 @@ export class AssistantKnowledgeService implements OnModuleInit {
     return this.cache;
   }
 
-  // -------------------------------------------------------------- seed ----
 
-  /**
-   * Adds the built-in entries the table has never had. An entry that already
-   * exists is left exactly as the admin made it, and one that has any history
-   * (including a deletion) is not brought back.
-   */
   async seedMissing(): Promise<number> {
     if (!this.prisma) return 0;
     const prisma = this.prisma;
@@ -184,7 +166,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     }
   }
 
-  // ------------------------------------------------------------- admin ----
 
   private db(): PrismaService {
     if (!this.prisma) throw new BadRequestException('database not available');
@@ -229,7 +210,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     return { item: this.row(row), revisions: revisions.map((r) => this.revisionView(r)) };
   }
 
-  /** Revisions of an entry that no longer exists (to restore a deleted one). */
   async deletedEntries(): Promise<{ id: string; deletedAt: string; revisionId: string; snapshot: Record<string, unknown> }[]> {
     const db = this.db();
     const deletes = await db.assistantKnowledgeRevision.findMany({ where: { action: 'delete' }, orderBy: { createdAt: 'desc' }, take: 50 });
@@ -248,7 +228,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     return { id: r.id, action: r.action, actorUserId: r.actorUserId, createdAt: r.createdAt.toISOString(), snapshot: (r.snapshot ?? {}) as Record<string, unknown> };
   }
 
-  /** Validation for the editor's live feedback, without saving. */
   async check(input: KnowledgeInput, opts: { creating: boolean }): Promise<KnowledgeCheck> {
     const others = await this.db().assistantKnowledge.findMany({ where: { active: true }, select: { id: true, topicAr: true, topicEn: true } });
     return checkKnowledge(input, { requireId: opts.creating, others: opts.creating ? others : others.filter((o) => o.id !== input.id) });
@@ -285,7 +264,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     const db = this.db();
     const current = await db.assistantKnowledge.findUnique({ where: { id } });
     if (!current) throw new NotFoundException('knowledge entry not found');
-    // A DTO instance carries every declared field, the unsent ones as `undefined`; only what was actually sent changes.
     const sent = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
     const merged = { ...snapshotOf(current), ...sent, id };
     const check = await this.check(merged, { creating: false });
@@ -315,7 +293,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     this.invalidate();
   }
 
-  /** Puts an entry back to the way a stored revision had it (also brings a deleted entry back). */
   async restore(id: string, revisionId: string, actorUserId: string): Promise<KnowledgeRow> {
     const db = this.db();
     const rev = await db.assistantKnowledgeRevision.findFirst({ where: { id: revisionId, knowledgeId: id } });
@@ -340,7 +317,6 @@ export class AssistantKnowledgeService implements OnModuleInit {
     return this.row(row);
   }
 
-  /** Back to the built-in wording for an entry that exists in the pack. */
   async resetToDefault(id: string, actorUserId: string): Promise<KnowledgeRow> {
     const file = KNOWLEDGE.find((e) => e.id === id);
     if (!file) throw validationError({ id: 'not_in_default_pack' });

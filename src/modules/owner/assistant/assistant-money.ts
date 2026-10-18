@@ -1,7 +1,6 @@
 import { bi, type AssistantIssue, type Bi } from './assistant.types';
 import { currencyLabel } from '../../../common/money/currency-label';
 
-/** Minor units in, "٢٠٠ ج.م" / "200 EGP" out — one place, so no screen invents its own rounding. */
 export function fmtMoney(minor: number, currency: string): Bi {
   const major = new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 2,
@@ -16,7 +15,6 @@ export function toMinor(major: number): number {
   return Math.round(major * 100);
 }
 
-/** What the owner said out loud, in minor units. `null` means they did not say it. */
 export interface StatedMoney {
   total: number | null;
   paid: number | null;
@@ -31,25 +29,10 @@ export interface SettledMoney {
 }
 
 export interface MoneyVerdict {
-  /** null when the numbers cannot be trusted — see `issues` for why. */
   money: SettledMoney | null;
   issues: AssistantIssue[];
 }
 
-/**
- * Reconciles the three numbers an owner throws around — total, paid, still
- * owed — against each other and against the venue's own tariff.
- *
- * The refusals are the point of this function. "خدت منه ٢٠٠ وباقي ٤٠٠" on a
- * court whose tariff says 1200 is not a booking to file quietly at 600; it is
- * a cash conversation the owner needs to have before the customer leaves. So:
- *
- *  - three numbers that contradict each other  → refuse, quote the gap
- *  - paid more than the whole booking          → refuse, quote both
- *  - a price that differs from the tariff      → allow (discounts are real),
- *                                                but never silently
- *  - no price anywhere                         → refuse, ask
- */
 export function reconcileBookingMoney(
   stated: StatedMoney,
   tariffMinor: number | null,
@@ -75,8 +58,6 @@ export function reconcileBookingMoney(
     return { money: null, issues };
   }
 
-  // Three numbers that disagree: only the owner knows which one is wrong, so
-  // nothing is written until they say.
   if (
     stated.total !== null &&
     stated.paid !== null &&
@@ -115,8 +96,6 @@ export function reconcileBookingMoney(
     return { money: null, issues };
   }
 
-  // A stated price may differ from the tariff (discounts are real), but the
-  // gap goes on the confirm card where the owner has to look at it.
   if (
     stated.total !== null &&
     tariffMinor !== null &&

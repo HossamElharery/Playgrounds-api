@@ -20,7 +20,6 @@ import {
 
 export type IssueLevel = 'error' | 'warning';
 
-/** A stable code the UI translates; `detail` is the owner's own text (a cell, a court name…). */
 export interface ImportIssue {
   code: string;
   level: IssueLevel;
@@ -35,15 +34,11 @@ export interface ImportCourt {
 }
 
 export interface ImportOptions {
-  /** Used when the sheet has no court column (and the venue has more than one). */
   defaultCourtId?: string;
   defaultDurationMinutes?: number;
-  /** An hour like "6" with no morning/evening marker. `auto` picks whichever falls in opening hours. */
   ambiguousHours: 'am' | 'pm' | 'auto';
-  /** When the sheet has no (or an empty) "paid" cell: `auto` = games already played are paid, future ones are not. */
   whenPaidMissing: 'paid' | 'unpaid' | 'auto';
   defaultMethod: ImportMethod;
-  /** Label for the "source" of imported bookings when the sheet has none. */
   defaultSourceLabel: string;
 }
 
@@ -56,7 +51,6 @@ export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
 
 export interface ImportContext {
   timeZone: string;
-  /** The venue's country, so a local number is read the way people type it there. */
   countryCode?: string;
   now: Date;
   courts: ImportCourt[];
@@ -110,23 +104,17 @@ function matchCourt(name: string, courts: ImportCourt[]): ImportCourt | null {
   return loose.length === 1 ? loose[0] : null;
 }
 
-/**
- * Turns one spreadsheet row into a booking, or says precisely why it cannot. Pure: the same row
- * and context always give the same answer, which is what makes the preview trustworthy.
- */
 export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx: ImportContext): RowOutcome {
   const issues: ImportIssue[] = [];
   const err = (code: string, detail?: string) => issues.push({ code, level: 'error', detail });
   const warn = (code: string, detail?: string) => issues.push({ code, level: 'warning', detail });
   const opts = ctx.options;
 
-  // ---- date ----------------------------------------------------------------------------------
   const rawDate = cell(cells, mapping, 'date');
   const date = rawDate ? parseDate(rawDate, ctx.now) : null;
   if (!rawDate) err('DATE_MISSING');
   else if (!date) err('DATE_INVALID', rawDate);
 
-  // ---- start time ----------------------------------------------------------------------------
   const rawTime = cell(cells, mapping, 'time');
   let startMinutes: number | null = null;
   let ambiguous = false;
@@ -143,7 +131,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
     err('TIME_MISSING');
   }
 
-  // ---- court ---------------------------------------------------------------------------------
   let court: ImportCourt | null = null;
   const rawCourt = cell(cells, mapping, 'court');
   if (rawCourt) {
@@ -160,7 +147,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
 
   if (!date || startMinutes == null) return { issues };
 
-  // An hour with no ص/م: use opening hours to decide which one the owner meant.
   if (ambiguous) {
     const open = (minutes: number) => {
       if (!ctx.weeklyHours) return null;
@@ -181,7 +167,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
     warn('TIME_GUESSED', `${rawTime} → ${hhmm(startMinutes)}`);
   }
 
-  // ---- duration ------------------------------------------------------------------------------
   let duration: number | null = null;
   const rawDuration = cell(cells, mapping, 'duration');
   const rawEnd = cell(cells, mapping, 'endTime');
@@ -193,8 +178,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
     const end = parseTime(rawEnd);
     if (!end) err('TIME_INVALID', rawEnd);
     else {
-      // The span from the start to the end, wrapping past midnight. An end hour with no ص/م
-      // ("6 → 7") is whichever reading gives the shorter, sensible session.
       const span = (endMin: number) => ((endMin - startMinutes! + 1440) % 1440) || 1440;
       duration = end.ambiguous ? Math.min(span(end.minutes), span(end.minutes + 720)) : span(end.minutes);
     }
@@ -218,7 +201,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
   const startsAt = zonedWallTimeToUtc(date.ymd, hhmm(startMinutes), ctx.timeZone);
   const endsAt = new Date(startsAt.getTime() + duration * 60_000);
 
-  // ---- price ---------------------------------------------------------------------------------
   let price: number | null = null;
   const rawPrice = cell(cells, mapping, 'price');
   if (rawPrice) {
@@ -234,7 +216,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
   if (price == null) return { issues };
   if (price === 0) warn('PRICE_ZERO');
 
-  // ---- payment -------------------------------------------------------------------------------
   const rawPaid = cell(cells, mapping, 'paid');
   let paid: number;
   if (rawPaid && PAID_WORDS.test(rawPaid)) paid = price;
@@ -264,7 +245,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
     else warn('METHOD_UNKNOWN', rawMethod);
   }
 
-  // ---- customer, source, notes ---------------------------------------------------------------
   const name = cell(cells, mapping, 'customerName').slice(0, 80) || null;
   const rawPhone = cell(cells, mapping, 'phone');
   let phone: string | null = null;
@@ -276,7 +256,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
   const sourceLabel = src.key ? undefined : (src.label ?? opts.defaultSourceLabel);
   const notes = cell(cells, mapping, 'notes').slice(0, 500) || null;
 
-  // ---- opening hours (a warning only: history and special events are real) -------------------
   if (ctx.weeklyHours) {
     const day = ctx.weeklyHours[String(zonedWeekday(startsAt, ctx.timeZone))];
     if (!isTimeWithinDayHours(hhmm(startMinutes), day)) warn('OUTSIDE_HOURS');
@@ -305,7 +284,6 @@ export function normalizeBookingRow(cells: string[], mapping: ColumnMapping, ctx
   };
 }
 
-/** A customers-only row: a name and/or phone, plus an optional note. */
 export function normalizeCustomerRow(cells: string[], mapping: ColumnMapping, countryCode = 'EG'): {
   customer?: { name: string | null; phone: string | null; note: string | null; key: string };
   issues: ImportIssue[];
@@ -323,7 +301,6 @@ export function normalizeCustomerRow(cells: string[], mapping: ColumnMapping, co
   return { customer: { name, phone, note, key: customerKey(phone, name) }, issues };
 }
 
-/** The same key the customers list builds from bookings, so a profile attaches to the right row. */
 export function customerKey(phone: string | null | undefined, name: string | null | undefined): string {
   if (phone) return `m:${guestPhoneForStorage(phone)}`;
   return `n:${(name ?? '').trim()}`;

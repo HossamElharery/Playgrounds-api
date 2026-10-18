@@ -1,18 +1,9 @@
 import { haversineKm } from '../../common/utils/geo.util';
 
-/**
- * Rules for the generated local landing pages (/egypt/cairo/nasr-city/football…).
- * A page is generated for any place that exists, but it is only offered to search
- * engines (index + sitemap) when it has enough real inventory to be useful on its own.
- */
-
-/** Fewer listings than this is a thin page: it stays reachable for people but is `noindex`. */
 export const MIN_INDEXABLE_VENUES = 2;
-/** Nearby areas listed on an area page. */
 export const NEARBY_AREAS = 6;
 export const NEARBY_MAX_KM = 25;
 
-/** Public URL slug per country code. Only countries listed here get local landing pages. */
 export const COUNTRY_SLUGS: Record<string, string> = { EG: 'egypt' };
 export const countryCodeForSlug = (slug: string): string | undefined =>
   Object.entries(COUNTRY_SLUGS).find(([, value]) => value === slug)?.[0];
@@ -34,13 +25,9 @@ export interface LandingVenueFacts {
 
 export interface HoursSummary {
   openDays: number;
-  /** Earliest opening over the week, "HH:mm". */
   earliestOpen: string;
-  /** Latest closing over the week as shown on a clock ("24:00" = midnight, "02:00" = 2 am next day). */
   latestClose: string;
-  /** Minutes after the opening day's midnight, so 02:00 next day (1560) ranks after 23:00 (1380). */
   latestCloseRank: number;
-  /** Open until midnight or later on at least one day. */
   lateNight: boolean;
 }
 
@@ -111,12 +98,6 @@ export function landingStats(venues: LandingVenueFacts[]): LandingStats {
   };
 }
 
-/**
- * Index decision. `parentCount` is the listing count of the broader page this one narrows
- * (area → area-sport, governorate → governorate-sport); `parentSportCount` how many sports
- * that broader page has. A sport page that lists exactly its parent's venues because the
- * parent only has that one sport adds nothing, so it defers to the parent.
- */
 export function indexDecision(input: {
   kind: LandingKind;
   venues: LandingVenueFacts[];
@@ -143,7 +124,6 @@ export interface PlacePoint {
   lng: number | null;
 }
 
-/** Closest places to `origin` (by centre), excluding itself, within NEARBY_MAX_KM. */
 export function nearestPlaces<T extends PlacePoint>(origin: PlacePoint, places: T[], limit = NEARBY_AREAS): (T & { distanceKm: number })[] {
   if (origin.lat == null || origin.lng == null) return [];
   return places

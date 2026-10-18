@@ -13,7 +13,6 @@ export interface NumericCase {
   extra?: { source?: 'platform' | 'manual'; paymentStatus?: LedgerBookingState['paymentStatus']; status?: LedgerBookingState['status'] };
 }
 
-/** Hand-computed fixtures from 00 §4 / 06 §2. Amounts match the money-module integer convention. */
 export const QA_NUMERIC_CASES: NumericCase[] = [
   {
     id: 'a',

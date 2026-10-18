@@ -1,7 +1,6 @@
 import { MORPH_CATALOG, type MorphDef } from './morph-catalog';
 import { drawTier, rollMorph, type RollInput } from './morph-roll.util';
 
-/** Deterministic `randomInt` (mulberry32). */
 function seeded(seed: number): (max: number) => number {
   let a = seed >>> 0;
   return (max: number) => {
@@ -14,7 +13,6 @@ function seeded(seed: number): (max: number) => number {
   };
 }
 
-/** Constant draw that still honours the `randomInt(max)` contract. */
 const fixed = (v: number) => (max: number) => Math.min(v, max - 1);
 
 const base = (over: Partial<RollInput> = {}): RollInput => ({
@@ -67,7 +65,7 @@ describe('rollMorph', () => {
   });
 
   it('applies Epic pity on exactly the 10th roll without Epic+', () => {
-    const alwaysCommon = fixed(0); // tier draw 0 → COMMON; pity split 0 → EPIC
+    const alwaysCommon = fixed(0);
     let state = { e: 0, m: 0 };
     const tiers: string[] = [];
     for (let i = 1; i <= 10; i++) {
@@ -144,8 +142,6 @@ describe('rollMorph', () => {
   });
 
   it('boosts unowned morphs inside a tier (×1.5)', () => {
-    // Own every common except potato: potato weight 30 vs 9×20 → 30/210 ≈ 14.3%
-    // (vs 10% without the boost).
     const owned = new Set(
       MORPH_CATALOG.filter((d) => d.tier === 'COMMON' && d.id !== 'potato').map(
         (d) => d.id,

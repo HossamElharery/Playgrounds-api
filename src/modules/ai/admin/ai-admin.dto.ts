@@ -94,7 +94,6 @@ export class ListOwnerRequestsDto extends PageQueryDto {
   @IsIn(TRANSCRIPT_FLAGS)
   flag?: TranscriptFlag;
 
-  /** Only exchanges with something flagged: not understood, numbers refused, noise, repeats… */
   @ApiPropertyOptional()
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
@@ -123,7 +122,6 @@ export class SetQuestionStatusDto {
   @MaxLength(500)
   note?: string;
 
-  /** Also apply to these (a whole cluster). */
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
@@ -158,7 +156,6 @@ export class ResolveQuestionDto {
   verify?: boolean;
 }
 
-/** An entry as typed in the editor. Checked field by field in the service, so the shape here is only "an object". */
 export class KnowledgeBodyDto {
   @IsOptional() @IsString() @MaxLength(80) id?: string;
   @IsOptional() @IsString() @MaxLength(400) topicAr?: string;
@@ -214,7 +211,6 @@ export class PreviewKnowledgeDto {
   @IsBoolean()
   loggedIn?: boolean;
 
-  /** The unsaved entry being edited, swapped into the live list for this one call. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()
@@ -242,7 +238,6 @@ export class DraftKnowledgeDto {
 }
 
 export class UpdateLimitsDto {
-  /** `{ settingKey: number | boolean | null }`; null returns a value to the environment/default. Validated per key in the service. */
   @ApiProperty()
   @IsObject()
   values!: Record<string, unknown>;

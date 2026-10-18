@@ -1,12 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-/**
- * Guest sweep and the orphan-guest cleanup hard-delete User rows; a morph
- * relation without a cascade would make those deletes fail. The real-database
- * check (migrate deploy + DELETE on Postgres) is part of the release evidence;
- * this guards the schema against regressions.
- */
 describe('Lobby Morphs schema', () => {
   const schema = readFileSync(
     join(__dirname, '../../../prisma/schema.prisma'),

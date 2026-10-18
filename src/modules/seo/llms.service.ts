@@ -8,11 +8,6 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 // Markdown link text must not contain brackets.
 const label = (text: string) => text.replace(/[\[\]]/g, '').trim();
 
-/**
- * Generates /llms.txt (curated index) and /llms-full.txt (readable content) from live data,
- * so new venues, sports, articles and FAQs reach AI crawlers without a deploy.
- * Spec: https://llmstxt.org — H1, blockquote summary, then H2 sections of links.
- */
 @Injectable()
 export class LlmsService {
   private readonly siteUrl: string;

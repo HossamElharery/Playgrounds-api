@@ -14,7 +14,6 @@ export class GamingReceiptsService {
     await tx.receiptSettings.update({where:{venueId:order.venueId},data:{nextNumber:{increment:1}}});
     const logo=settings.logoPhotoId?await tx.venuePhoto.findFirst({where:{id:settings.logoPhotoId,venueId:order.venueId}}):null;
     const payment=order.payments.find(p=>p.id===paymentId); const receivedMinor=order.payments.reduce((s,p)=>s+rescaleMoney(p.amount,p.moneyScale,order.moneyScale),0);
-    // A transferred session spans several devices at different rates; freeze each leg (device name, times, rate) so the customer copy can show it.
     type Leg={unitId?:string;startedAt?:string;endedAt?:string|null;hourlyRateMinor?:number;rateSnapshot?:{playMode?:string}};
     const legsOf=(l:{snapshot:unknown})=>((l.snapshot as {segments?:Leg[]}|null)?.segments??[]);
     const unitIds=[...new Set(order.lines.filter(l=>l.kind==='time').flatMap(l=>legsOf(l).map(g=>g.unitId).filter((id):id is string=>!!id)))];

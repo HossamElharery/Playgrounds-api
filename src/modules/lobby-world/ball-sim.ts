@@ -1,36 +1,17 @@
-/*
- * Lobby World ball — the pure, deterministic simulation shared by the server
- * (authority) and the client (kicker prediction, extrapolation).
- *
- * MIRRORED FILE: the same logic lives in
- *   - Playgrounds      src/app/shared/squad/world/ball-sim.ts
- *   - Playgrounds-api  src/modules/lobby-world/ball-sim.ts
- * Both test suites replay ball-sim.fixture.json and must produce the same
- * numbers (the parity test). Change both together and regenerate the fixture.
- *
- * Units: scene units (≈ metres), seconds. Floor at y = 0; the walkable disc is
- * r ≤ 8.2 and the goal sits at the far (−z) edge, mouth facing +z.
- */
 
 export const BALL_RADIUS = 0.22;
 export const BALL_GRAVITY = 9.8;
-/** Vertical bounce on the floor; below BALL_BOUNCE_STOP m/s it stops bouncing. */
 export const BALL_GROUND_RESTITUTION = 0.5;
 export const BALL_BOUNCE_STOP = 0.2;
-/** Rolling friction on the floor (u/s²) and linear air drag (1/s). */
 export const BALL_ROLL_DECEL = 1.8;
 export const BALL_AIR_DRAG = 0.08;
 export const BALL_WALL_RADIUS = 8.2;
 export const BALL_WALL_RESTITUTION = 0.6;
 export const BALL_POST_RESTITUTION = 0.7;
 export const BALL_PLAYER_RESTITUTION = 0.35;
-/** Tangential speed kept when the ball hits the net (the normal part is absorbed). */
 export const BALL_NET_KEEP = 0.4;
-/** A ball on the roof net is pushed back toward the mouth (the net sags), so it never rests up there. */
 export const BALL_ROOF_ROLL = 3;
-/** Resting: on the floor, slower than this. */
 export const BALL_REST_SPEED = 0.03;
-/** Most travel per substep (keeps a 12 u/s shot from tunnelling through a post). */
 const MAX_STEP_TRAVEL = 0.08;
 const MAX_SUBSTEPS = 16;
 
@@ -39,19 +20,15 @@ export const GOAL_BACK_Z = -8.1;
 export const GOAL_HALF_WIDTH = 1.2;
 export const GOAL_HEIGHT = 1.1;
 export const GOAL_POST_RADIUS = 0.06;
-/** The keeper's box in front of (and inside) the goal. */
 export const GOAL_AREA_HALF_WIDTH = 2.2;
 export const GOAL_AREA_FRONT_Z = GOAL_LINE_Z + 1.8;
 
 export const KICK_BASE_SPEED = 3;
 export const KICK_POWER_SPEED = 9;
 export const KICK_CHIP_POWER = 0.85;
-/** Full-power chip peaks ≈ 0.88 m above the floor rest height: it can reach the 1.1 m crossbar. */
 export const KICK_CHIP_LIFT = 4.23;
-/** Save radius multiplier for the keeper morph inside the goal area (easter egg). */
 export const KEEPER_SAVE_SCALE = 1.6;
 
-/** Event bits returned by stepBall. */
 export const BALL_EVENT_GOAL = 1;
 export const BALL_EVENT_POST = 2;
 export const BALL_EVENT_BAR = 4;
@@ -73,19 +50,13 @@ export interface BallPlayer {
   z: number;
   vx: number;
   vz: number;
-  /** Contact radius (body radius; × KEEPER_SAVE_SCALE for a keeper in the goal area). */
   r: number;
 }
 
 export interface BallStepInfo {
-  /** Index into `players` of the last one that touched the ball this step, −1 if none. */
   toucher: number;
 }
 
-/**
- * Axis-aligned solid the ball bounces off (the booking kiosk). Omitted — the
- * default — the step is identical to the shared fixture.
- */
 export interface BallAabb {
   minX: number;
   maxX: number;
@@ -98,7 +69,6 @@ export function createBall(): BallState {
   return { x: 0, y: BALL_RADIUS, z: 0, vx: 0, vy: 0, vz: 0 };
 }
 
-/** Back to the centre spot, dropped from a little height (it bounces in). */
 export function resetBall(b: BallState, dropHeight = 1.2): void {
   b.x = 0;
   b.z = 0;
@@ -114,7 +84,6 @@ export function ballResting(b: BallState): boolean {
   return ballOnGround(b) && hypot2(b.vx, b.vz) < BALL_REST_SPEED;
 }
 
-/** Is (x, z) inside the keeper's box? */
 export function inGoalArea(x: number, z: number): boolean {
   return (
     Math.abs(x) <= GOAL_AREA_HALF_WIDTH &&
@@ -123,10 +92,6 @@ export function inGoalArea(x: number, z: number): boolean {
   );
 }
 
-/**
- * A kick along (dirX, dirZ) with power 0..1: speed = 3 + 9 × power; above 0.85
- * it is a chip (+4.23 u/s up). Returns false for a zero direction (no kick).
- */
 export function kickBall(
   b: BallState,
   dirX: number,
@@ -150,13 +115,6 @@ export function kickBall(
   return true;
 }
 
-/**
- * Advance the ball by `dt` seconds against the floor, the wall, the goal
- * (posts and crossbar bounce, the net absorbs) and `count` players (circles:
- * walking into the ball pushes it — that is dribbling). Returns the event bits;
- * BALL_EVENT_GOAL fires on the substep the ball gets fully across the goal
- * line between the posts and under the bar, however it got there.
- */
 export function stepBall(
   b: BallState,
   players: readonly BallPlayer[],
@@ -180,11 +138,6 @@ export function stepBall(
   return events;
 }
 
-/**
- * Per-substep numbers for substep() and goal(). They are too big to inline,
- * and doubles passed as arguments to a call that is not inlined are boxed (a
- * heap allocation each): fields of one reused object are not.
- */
 const STEP: {
   h: number;
   px: number;
@@ -220,7 +173,6 @@ function substep(
   b.y += b.vy * h;
   b.z += b.vz * h;
 
-  // Floor.
   if (b.y < R) {
     b.y = R;
     if (b.vy < 0) {
@@ -273,8 +225,6 @@ function substep(
     }
   }
 
-  // Optional solids (the kiosk). Skipped entirely when none were passed in,
-  // so the shared fixture path does not move.
   if (STEP.boxes) events |= collideBoxes(b);
 
   // Posts and net see the whole move, player pushes included.
@@ -294,9 +244,6 @@ function substep(
       b.vz -= (1 + BALL_WALL_RESTITUTION) * vn * nz;
     }
     events |= BALL_EVENT_WALL;
-    // Behind the goal line the gap between a side net's outside and the wall
-    // is narrower than the ball: the net wins and the ball slides forward along
-    // it (inside the wall), instead of being squeezed through into the goal.
     const hw = GOAL_HALF_WIDTH;
     const ax = Math.abs(b.x);
     if (
@@ -320,16 +267,11 @@ function substep(
     b.vz = 0;
   }
 
-  // Goal: the ball got fully into the goal this substep — judged after every
-  // push and bounce, so however it went in (a shot, a body walking it over the
-  // line) it scores, and it can never sit in the goal unscored.
   if (!inGoalMouth(px, py, pz) && inGoalMouth(b.x, b.y, b.z))
     events |= BALL_EVENT_GOAL;
   return events;
 }
 
-/** Posts, crossbar and net against the ball; also detects the goal-line crossing. */
-/** Push the ball out of the shallowest side of each solid and bounce. */
 function collideBoxes(b: BallState): number {
   const boxes = STEP.boxes;
   if (!boxes) return 0;
@@ -394,9 +336,6 @@ function goal(b: BallState): number {
     }
   }
 
-  // Crossbar: a horizontal cylinder along x at (y = top, z = line). A ball
-  // riding over the roof net (above the bar, not past the line yet) treats the
-  // bar as the roof's edge and rolls off, instead of balancing on its crest.
   if (Math.abs(b.x) <= hw && !(py >= top && pz <= line)) {
     const dy = b.y - top;
     const dz = b.z - line;
@@ -417,9 +356,6 @@ function goal(b: BallState): number {
     }
   }
 
-  // Net: sides, back and roof absorb (from inside and from outside). Which
-  // side of a side net the ball came from is where it crossed the goal line
-  // (a ball from in front, pushed past the post line, meets the net outside).
   const inDepth = b.z < line && b.z > back - R;
   const inHeight = b.y < top + R;
   const fromX =
@@ -463,7 +399,6 @@ function goal(b: BallState): number {
       if (b.vy > 0) b.vy = 0;
       events |= BALL_EVENT_NET;
     } else if (py >= top && b.y - R < top) {
-      // On the roof: absorbed, then rolls back off the mouth (never rests up there).
       b.y = top + R;
       if (b.vy < 0) b.vy = 0;
       b.vx *= BALL_NET_KEEP;
@@ -474,7 +409,6 @@ function goal(b: BallState): number {
   return events;
 }
 
-/** Fully across the goal line, between the posts, under the bar. */
 function inGoalMouth(x: number, y: number, z: number): boolean {
   return (
     Math.abs(x) < GOAL_HALF_WIDTH &&
@@ -483,7 +417,6 @@ function inGoalMouth(x: number, y: number, z: number): boolean {
   );
 }
 
-/** `Math.hypot` is not inlined by the JIT and allocates per call: the sim runs every frame (and every server tick). */
 function hypot2(x: number, z: number): number {
   return Math.sqrt(x * x + z * z);
 }

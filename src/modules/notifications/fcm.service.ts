@@ -16,7 +16,6 @@ export interface FcmMessage {
   ctaUrl?: string | null;
 }
 
-/** An incoming (or just-missed) staff call. Delivered on its own channel with a short life. */
 export interface FcmCallMessage {
   callId: string;
   kind: 'ring' | 'missed';
@@ -25,19 +24,9 @@ export interface FcmCallMessage {
   deepLink: string;
 }
 
-/** Android channel the ringing notification uses (created by the app: loud, heads-up, vibrating). */
 export const CALL_CHANNEL_ID = 'matchena_calls';
-/** A ringing push older than this is worthless: the caller has given up. */
 export const CALL_PUSH_TTL_S = 30;
 
-/**
- * Native push (Android + iOS) over Firebase Cloud Messaging HTTP v1.
- *
- * Configured with `FIREBASE_SERVICE_ACCOUNT` — the service-account JSON from
- * Firebase console → Project settings → Service accounts, pasted raw or
- * base64-encoded. Without it every call is a no-op. (The legacy
- * `fcm/send` + server-key API was shut down by Google in 2024.)
- */
 @Injectable()
 export class FcmService {
   private readonly logger = new Logger(FcmService.name);
@@ -65,15 +54,10 @@ export class FcmService {
     return !!this.client;
   }
 
-  /** Fire-and-forget from NotificationsService.create; never throws. */
   async sendToUser(userId: string, message: FcmMessage): Promise<void> {
     await this.deliver(userId, (token) => buildMessage(token, message));
   }
 
-  /**
-   * Staff-call push: a ringing notification (high priority, call channel, short TTL, time-sensitive
-   * on iOS) or the "missed call" that replaces it (same tag / collapse id). Never throws.
-   */
   async sendCall(userId: string, message: FcmCallMessage): Promise<void> {
     await this.deliver(userId, (token) => buildCallMessage(token, message));
   }
@@ -144,7 +128,6 @@ export function buildCallMessage(token: string, message: FcmCallMessage, nowMs =
     data: { type: 'call', kind: message.kind, callId: message.callId, deepLink: message.deepLink },
     android: {
       priority: 'HIGH',
-      // A missed call lives on; a ring that arrives late is dropped by FCM itself.
       ttl: ring ? `${CALL_PUSH_TTL_S}s` : '86400s',
       collapse_key: tag,
       notification: {
@@ -162,9 +145,7 @@ export function buildCallMessage(token: string, message: FcmCallMessage, nowMs =
       },
       payload: {
         aps: {
-          // The 28 s ringtone ships inside the iOS app (ios/App/App/matchena_ring.wav); an older build falls back to the default tone.
           sound: ring ? 'matchena_ring.wav' : 'default',
-          // Needs the time-sensitive entitlement (added with the iOS project); without it iOS treats it as active.
           'interruption-level': ring ? 'time-sensitive' : 'active',
         },
       },

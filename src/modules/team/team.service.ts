@@ -22,12 +22,10 @@ import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTeamMemberDto, UpdateTeamMemberDto } from './dto/team.dto';
 
-/** Who is calling and what they may hand out. */
 export interface TeamActor {
   kind: 'admin' | 'owner' | 'staff';
   userId: string;
   ownerId: string;
-  /** Staff managers only: they cannot grant more than they hold. */
   scope: StaffScope | null;
 }
 
@@ -43,12 +41,6 @@ export class TeamService {
     return { permissions: PERMISSION_CATALOG, presets: PERMISSION_PRESETS };
   }
 
-  /**
-   * Resolves the organisation a request works on.
-   *  - admin: must name a venue; its owner is the organisation.
-   *  - owner: themselves (a venue, if given, must be theirs).
-   *  - staff with `team.manage`: their employer.
-   */
   async resolveActor(user: AuthenticatedUser, venueId?: string): Promise<TeamActor> {
     if (user.roles.includes('admin')) {
       if (!venueId) throw new BadRequestException('venueId is required');
@@ -138,7 +130,6 @@ export class TeamService {
           username,
           passwordHash,
           roles: ['staff'],
-          // The manager vouches for the address; there is no verification mail to click.
           emailVerifiedAt: email ? new Date() : null,
           countryCode: owner?.countryCode ?? 'EG',
         },
@@ -226,7 +217,6 @@ export class TeamService {
     await this.prisma.$transaction(async (tx) => {
       if (Object.keys(userData).length) await tx.user.update({ where: { id: member.userId }, data: userData });
       if (Object.keys(staffData).length) await tx.staffMember.update({ where: { id: staffId }, data: staffData });
-      // A new password, a suspension or a lost login must end sessions that are already open.
       if (resetPassword || dto.status === 'suspended') {
         await tx.refreshToken.updateMany({
           where: { userId: member.userId, revokedAt: null },
@@ -241,11 +231,6 @@ export class TeamService {
     return this.one(staffId);
   }
 
-  /**
-   * "Delete" keeps the user row (bookings and audit entries point at it) but ends the
-   * person's access for good: no permissions, no credentials, no open sessions, and
-   * their email / username are freed for reuse.
-   */
   async remove(actor: TeamActor, staffId: string) {
     const member = await this.loadMember(actor, staffId);
     if (member.userId === actor.userId) {
@@ -272,8 +257,6 @@ export class TeamService {
     this.realtime?.disconnectUser(member.userId);
     return { ok: true };
   }
-
-  // ---- internals ----------------------------------------------------------
 
   private async one(staffId: string) {
     const row = await this.prisma.staffMember.findUniqueOrThrow({
@@ -308,7 +291,6 @@ export class TeamService {
     return member;
   }
 
-  /** A delegated manager may only touch people who hold no more than they do. */
   private assertBelowActor(actor: TeamActor, member: { permissions: string[]; venueIds: string[] }) {
     if (actor.kind !== 'staff') return;
     const mine = new Set(actor.scope!.permissions);
@@ -320,7 +302,6 @@ export class TeamService {
     }
   }
 
-  /** Clean the requested keys, and stop a delegated manager from handing out what they lack. */
   private grantable(actor: TeamActor, requested: string[]): PermissionKey[] {
     const permissions = normalizePermissions(requested);
     if (actor.kind === 'staff') {

@@ -1,9 +1,3 @@
-/**
- * The permission catalogue for venue staff. This is the single source of truth:
- * the API enforces it (AuthGuard + `@RequirePermission`), the team screen renders
- * its checkboxes from `GET /team/catalog`, and the owner dashboard hides what a
- * person cannot use. Owners and admins hold every key implicitly.
- */
 export const PERMISSION_KEYS = [
   'bookings.view',
   'bookings.create',
@@ -48,7 +42,6 @@ export interface PermissionDef {
   labelEn: string;
   hintAr: string;
   hintEn: string;
-  /** Turning this on only makes sense together with these. */
   requires?: PermissionKey[];
 }
 
@@ -262,7 +255,6 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
       'shifts.review',
     ],
   },
-  // Gaming / PlayStation venues: floor operator, till, and a supervisor who can also fix mistakes.
   {
     key: 'gaming_floor', labelAr: 'مشغّل الصالة (ألعاب)', labelEn: 'Gaming floor operator',
     permissions: ['bookings.view', 'sessions.start', 'sessions.end', 'sessions.transfer', 'layout.view', 'products.view', 'orders.manage', 'payments.record', 'receipts.print'],
@@ -293,7 +285,6 @@ export function isPermissionKey(value: string): value is PermissionKey {
   return (PERMISSION_KEYS as readonly string[]).includes(value);
 }
 
-/** Drops unknown keys and pulls in what a key depends on, so a saved set is always coherent. */
 export function normalizePermissions(input: readonly string[]): PermissionKey[] {
   const out = new Set<PermissionKey>();
   const add = (key: PermissionKey) => {

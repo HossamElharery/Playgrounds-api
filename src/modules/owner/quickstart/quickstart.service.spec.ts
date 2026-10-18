@@ -52,7 +52,6 @@ describe('QuickstartService', () => {
     expect(ready.complete).toBe(true);
     expect(ready.score).toBe(100);
 
-    // One photo is "not empty" but still short of the three that make a page look real.
     const onePhoto = (await build({ photos: 1, venue: { descriptionAr: 'x'.repeat(30), address: 'a', lat: 1, lng: 1, cancellationPolicy: 'p', contactPhone: '1' } }).compute('v1', 'o1', open)).readiness;
     expect(onePhoto.items.find((i) => i.key === 'photos')).toMatchObject({ done: true, have: 1, want: 3 });
     expect(onePhoto.complete).toBe(false);

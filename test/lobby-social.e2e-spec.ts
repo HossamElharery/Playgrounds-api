@@ -9,7 +9,6 @@ import { PresenceService } from '../src/modules/presence/presence.service';
 import { SocialContentService } from '../src/modules/lobby-social/social-content.controller';
 import { EGYPTIAN_SOCIAL_BANK } from '../src/modules/lobby-social/social.egyptian-bank';
 
-/** Isolated disposable local PostgreSQL database. Never uses production or the user's app database. */
 describe('Lobby social persistence and concurrent clients', () => {
   let admin: PrismaClient;
   let db: PrismaClient;

@@ -29,7 +29,6 @@ export class PulseService {
     private readonly matchPosts: MatchPostsService,
   ) {}
 
-  // ---- Availability ----
 
   async myAvailability(userId: string) {
     const availability = await this.prisma.pulseAvailability.findUnique({
@@ -93,7 +92,6 @@ export class PulseService {
     });
   }
 
-  // ---- Feed ----
 
   async feed(userId: string, query: PulseFeedQueryDto) {
     const now = new Date();
@@ -238,8 +236,6 @@ export class PulseService {
       joinedCount: activeClaims.length,
       reliabilityFloor: opportunity.reliabilityFloor,
       urgent: opportunity.urgent,
-      // Without this the "Open match" button on a secured spot has nowhere
-      // to link to and can never render.
       matchId: opportunity.matchPostId ?? undefined,
       claimedByMe: activeClaims.some((c: any) => c.userId === userId),
       friendsCount: activeClaims.filter((claim: any) =>
@@ -278,7 +274,6 @@ export class PulseService {
     return this.toDto(opportunity, userId, friendIds);
   }
 
-  // ---- Claim state machine (§19.4) ----
 
   async claim(userId: string, opportunityId: string) {
     const preCheck = await this.prisma.pulseOpportunity.findUnique({
@@ -287,11 +282,6 @@ export class PulseService {
     });
     if (!preCheck) throw new NotFoundException('Opportunity not found');
     if (preCheck.matchPostId) {
-      // This opportunity IS someone's short-handed match post. Claiming it
-      // through Pulse was creating a live PulseClaim with no organizer
-      // involved at all — a backdoor around the approval gate every other
-      // join path enforces. Route it through the real gate instead: the
-      // organizer sees the same pending request either way.
       const request = await this.matchPosts.requestJoin(
         userId,
         preCheck.matchPostId,
@@ -343,9 +333,6 @@ export class PulseService {
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
-      // The frontend renders `{ opportunity, holdExpiresAt }` — returning the
-      // bare PulseClaim row here (as this used to) left it mapping a claim
-      // object as if it were an opportunity, corrupting the id it displays.
       const friendships = await this.prisma.friendship.findMany({
         where: { OR: [{ requesterId: userId }, { addresseeId: userId }] },
         select: { requesterId: true, addresseeId: true },
@@ -364,7 +351,7 @@ export class PulseService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2034'
       ) {
-        throw new ConflictException('PULSE_CAPACITY_CHANGED'); // serialization conflict — someone else won the race
+        throw new ConflictException('PULSE_CAPACITY_CHANGED');
       }
       throw error;
     }
@@ -407,9 +394,6 @@ export class PulseService {
     });
   }
 
-  /** Nothing called this before — the UI told the player their spot was
-   *  "secured" the instant they claimed it, then the hold silently expired
-   *  and evicted them 90 seconds later with no route back to "confirmed". */
   async confirmClaim(userId: string, opportunityId: string) {
     const claim = await this.prisma.pulseClaim.findUnique({
       where: { opportunityId_userId: { opportunityId, userId } },

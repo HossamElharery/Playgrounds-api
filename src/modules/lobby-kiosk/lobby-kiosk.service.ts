@@ -18,14 +18,12 @@ import {
   type ProposeInput,
 } from './lobby-kiosk.types';
 
-/** At most this many kiosk messages per user per second. */
 export const KIOSK_RATE = 5;
 
 export interface KioskBroadcaster {
   emit(squadId: string, event: string, payload: object): void;
 }
 
-/** Presence updates are tighter than the general kiosk budget. */
 export const KIOSK_PRESENCE_RATE = 4;
 
 interface SquadRuntime {
@@ -43,10 +41,6 @@ interface MemberRow {
 
 const MAX_ID = 64;
 
-/**
- * In-memory squad booking proposals. The gateway authenticates and checks the
- * room; this service validates the venue, the slot and the vote, then broadcasts.
- */
 @Injectable()
 export class LobbyKioskService implements OnModuleDestroy {
   broadcaster: KioskBroadcaster | null = null;
@@ -64,7 +58,6 @@ export class LobbyKioskService implements OnModuleDestroy {
     this.broadcaster = null;
   }
 
-  /** Token window: 5 messages / second / user. */
   allow(userId: string, now = Date.now()): boolean {
     const start = now - 1000;
     const prev = this.hits.get(userId);
@@ -214,10 +207,6 @@ export class LobbyKioskService implements OnModuleDestroy {
     return true;
   }
 
-  /**
-   * A booking made from a passed (or still-open) proposal. The row must exist,
-   * belong to this user, match the proposal venue, and start in the future.
-   */
   async booked(
     userId: string,
     squadId: string,
@@ -266,10 +255,6 @@ export class LobbyKioskService implements OnModuleDestroy {
     this.maybeDrop(squadId);
   }
 
-  /**
-   * Panel presence. `center` is the map camera while the member pans.
-   * The device GPS is never accepted and never broadcast.
-   */
   setPresence(
     squadId: string,
     userId: string,
@@ -334,7 +319,6 @@ export class LobbyKioskService implements OnModuleDestroy {
     return true;
   }
 
-  /** One-second sweep: expire open proposals and stale next-match chips. */
   tick(now = Date.now()): void {
     for (const s of this.squads.values()) {
       const p = s.proposal;

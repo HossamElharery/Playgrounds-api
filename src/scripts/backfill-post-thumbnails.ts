@@ -1,7 +1,3 @@
-/** Local-disk uploads only. Dry-run by default; pass --apply to update thumbnail URLs.
- * Run with: node --env-file=.env -r ts-node/register src/scripts/backfill-post-thumbnails.ts --apply
- * Originals and full-size URLs are never overwritten. Safe to run repeatedly.
- */
 import { PrismaClient } from '../generated/prisma';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, dirname, basename, extname } from 'node:path';

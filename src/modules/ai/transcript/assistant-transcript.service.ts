@@ -8,16 +8,13 @@ export interface TurnInput {
   ownerId: string;
   ownerName?: string | null;
   venueId?: string | null;
-  /** The owner's sentence as sent. */
   ownerText: string;
-  /** What the assistant said back (Arabic first), if anything. */
   replyText?: string;
   intent?: string;
   outcome: TranscriptOutcome;
   confidence?: number;
   model?: string | null;
   blockingCode?: string;
-  /** What was proposed, so the admin can see the money and the customer involved. */
   meta?: Record<string, unknown>;
 }
 
@@ -46,7 +43,6 @@ export interface TranscriptFilters {
   venueId?: string;
   q?: string;
   flag?: TranscriptFlag;
-  /** Only lines with at least one flag. */
   notable?: boolean;
   outcome?: string;
   sender?: AssistantSender;
@@ -60,7 +56,6 @@ type Row = Prisma.AssistantTranscriptGetPayload<object>;
 
 const NAME_TTL_MS = 10 * 60_000;
 const REPEAT_WINDOW_MS = 10 * 60_000;
-/** A server-written line absorbs the app's own copy of it only if that copy arrives this soon. */
 const MIRROR_WINDOW_MS = 3 * 60_000;
 
 function present(r: Row) {
@@ -84,13 +79,6 @@ function present(r: Row) {
   };
 }
 
-/**
- * The permanent record of every owner ↔ assistant exchange, kept by the server.
- * The app also stores a copy for the owner's own chat window, but that copy is
- * posted by the browser (it can fail) and lives under the venue (it goes when
- * the venue does). This one is written where the exchange happens, and nothing
- * deletes it. Writes never delay or fail the owner's request.
- */
 @Injectable()
 export class AssistantTranscriptService {
   private readonly logger = new Logger(AssistantTranscriptService.name);
@@ -98,9 +86,6 @@ export class AssistantTranscriptService {
 
   constructor(@Optional() private readonly prisma?: PrismaService) {}
 
-  // ------------------------------------------------------------ writing ----
-
-  /** One sentence from the owner and what the assistant answered. */
   async recordTurn(turn: TurnInput): Promise<void> {
     if (!this.prisma) return;
     try {
@@ -158,7 +143,6 @@ export class AssistantTranscriptService {
     }
   }
 
-  /** What the assistant did after the owner pressed Confirm, or took back with Undo. */
   async recordEvent(event: EventInput): Promise<void> {
     if (!this.prisma) return;
     try {
@@ -184,12 +168,6 @@ export class AssistantTranscriptService {
     }
   }
 
-  /**
-   * A line the app posted into the owner's chat window. If the server already
-   * wrote that exact line a moment ago (every question that reached the AI),
-   * the app's copy is absorbed instead of stored twice; anything else — the
-   * commands the app handled on its own — is kept as the app reported it.
-   */
   async mirrorClientLine(line: MirrorInput): Promise<void> {
     if (!this.prisma) return;
     try {
@@ -230,8 +208,6 @@ export class AssistantTranscriptService {
     }
   }
 
-  // ------------------------------------------------------------ reading ----
-
   async list(f: TranscriptFilters) {
     const where: Prisma.AssistantTranscriptWhereInput = {
       ...(f.ownerId ? { ownerId: f.ownerId } : {}),
@@ -271,11 +247,6 @@ export class AssistantTranscriptService {
     return { items: rows.map(present), pagination: buildPagination(f.page, f.perPage, total) };
   }
 
-  /**
-   * The admin's request list: every sentence an owner typed, each with the answer
-   * that came back, newest first. (The answer is the assistant's next line for
-   * the same owner and venue, within a minute.)
-   */
   async listTurns(f: Omit<TranscriptFilters, 'sender'>) {
     const page = await this.list({ ...f, sender: 'owner' });
     if (!this.prisma || !page.items.length) return page;
@@ -301,7 +272,6 @@ export class AssistantTranscriptService {
     };
   }
 
-  /** One owner's whole history, newest first, in pages the admin's user screen loads on demand. */
   async forOwner(ownerId: string, limit = 30, cursor?: string) {
     if (!this.prisma) return { items: [], nextCursor: null };
     const rows = await this.prisma.assistantTranscript.findMany({
@@ -318,7 +288,6 @@ export class AssistantTranscriptService {
     };
   }
 
-  /** The numbers the admin's "owners" tab opens with: how much, and how much of it went wrong. */
   async summary(days = 7) {
     const empty = { days, total: 0, owners: 0, flags: {} as Record<string, number>, topOwners: [] as unknown[] };
     if (!this.prisma) return empty;
@@ -353,7 +322,6 @@ export class AssistantTranscriptService {
     return { days, total, owners: owners.length, flags, topOwners };
   }
 
-  // ----------------------------------------------------------- helpers ----
 
   private async venueName(venueId: string | null | undefined): Promise<string | null> {
     if (!venueId || !this.prisma) return null;

@@ -1,8 +1,3 @@
-/**
- * Kickoff is the hard close. Listings, Pulse rescues and join requests must
- * not treat a MatchPost as live after `dateTime` — the row can sit on `open`
- * until a job catches up, so every read/write path has to consult the clock.
- */
 export const LIVE_MATCH_STATUSES = ['open', 'full'] as const;
 
 export function matchHasKickedOff(

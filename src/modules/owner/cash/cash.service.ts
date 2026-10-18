@@ -16,9 +16,7 @@ type Db = PrismaService | Prisma.TransactionClient;
 
 export interface MethodTally {
   method: string;
-  /** Money received by this method (positive rows). */
   in: number;
-  /** Money handed back by this method (refund rows, as a positive number). */
   out: number;
   count: number;
 }
@@ -30,7 +28,6 @@ export interface Tally {
   cashIn: number;
   cashRefunds: number;
   cashExpenses: number;
-  /** Cash that should be in the drawer from these movements alone (without any starting float). */
   cashNet: number;
   count: number;
   since: Date | null;
@@ -53,12 +50,10 @@ interface ExpenseRow {
   createdById: string | null;
 }
 
-/** Rows whose currency is not the venue's — a drawer mixing currencies cannot be counted. Pure. */
 export function foreignCurrencyRows(currency: string, ...groups: Array<Array<{ id: string; currency: string }>>) {
   return groups.flat().filter((r) => r.currency !== currency);
 }
 
-/** Adds the movements up: per method, plus the cash arithmetic the shift close is built on. Pure. */
 export function tally(payments: PaymentRow[], expenses: ExpenseRow[]): Tally {
   const methods = new Map<string, MethodTally>();
   let cashIn = 0;
@@ -99,7 +94,6 @@ export function tally(payments: PaymentRow[], expenses: ExpenseRow[]): Tally {
   };
 }
 
-/** What the drawer should hold, and how far the hand count is from it (negative = short). Pure. */
 export function reconcile(input: { openingFloat: number; cashNet: number; countedCash: number }) {
   const expectedCash = input.openingFloat + input.cashNet;
   return { expectedCash, difference: input.countedCash - expectedCash };
@@ -114,14 +108,10 @@ export class CashService {
     private readonly notifications?: NotificationsService,
   ) {}
 
-  // ---- who may do what ----------------------------------------------------------------------
-
   private async canReview(user: AuthenticatedUser): Promise<boolean> {
     if (user.roles.includes('admin') || user.roles.includes('owner')) return true;
     return scopeCan(await loadStaffScope(this.prisma, user.id), 'shifts.review');
   }
-
-  // ---- reading the open drawers ---------------------------------------------------------------
 
   private async movements(db: Db, venueId: string, userIds: string[] | null) {
     const [payments, expenses] = await Promise.all([
@@ -149,7 +139,6 @@ export class CashService {
     return { payments: payments as PaymentRow[], expenses: expenses as ExpenseRow[] };
   }
 
-  /** Cash the previous close of THIS drawer left behind for the next shift. */
   private async suggestedFloat(db: Db, venueId: string, drawerUserId: string | null): Promise<{ float: number; lastClosedAt: Date | null }> {
     const last = await db.cashShift.findFirst({
       where: { venueId, drawerUserId },
@@ -175,10 +164,6 @@ export class CashService {
     };
   }
 
-  /**
-   * Everything the cash screen needs in one read: my open drawer, and — for the owner and anyone
-   * with `shifts.review` — every colleague's open drawer plus a single shared drawer over all of it.
-   */
   async drawer(user: AuthenticatedUser, venueId: string) {
     const venue = await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const reviewer = await this.canReview(user);
@@ -195,7 +180,6 @@ export class CashService {
       mine: {
         ...this.toTallyDto(tally(mine.payments, mine.expenses), myHandover?rescaleMoney(myHandover.countedFloat,myHandover.moneyScale??100,100):myFloat.float),
         lastClosedAt: myFloat.lastClosedAt?.toISOString() ?? null,
-        /** What the last close left — the number a taking-over count is compared with. */
         suggestedFloat: myFloat.float,
         handover: myHandover ? this.handoverDto(myHandover, new Map([[user.id, user.name ?? null]])) : null,
       },
@@ -246,9 +230,6 @@ export class CashService {
     return result;
   }
 
-  // ---- opening (documented handover) ---------------------------------------------------------
-
-  /** Whose drawer a request is about, with the same permission rules for opening and closing. */
   private async resolveDrawer(
     user: AuthenticatedUser,
     dto: { scope: 'mine' | 'user' | 'shared'; targetUserId?: string },
@@ -271,11 +252,6 @@ export class CashService {
     return db.cashHandover.findFirst({ where: { venueId, drawerUserId, shiftId: null }, orderBy: { openedAt: 'desc' } });
   }
 
-  /**
-   * Taking a drawer over: the incoming person counts what is there, the system compares it with what
-   * the last close said it left, and the difference is written down and sent to the owner. The shift
-   * that follows starts from this counted float. Optional — a venue that never opens shifts still works.
-   */
   async openShift(user: AuthenticatedUser, dto: OpenShiftDto) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
     const { drawerUserId } = await this.resolveDrawer(user, dto, 'open');
@@ -357,8 +333,6 @@ export class CashService {
     });
   }
 
-  // ---- closing ---------------------------------------------------------------------------------
-
   async closeShift(user: AuthenticatedUser, dto: CloseShiftDto) {
     const venue = await assertVenueAccess(this.prisma, user, dto.venueId, { write: true });
     const { drawerUserId, userIds } = await this.resolveDrawer(user, dto, 'close');
@@ -377,7 +351,6 @@ export class CashService {
         }
         const t = tally(payments, expenses);
         const handover = await this.openHandover(tx, dto.venueId, drawerUserId);
-        // A drawer that was taken over can be closed even if nothing moved: the handover itself is the record.
         if (t.count === 0 && !handover) {
           throw new ApiException(HttpStatus.CONFLICT, 'NOTHING_TO_CLOSE', 'There is nothing in this drawer to close');
         }
@@ -408,7 +381,6 @@ export class CashService {
             note: dto.note?.trim() || null,
           },
         });
-        // Stamp exactly what was counted; if anything moved underneath us, abort rather than miscount.
         const stamped = await tx.payment.updateMany({
           where: { id: { in: t.paymentIds }, shiftId: null },
           data: { shiftId: created.id },
@@ -471,8 +443,6 @@ export class CashService {
     });
   }
 
-  // ---- history ---------------------------------------------------------------------------------
-
   async list(user: AuthenticatedUser, q: Pick<ShiftListQueryDto, 'venueId'> & Partial<ShiftListQueryDto>) {
     const venue = await assertVenueAccess(this.prisma, user, q.venueId, { write: false });
     const reviewer = await this.canReview(user);
@@ -501,7 +471,6 @@ export class CashService {
     };
   }
 
-  /** One closed shift with every movement behind it, so each pound can be explained. */
   async detail(user: AuthenticatedUser, shiftId: string) {
     const shift = await this.prisma.cashShift.findUnique({ where: { id: shiftId } });
     if (!shift) throw new NotFoundException('Shift not found');
@@ -556,8 +525,6 @@ export class CashService {
     });
     return (await this.dtos([updated]))[0];
   }
-
-  // ---- shaping ---------------------------------------------------------------------------------
 
   private encodeCash(value:number,scale:number){const amount=rescaleMoney(value,100,scale);if(!Number.isFinite(amount)||Math.abs(amount-Math.round(amount))>.00001||Math.abs(amount)>2147483647)throw new ApiException(HttpStatus.BAD_REQUEST,'CASH_PRECISION_INVALID','Amount has more digits than the venue currency allows');return Math.round(amount);}
   private async names(ids: string[]): Promise<Map<string, string | null>> {

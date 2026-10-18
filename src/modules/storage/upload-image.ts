@@ -1,12 +1,6 @@
 import { UnprocessableEntityException } from '@nestjs/common';
-// The backend uses legacy CommonJS resolution; sharp's runtime export is callable.
 const sharp: typeof import('sharp').default = require('sharp');
 
-/**
- * What an uploaded image is for. Each purpose has a hard minimum (below it the upload is refused,
- * because stretching a small file always looks bad) and a recommended width (below it the upload
- * works but the response carries a warning the dashboard shows).
- */
 export type UploadPurpose = 'cover' | 'inline' | 'general';
 export const UPLOAD_PURPOSE_RULES: Record<
   UploadPurpose,
@@ -16,7 +10,6 @@ export const UPLOAD_PURPOSE_RULES: Record<
   inline: { minWidth: 640, recommendedWidth: 1200 },
   general: { minWidth: 0, recommendedWidth: 0 },
 };
-/** Longest edge kept for the stored original; responsive variants are cut from it. */
 export const MAX_ORIGINAL_EDGE = 3840;
 
 export function parseUploadPurpose(value: unknown): UploadPurpose {
@@ -31,12 +24,6 @@ export interface PreparedImage {
   warnings: string[];
 }
 
-/**
- * Validates and normalises an uploaded image before it is stored:
- * refuses undecodable files and images too small for their purpose, applies EXIF orientation,
- * and caps the longest edge at 3840px. Images needing no transformation are stored byte for byte
- * to avoid generation loss, so their original metadata (including location) may remain present.
- */
 export async function prepareUploadImage(
   input: Buffer,
   mimeType: string,

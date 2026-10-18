@@ -136,7 +136,6 @@ export class MediaUploadService {
   }
 
   private async maybeThumbnail(_key: string, _buffer: Buffer): Promise<string> {
-    // ffmpeg is optional in local/dev. When missing, the video URL is used as poster.
     return '';
   }
 }

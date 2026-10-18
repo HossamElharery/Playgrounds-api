@@ -9,28 +9,18 @@ import { fmtMoney } from './assistant-money';
 import { zonedHhmm } from '../../../common/utils/timezone.util';
 
 const HOUR = 3_600_000;
-/** The two moments of the day (venue-local) the overdue digest is sent. */
 const OVERDUE_LOCAL_HOURS = [11, 20] as const;
 
-/** 0–23 on the venue's own clock. */
 export function localHour(now: Date, timeZone: string): number {
   return Number(zonedHhmm(now, timeZone).slice(0, 2));
 }
-/** The same unpaid set is mentioned again only after this long; a changed set is sent at once. */
 const SAME_DEBT_REMINDER_MS = 72 * HOUR;
 
-/** Identifies exactly which bookings owe exactly how much, so an unchanged debt is not announced twice. */
 export function debtFingerprint(list: Pick<OwedRow, 'id' | 'outstanding'>[]): string {
   const parts = list.map((b) => `${b.id}:${b.outstanding}`).sort();
   return createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 16);
 }
 
-/**
- * The assistant's proactive side: it pushes the two reminders an owner would
- * otherwise forget — cash still owed on played bookings, and a customer about
- * to arrive with a balance. Each reminder is sent once (deduped on the
- * notification's own payload), so a slow owner is nudged, not nagged.
- */
 @Injectable()
 export class AssistantRemindersService {
   private readonly logger = new Logger(AssistantRemindersService.name);
@@ -40,11 +30,6 @@ export class AssistantRemindersService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /**
-   * Late morning and evening — on EACH VENUE'S OWN clock: what is still owed from bookings already played.
-   * It wakes every hour and sends only to venues for which it is now 11:00 or 20:00 locally, so a Dubai
-   * owner is nudged at their lunchtime, not at 12:00 Cairo time.
-   */
   @Cron('0 * * * *')
   async overdueDigest(): Promise<void> {
     try {
@@ -56,7 +41,6 @@ export class AssistantRemindersService {
     }
   }
 
-  /** Every 15 minutes: bookings starting in 30–75 minutes that still owe money. */
   @Cron('*/15 * * * *')
   async arrivalReminders(): Promise<void> {
     try {
@@ -97,7 +81,6 @@ export class AssistantRemindersService {
           titleEn: `Still owed to you: ${fmtMoney(total, cur).en}`,
           bodyAr: `${list.length} حجز خلص ولسه عليهم فلوس (${names}${list.length > 3 ? '…' : ''}) — ${venue.nameAr}. افتح المساعد واكتب «فلان دفع» أول ما تحصّل.`,
           bodyEn: `${list.length} finished bookings still owe money (${names}${list.length > 3 ? '…' : ''}) — ${venue.nameEn}.`,
-          // Opens THIS venue's Today screen, where the unpaid list lives — not whichever venue was last open.
           deepLink: `/owner/today?venue=${venueId}`,
           payload: { kind: 'assistant_overdue', venueId, currency: cur, count: list.length, total, fingerprint },
         })
@@ -151,7 +134,6 @@ export class AssistantRemindersService {
     return sent;
   }
 
-  /** Re-read active staff and their current venue permissions at dispatch time. */
   private async recipients(venueId: string, ownerId: string) {
     const staff = await this.prisma.staffMember.findMany({
       where: { ownerId, venueIds: { has: venueId }, permissions: { has: 'bookings.view' }, user: { status: 'active', roles: { has: 'staff' } } },

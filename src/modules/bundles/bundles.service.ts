@@ -34,14 +34,6 @@ import {
 } from './dto/bundle.dto';
 import { randomUUID } from 'crypto';
 
-/**
- * Multi-activity bundles (§3.7/§7.3): a venue-defined combo of 2-4 units
- * ("padel court + PS5 room after your match, 15% off"). Purchasing a bundle
- * creates N linked, already-confirmed Booking rows sharing `bundleId`,
- * atomically — no new booking primitive, no hold step (bundles are
- * instant-pay upsells, matching §3.7's "booking a bundle creates two linked
- * Booking records ... not a new booking type").
- */
 @Injectable()
 export class BundlesService {
   constructor(

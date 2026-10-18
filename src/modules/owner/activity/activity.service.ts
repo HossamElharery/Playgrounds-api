@@ -6,7 +6,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { bi, type Bi } from '../assistant/assistant.types';
 import { fmtMoney } from '../assistant/assistant-money';
 
-/** The decisions an owner wants to be able to look back on: who booked, changed a price, took or returned money, took a drawer over. */
 export const ACTIVITY_ACTIONS = [
   'owner.booking.created',
   'owner.booking.updated',
@@ -32,7 +31,6 @@ export interface ActivityItem {
   at: string;
   kind: ActivityKind;
   actorName: string | null;
-  /** One sentence, in plain words, naming who did what. */
   text: Bi;
   bookingId: string | null;
 }
@@ -42,7 +40,6 @@ const PAGE = 40;
 type Meta = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 
-/** The words for each expense category, so the trail never shows a raw key like "electricity". */
 const EXPENSE_WORDS: Record<string, Bi> = {
   electricity: bi('كهرباء', 'electricity'),
   water: bi('مياه', 'water'),
@@ -56,7 +53,6 @@ const EXPENSE_WORDS: Record<string, Bi> = {
 };
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
-/** Reads each field of `changed` ({ field: [before, after] }) as a short bilingual phrase. Pure. */
 export function describeChanges(changed: Record<string, [unknown, unknown]> | undefined, currency: string): Bi[] {
   const out: Bi[] = [];
   for (const [field, pair] of Object.entries(changed ?? {})) {
@@ -80,7 +76,6 @@ export function describeChanges(changed: Record<string, [unknown, unknown]> | un
   return out;
 }
 
-/** Turns one audit row into a sentence an owner can read. Pure — the tests pin every wording. */
 export function describeActivity(
   action: string,
   m: Meta,

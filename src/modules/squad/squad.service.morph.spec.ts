@@ -1,6 +1,5 @@
 import { SquadService } from './squad.service';
 
-/** Lobby Morphs integration: `mySquad` members carry `morphId` only while the flag is on. */
 describe('SquadService.mySquad morphId', () => {
   const squadRow = (withProfile: boolean) => ({
     squad: {

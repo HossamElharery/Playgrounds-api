@@ -1,23 +1,12 @@
-/**
- * Deterministic court resolution.
- *
- * The model is asked for court ids, but a weaker fallback model (or a spoken
- * "بلايستيشن 5 برو 1" against a court called "PS5 Room 1") regularly returns
- * none. Rather than asking the owner a question they already answered, the
- * sentence is matched against the venue's own courts here — names, console
- * type, room tier — and only a single unambiguous winner is accepted.
- */
 
 export interface CourtCandidate {
   id: string;
   name: string;
-  /** Extra searchable text: console type, room tier, sport, format... */
   hints?: string;
 }
 
 const AR_DIGITS = '٠١٢٣٤٥٦٧٨٩';
 
-/** Words that say nothing about *which* court, so they never decide a match. */
 const GENERIC = new Set([
   'room', 'court', 'the', 'a', 'an', 'in', 'at', 'for', 'on', 'of', 'and',
   'في', 'ال', 'علي', 'على', 'من', 'ل', 'و', 'عايز', 'عايزك', 'احجز', 'حجز', 'هيحجز', 'تحجز',
@@ -49,11 +38,6 @@ function tokens(text: string): string[] {
   return text.split(' ').filter(Boolean);
 }
 
-/**
- * Numbers in a booking sentence are mostly clock times and money. A number
- * only counts as a court number when it sits right behind a court-ish word,
- * or when the whole message is a short answer to "which court?".
- */
 function courtNumbers(text: string): Set<string> {
   const found = new Set<string>();
   const toks = tokens(text.replace(/\d{1,2}:\d{2}/g, ' '));
@@ -110,10 +94,6 @@ export function resolveCourtFromText(
   return best && !tie ? best.id : null;
 }
 
-/**
- * The venue's units as one readable list. Two units can share a name across sports («Table 1» for
- * billiards and for ping-pong): then each is followed by its sport so the owner can answer.
- */
 export function listUnits(units: { name: string; sportAr?: string | null }[], separator = '، '): string {
   const seen = new Map<string, number>();
   for (const u of units) seen.set(u.name, (seen.get(u.name) ?? 0) + 1);

@@ -29,7 +29,6 @@ const reading: AssistantReading = {
   question: '',
 };
 
-/** A manual booking row as Prisma returns it for `findOwed`. */
 const booking = (id: string, name: string, startOffsetMs: number, total: number, paid = 0) => ({
   id,
   venueId: 'v1',
@@ -57,7 +56,6 @@ function build(rows: ReturnType<typeof booking>[]) {
     },
     court: { findMany: jest.fn().mockResolvedValue([]) },
     booking: {
-      // Same filter semantics as the database, so each call sees only what its window would match.
       findMany: jest.fn().mockImplementation(({ where }: { where: { slotEnd?: { lt: Date; gte?: Date }; slotStart?: { gte?: Date; lt?: Date } } }) =>
         Promise.resolve(
           rows.filter((b) => {

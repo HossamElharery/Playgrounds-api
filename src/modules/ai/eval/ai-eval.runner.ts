@@ -21,7 +21,6 @@ export interface EvalSummary {
   reasoning: string;
   pass: number;
   total: number;
-  /** Cases actually run (less than `total` when the cost cap stopped the run). */
   ran: number;
   truncated: boolean;
   avgMs: number;
@@ -33,22 +32,16 @@ export interface EvalSummary {
 
 export interface EvalRunOptions {
   kind: EvalKind;
-  /** One model, no fallback: this measures the model, not the chain. */
   model: string;
   reasoning?: AiReasoningEffort;
-  /** Reads the environment (API keys). */
   env: (name: string) => string | undefined;
-  /** The run stops starting new cases once it has spent this much. */
   maxCostUsd?: number;
   concurrency?: number;
-  /** Where each call's cost is also reported (the real usage ledger, for admin runs). */
   sink?: Pick<AiUsageService, 'record'>;
-  /** The knowledge pack Captain's cases run against; the built-in pack by default. */
   knowledge?: KnowledgeEntry[];
   onProgress?: (done: number, total: number) => void;
 }
 
-/** Counts a run's own calls and never refuses on budget: the cost cap is the run's own brake. */
 class EvalMeter {
   calls = 0;
   failures = 0;
@@ -78,7 +71,6 @@ function compare(expect: Record<string, unknown>, got: Record<string, unknown>, 
   return bad;
 }
 
-/** Runs one assistant's cases against one model and scores them. */
 export async function runEvalSuite(opts: EvalRunOptions): Promise<EvalSummary> {
   const overrides: Record<string, string | undefined> = {
     GEMINI_API_KEY: '',

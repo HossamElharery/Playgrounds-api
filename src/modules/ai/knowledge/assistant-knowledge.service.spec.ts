@@ -3,7 +3,6 @@ import { KNOWLEDGE } from './default-knowledge';
 
 const config = (env: Record<string, string> = {}) => ({ get: (k: string) => env[k] }) as never;
 
-/** A tiny in-memory stand-in for the three tables the service touches. */
 function fakeDb(initial: Record<string, unknown>[] = [], revisions: { knowledgeId: string; action?: string; snapshot?: unknown; id?: string; createdAt?: Date }[] = []) {
   const rows = new Map<string, Record<string, unknown>>(initial.map((r) => [r['id'] as string, { updatedAt: new Date(), createdAt: new Date(), position: 0, active: true, ...r }]));
   const revs = [...revisions];
@@ -164,7 +163,6 @@ describe('AssistantKnowledgeService', () => {
     it('changes only the fields that were sent (a partial update must not blank the rest)', async () => {
       const { db, rows, revs } = fakeDb([entry('a', { topicAr: 'موضوع أصلي طويل', topicEn: 'original topic long' })]);
       const s = new AssistantKnowledgeService(config(), db as never);
-      // What a DTO instance looks like: every declared field present, the unsent ones undefined.
       await s.update('a', { id: undefined, topicAr: undefined, topicEn: undefined, ar: 'نص معدّل', en: undefined, ctaTarget: undefined, flag: undefined, active: undefined }, 'admin1');
       expect(rows.get('a')).toMatchObject({ ar: 'نص معدّل', en: 'text a', topicAr: 'موضوع أصلي طويل' });
       expect(revs.at(-1)?.action).toBe('update');

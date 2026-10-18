@@ -29,15 +29,8 @@ import { loadStaffScope, scopeCan } from '../../../common/access/staff-scope';
 import type { PermissionKey } from '../../../common/access/permissions';
 import type { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 
-/** One sentence never legitimately asks for more than this. */
 export const MAX_ACTIONS = 4;
 
-/**
- * Carries out what the owner confirmed, and can take it back. Execution goes
- * through the same services the dashboard's own buttons use, so an assistant
- * action can never do something the owner (or a staff member with fewer
- * permissions) could not do by hand — and neither can its Undo.
- */
 @Injectable()
 export class OwnerAssistantExecutorService {
   private readonly logger = new Logger(OwnerAssistantExecutorService.name);
@@ -50,7 +43,6 @@ export class OwnerAssistantExecutorService {
     @Optional() private readonly transcript?: AssistantTranscriptService,
   ) {}
 
-  /** Carries out the confirmed actions and leaves two traces: the numbers (kinds and outcome) and, in the permanent transcript, what was done and what it said. */
   async execute(
     user: AuthenticatedUser,
     venueId: string,
@@ -110,14 +102,9 @@ export class OwnerAssistantExecutorService {
     const currency = venue.currency;
     const done: string[] = [];
     const lines: Bi[] = [];
-    // What it would take to put each write back, built from the rows as they
-    // really were — never from anything the client sent.
     const undo: UndoOp[] = [];
     let undoId: string | null = null;
 
-    // The granular permission lives on the dashboard's own routes, so calling
-    // the services straight from here would hand a limited staff account the
-    // keys it was never given. Re-check per action, by the same catalogue.
     const needed: Record<AssistantAction['kind'], PermissionKey> = {
       create_booking: 'bookings.create',
       record_payment: 'payments.record',
@@ -131,9 +118,6 @@ export class OwnerAssistantExecutorService {
           `Missing permission: ${needed[action.kind]}`,
         );
       }
-      // The action DTO cannot express "these fields are required for this
-      // kind", and a half-filled action reaches Prisma as an undefined id or a
-      // NaN amount. Check the shape once, here, before anything is written.
       assertActionShape(action);
     }
 
@@ -173,8 +157,6 @@ export class OwnerAssistantExecutorService {
                 notes: action.notes,
               });
             } catch (err) {
-              // The block was opened for this booking only; if it fell through,
-              // the window goes back to exactly how the owner left it.
               await restore?.();
               throw err;
             }
@@ -374,13 +356,6 @@ export class OwnerAssistantExecutorService {
     };
   }
 
-  // --------------------------------------------------------------- undo ----
-
-  /**
-   * Anchors the inverse of a confirmed plan server-side. The client only ever
-   * holds the row's id: what "undo" will do was decided here, from the rows as
-   * they were, so a forged request cannot make it do anything else.
-   */
   private async recordUndo(
     user: AuthenticatedUser,
     venueId: string,
@@ -400,14 +375,11 @@ export class OwnerAssistantExecutorService {
       });
       return row.id;
     } catch (err) {
-      // Losing the Undo button must never turn a booking that WAS written into
-      // an error the owner would answer by writing it again.
       this.logger.warn(`could not record undo: ${err}`);
       return null;
     }
   }
 
-  /** Puts back what one confirmed plan wrote — once, and only for a short while. */
   async undo(
     user: AuthenticatedUser,
     venueId: string,
@@ -505,7 +477,6 @@ export class OwnerAssistantExecutorService {
   private async apply(user: AuthenticatedUser, op: UndoOp): Promise<Bi> {
     switch (op.op) {
       case 'void_booking':
-        // Undoing a booking the assistant just recorded takes back whatever it collected with it.
         await this.bookings.deleteManualBooking(user, op.bookingId, { refundAmount: 'all' });
         return bi(
           'اتلغى الحجز اللي سجلته ↩️',

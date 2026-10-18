@@ -65,10 +65,8 @@ describe('F07 meaningful alerts without spam (PostgreSQL, no external transports
     const booking = await db.booking.create({ data: { code: randomUUID(), venueId, courtId: unitId, userId: ownerId, slotStart: new Date(now + 5 * 60000), slotEnd: new Date(now + 65 * 60000), baseAmount: 1000, totalAmount: 1000, status: 'confirmed', source: 'manual' } });
     const user = { id: ownerId, name: 'Alerts owner', phone: '+201099990101', roles: ['owner'] } as never;
     const session = await sessions.start(user, { venueId, requestKey: randomUUID(), unitId, startMode: 'now', durationMinutes: 3 });
-    // The device is free again by the time the booking starts, so there is nothing to warn about yet.
     await alerts.threatenedBookings();
     expect(await count('gaming-next-booking:')).toBe(0);
-    // Customer keeps playing past the planned end: now the same booking is threatened.
     await db.usageSession.update({ where: { id: session.id }, data: { expectedEnd: new Date(Date.parse(session.startedAt as unknown as string) + 1) } });
     await alerts.threatenedBookings(); await alerts.threatenedBookings();
     expect(await count('gaming-next-booking:')).toBe(1);

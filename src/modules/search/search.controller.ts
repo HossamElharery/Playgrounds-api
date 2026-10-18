@@ -29,8 +29,6 @@ export class SearchController {
     return this.global.search(dto);
   }
 
-  // Public + costs a real AI call per request — throttled well under the
-  // global limit so a runaway client can't burn through the AI budget.
   @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('smart')
@@ -38,9 +36,6 @@ export class SearchController {
     return this.search.smartSearch(dto);
   }
 
-  // The player assistant. Public like smart search (guests can look for a court),
-  // but a signed-in player is recognised so "حجوزاتي" can answer. Each call may
-  // cost a model call, so it is throttled well under the global limit.
   @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('captain')
@@ -48,9 +43,6 @@ export class SearchController {
     return this.captain.ask(dto, user, req.ip);
   }
 
-  // 👍 / 👎 on one Captain answer. Public like the question itself; the id is the
-  // random one handed back with that answer, so only whoever got it can rate it,
-  // and only for a day. Always 200 so a purged or unknown id leaks nothing.
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Patch('captain/feedback/:id')

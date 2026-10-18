@@ -14,7 +14,6 @@ const MUTATING = new Set([
   RequestMethod.DELETE,
 ]);
 
-/** Owner routes that are not venue writes (or are read-only POSTs). */
 const WRITE_EXCEPTIONS = new Set([
   'assistant/interpret',
   'bookings/verify-qr',

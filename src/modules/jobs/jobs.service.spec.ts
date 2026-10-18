@@ -1,4 +1,3 @@
-// The advisory lock needs a real database; its behaviour is covered in job-lock.util.spec.ts.
 jest.mock('../../common/utils/job-lock.util', () => ({
   withJobLock: async (_prisma: unknown, _name: string, work: () => Promise<void>) => {
     await work();

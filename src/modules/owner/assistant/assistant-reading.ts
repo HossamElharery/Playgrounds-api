@@ -2,12 +2,6 @@ import type { NluCourtRef } from './assistant-nlu.service';
 import { resolveCourtFromText } from './assistant-courts';
 import { bi, type AssistantReading, type Bi } from './assistant.types';
 
-/**
- * Pure helpers of the owner assistant: text normalisation, the draft the
- * client echoes back, and joining a model reading with the pending question.
- * No database, no model — everything here is unit-testable on its own.
- */
-
 export function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -20,7 +14,6 @@ export function joinBi(parts: Bi[], sep = ' '): Bi {
   return bi(parts.map((p) => p.ar).join(sep), parts.map((p) => p.en).join(sep));
 }
 
-/** Arabic spellings vary more than the owner does — compare on a flattened form. */
 export function normalizeName(value: string): string {
   return value
     .replace(/\u0640/g, '')
@@ -37,20 +30,17 @@ export function todayIn(tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 }
 
-/** YYYY-MM-DD + 1 calendar day (no timezone maths: it is a date, not an instant). */
 export function nextDay(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 }
 
-/** "أيوه" / "yes" to a proposal the assistant just made. */
 export function isAffirmative(text: string): boolean {
   return /^\s*(ا?ي?وه|اه|أه|آه|ايوا|أيوا|اكيد|أكيد|تمام|ماشي|ok|okay|yes|yep|yeah|sure|اة|اي)\s*[.!،]*\s*$/i.test(
     text.replace(/[\u064B-\u0652]/g, ''),
   );
 }
 
-/** Console type, room tier, sport and format — the words an owner uses instead of the court's name. */
 export function courtDetails(c: {
   format: string | null;
   gamingConfig: unknown;
@@ -74,7 +64,6 @@ export function courtDetails(c: {
     .join(' ');
 }
 
-/** The client echoes the draft back, so it is treated like any other untrusted input. */
 export function sanitizeDraft(
   raw: Record<string, unknown> | undefined,
   courts: NluCourtRef[],
@@ -166,11 +155,6 @@ export const NEEDS_COURT: ReadonlySet<AssistantReading['intent']> = new Set([
   'agenda',
 ]);
 
-/**
- * Joins the model's reading with what the assistant was already waiting for,
- * then fills in what plain string matching can do better than a model: an
- * answer like "PS5 Room 1" to "which court?" must never be lost.
- */
 export function completeReading(
   reading: AssistantReading,
   draft: AssistantReading | null,
@@ -188,8 +172,6 @@ export function completeReading(
     // "أيوه" to "تقصد بكرة؟": the draft already holds the proposal.
     r = { ...draft, confidence: Math.max(r.confidence, 0.8), question: '' };
   } else if (draft && r.intent === 'unknown') {
-    // The model lost the thread. If the sentence at least names a court, it is
-    // the answer to the pending question.
     const court = draft.courtIds.length ? null : resolved();
     if (court) {
       r = {
@@ -227,20 +209,14 @@ export function completeReading(
     if (court) r.courtIds = [court];
   }
   if (r.intent === 'move' && !r.newCourtId && !r.courtIds.length) {
-    // "انقل حجز محمد للـ VIP" — the court in the sentence is the destination.
     const court = resolved();
     if (court) r.newCourtId = court;
   }
   return r;
 }
 
-/**
- * What the owner said about money already received when cancelling a booking: hand it back,
- * keep it, or nothing (or both at once) — in which case the assistant must ask instead of guessing.
- */
 export function refundIntent(text: string): 'refund' | 'keep' | 'ask' {
   let t = normalizeName(text);
-  // «مفيش استرداد» / «no refund» contain the word refund but mean the opposite.
   const negated = /(مفيش|بدون|من غير|مش هيبقي|مش هرجع|لا)\s*(استرداد|استرجاع|رد|رجوع)|\bno refund\b|\bnon[- ]?refundable\b/;
   const keptByNegation = negated.test(t);
   t = t.replace(new RegExp(negated.source, 'g'), ' ');

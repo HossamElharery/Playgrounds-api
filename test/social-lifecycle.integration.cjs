@@ -1,4 +1,3 @@
-// Local-only integration exercise. Creates isolated QA accounts; no real users are changed.
 require('dotenv').config({ quiet: true });
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');

@@ -20,11 +20,6 @@ const INCLUDE = {
 
 type Row = Prisma.PlatformBookingRequestGetPayload<{ include: typeof INCLUDE }>;
 
-/**
- * Owner requests to change/cancel a Matchena booking, and the admin's decisions on them.
- * The owner can only ASK (and see the answer); cancelling, with its refund and ledger effects,
- * is an admin action that goes through the one existing cancellation path.
- */
 @Injectable()
 export class PlatformRequestsService {
   private readonly logger = new Logger(PlatformRequestsService.name);
@@ -35,7 +30,6 @@ export class PlatformRequestsService {
     private readonly bookings: BookingsService,
   ) {}
 
-  /** Recorded by `OwnerBookingsService.requestPlatformChange` next to its notification and audit entry. */
   async record(input: { bookingId: string; venueId: string; kind: 'cancel' | 'change'; reason: string; userId: string }) {
     const open = await this.prisma.platformBookingRequest.findFirst({
       where: { bookingId: input.bookingId, kind: input.kind, status: 'open' },
@@ -54,8 +48,6 @@ export class PlatformRequestsService {
     return { id: row.id, duplicate: false };
   }
 
-  // ---- owner side ---------------------------------------------------------
-
   async listForVenue(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const rows = await this.prisma.platformBookingRequest.findMany({
@@ -66,8 +58,6 @@ export class PlatformRequestsService {
     });
     return rows.map((r) => this.ownerDto(r));
   }
-
-  // ---- admin side ---------------------------------------------------------
 
   async listAdmin(q: { status?: string; venueId?: string }) {
     const rows = await this.prisma.platformBookingRequest.findMany({
@@ -86,12 +76,10 @@ export class PlatformRequestsService {
     };
   }
 
-  /** Cancel the booking (refund + ledger handled by the existing admin cancellation) and close the request as approved. */
   async approveCancel(adminId: string, id: string, reply?: string) {
     const req = await this.loadOpen(id);
     if (req.kind !== 'cancel') throw new BadRequestException('Only a cancellation request can be approved this way');
     if (['held', 'confirmed'].includes(req.booking.status)) {
-      // The cancellation itself is guarded by the booking status, so a double click cannot refund twice.
       await this.bookings.cancelByAdmin(adminId, req.bookingId, reply?.trim() || req.reason);
     }
     return this.finish(adminId, req, 'approved', reply);
@@ -102,7 +90,6 @@ export class PlatformRequestsService {
     return this.finish(adminId, await this.loadOpen(id), 'declined', reply);
   }
 
-  /** An answer with no action (e.g. "we contacted the player"). */
   async answer(adminId: string, id: string, reply: string) {
     if (!reply?.trim()) throw new BadRequestException('A reply is required');
     return this.finish(adminId, await this.loadOpen(id), 'answered', reply);
@@ -111,8 +98,6 @@ export class PlatformRequestsService {
   async close(adminId: string, id: string) {
     return this.finish(adminId, await this.loadOpen(id), 'closed', undefined);
   }
-
-  // ---- internals ----------------------------------------------------------
 
   private async loadOpen(id: string): Promise<Row> {
     const req = await this.prisma.platformBookingRequest.findUnique({ where: { id }, include: INCLUDE });

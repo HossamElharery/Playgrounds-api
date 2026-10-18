@@ -126,14 +126,12 @@ export class OwnerController {
     return this.owner.access(user);
   }
 
-  /** One screen for every venue the caller may see: today, what is owed, open drawers, what needs review. */
   @AnyStaff()
   @Get('command-centre')
   centre(@CurrentUser() user: AuthenticatedUser) {
     return this.commandCentre.centre(user);
   }
 
-  /** Who booked, changed a price, took or returned money, took a drawer over — in plain sentences. */
   @RequirePermission('reports.view')
   @Get('activity')
   activityLog(
@@ -170,10 +168,6 @@ export class OwnerController {
     return this.owner.board(user, venueId, date);
   }
 
-  // Costs a real Gemini call per request — throttled well under the global
-  // limit so a runaway client can't burn through the owner's AI budget.
-  // Superseded by `assistant/ask`. Kept for app builds already in the stores,
-  // which still speak this endpoint; new clients must not use it.
   @ApiOperation({
     summary: 'Deprecated: use POST /owner/assistant/ask',
     deprecated: true,
@@ -188,12 +182,6 @@ export class OwnerController {
     return this.owner.interpretScheduleCommand(user, dto.venueId, dto.text);
   }
 
-  /**
-   * The owner assistant's planning call: one sentence in, a validated plan
-   * out. Read-only — nothing is written until the owner confirms and the
-   * client posts the plan back to `assistant/execute`. Throttled the same way
-   * as `interpret`: every call costs a real model request.
-   */
   @Throttle({ default: { limit: 15, ttl: 60_000 } })
   @RequirePermission('bookings.view')
   @Post('assistant/ask')
@@ -207,7 +195,6 @@ export class OwnerController {
     });
   }
 
-  /** What deserves the owner's attention right now — powers the dashboard's proactive message. */
   @RequirePermission('bookings.view')
   @Get('assistant/attention')
   assistantAttention(
@@ -217,11 +204,6 @@ export class OwnerController {
     return this.assistant.attentionDigest(user, venueId);
   }
 
-  /**
-   * Runs a plan the owner confirmed. Each action is re-checked against the
-   * caller's own permissions and then executed through the same services the
-   * dashboard's buttons use.
-   */
   @RequireAnyPermission(
     'bookings.create',
     'payments.record',
@@ -243,11 +225,6 @@ export class OwnerController {
     );
   }
 
-  /**
-   * Takes back what one confirmed plan wrote (a booking, a payment, an expense,
-   * a cancellation, an edit). The inverse is held server-side and is single-use
-   * and short-lived; the permission to reverse each step is re-checked.
-   */
   @RequireAnyPermission(
     'bookings.create',
     'payments.record',
@@ -262,9 +239,6 @@ export class OwnerController {
     return this.assistantExecutor.undo(user, dto.venueId, dto.undoId);
   }
 
-  // The assistant is no longer schedule-only: its chat log is the record of
-  // everything the owner asked it, so it follows the dashboard's baseline read
-  // permission rather than the closure permission.
   @RequirePermission('bookings.view')
   @Get('assistant/messages')
   listAssistantMessages(
@@ -909,7 +883,6 @@ export class OwnerController {
     );
   }
 
-  // ---- Occupancy map, idle windows and time-boxed discounts ----
   @RequirePermission('reports.view')
   @Get('insights/occupancy')
   occupancy(

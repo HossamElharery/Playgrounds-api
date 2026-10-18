@@ -21,12 +21,6 @@ import type { AuthenticatedUser } from '../../common/types/authenticated-user.in
 import { CallsService } from './calls.service';
 import { CreateCallDto, DoNotDisturbDto, MuteCallsDto } from './dto/calls.dto';
 
-/**
- * Owner <-> team calls. Open to the venue owner and every staff account of that owner (no permission
- * key: the team can always reach each other); the service enforces "same organisation" on every call.
- * The platform admin may start calls to any owner or staff member (and look them up to do so).
- * Players and guests are refused by role.
- */
 @ApiTags('calls')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)

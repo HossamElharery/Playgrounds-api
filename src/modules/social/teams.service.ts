@@ -109,8 +109,6 @@ export class TeamsService {
     });
     if (removed.threadId)
       this.emitter.revokeRoomAccess(userId, `thread:${removed.threadId}`);
-    // Someone else removed them: losing a team and its chat with no explanation
-    // reads as a bug. Leaving on your own needs no announcement.
     if (captainId !== userId) {
       await this.notifications
         .create({
@@ -170,8 +168,6 @@ export class TeamsService {
       });
       return team.name;
     });
-    // You've just been handed responsibility for a roster — approving joins,
-    // managing members. That can't arrive silently.
     await this.notifications
       .create({
         userId,
@@ -387,10 +383,6 @@ export class TeamsService {
         },
       });
     });
-    // The player who has been waiting is the one who needs to hear about this.
-    // A realtime `team.changed` only refreshes whoever already has the app open
-    // on that screen — without this, an accepted player's "pending" badge just
-    // silently disappears and a declined one never learns why.
     if (action !== 'cancel') {
       const accepted = action === 'accept';
       await this.notifications

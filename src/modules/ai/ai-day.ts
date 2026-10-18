@@ -1,9 +1,7 @@
-/** The AI day is a UTC day, the same boundary the in-memory counters always used. */
 export function utcDayString(now: number | Date = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-/** A `@db.Date` value for a `YYYY-MM-DD` day. */
 export function dayDate(day: string): Date {
   return new Date(`${day}T00:00:00.000Z`);
 }

@@ -4,7 +4,6 @@ import { AiCounterStore } from './ai-counter.store';
 import { identityRef, identitySalt, storedQuotaKey } from './ai-redact';
 
 export interface QuotaRule {
-  /** Who is counted: `ip:1.2.3.4`, `dev:abc`, `user:42`. */
   key: string;
   perMinute: number;
   perDay: number;
@@ -19,16 +18,6 @@ interface MinuteCounter {
   count: number;
 }
 
-/**
- * How many AI messages one identity may send. A message is only counted when
- * every rule passes, so a visitor sharing a busy network is not charged for a
- * request that was refused anyway.
- *
- * The day's count lives in the database (batched, hashed for addresses and
- * devices), so a deploy no longer hands everyone a fresh allowance and every
- * instance counts against the same total. The per-minute window stays in
- * memory: it only matters for the next sixty seconds and has no value on disk.
- */
 @Injectable()
 export class AiQuotaService implements OnModuleDestroy {
   private readonly minutes = new Map<string, MinuteCounter>();
@@ -49,16 +38,13 @@ export class AiQuotaService implements OnModuleDestroy {
     clearInterval(this.sweeper);
   }
 
-  /** A short hash of a quota key, for logs and screens that must not show who someone is. */
   ref(key: string): string {
     return identityRef(this.salt, key);
   }
 
-  /** Counts one message against every rule, or refuses without counting. */
   async take(scope: string, rules: QuotaRule[], now = Date.now()): Promise<QuotaVerdict> {
     const dayScope = `quota:${scope}`;
     const keyed = rules.map((rule) => ({ rule, stored: storedQuotaKey(this.salt, rule.key) }));
-    // Load today's stored counts first; everything after this is synchronous, so two requests cannot interleave between the check and the count.
     await Promise.all(keyed.map((k) => this.counters.ensure(dayScope, k.stored, now)));
 
     const prepared = keyed.map(({ rule, stored }) => {
@@ -90,7 +76,6 @@ export class AiQuotaService implements OnModuleDestroy {
     return { ok: true };
   }
 
-  /** How many messages this identity has sent today (for a "suspicious guest" check). */
   async sentToday(scope: string, key: string, now = Date.now()): Promise<number> {
     const stored = storedQuotaKey(this.salt, key);
     await this.counters.ensure(`quota:${scope}`, stored, now);

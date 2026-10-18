@@ -27,11 +27,6 @@ import {
   ValidateKnowledgeDto,
 } from './ai-admin.dto';
 
-/**
- * The admin's AI tab. Every route here is admin-only (class-level role), reads
- * nothing but the redacted logs and the knowledge pack, and every change is
- * written to the audit log by the service that makes it.
- */
 @ApiTags('admin-ai')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)
@@ -46,13 +41,11 @@ export class AiAdminController {
     private readonly quality: AiAdminQualityService,
   ) {}
 
-  // ---- overview ----
   @Get('overview')
   getOverview() {
     return this.overview.overview();
   }
 
-  // ---- player questions ----
   @Get('questions')
   async listQuestions(@Query() q: ListAiQuestionsDto) {
     const { items, pagination } = await this.questions.list(q);
@@ -65,7 +58,6 @@ export class AiAdminController {
     return { message: 'ok', result: items, pagination };
   }
 
-  /** How much the owners wrote this week and how much of it went wrong, per flag and per owner. */
   @Get('owner-requests/summary')
   ownerRequestsSummary(@Query() q: OwnerRequestsSummaryDto) {
     return this.questions.ownerRequestsSummary(q.days);
@@ -103,7 +95,6 @@ export class AiAdminController {
     return this.questions.retest(id);
   }
 
-  // ---- knowledge ----
   @Get('knowledge')
   async listKnowledge() {
     const [list, deleted] = await Promise.all([this.knowledge.listAll(), this.knowledge.deletedEntries()]);
@@ -164,7 +155,6 @@ export class AiAdminController {
     return this.knowledge.resetToDefault(id, user.id);
   }
 
-  // ---- limits ----
   @Get('limits')
   limits() {
     return this.overview.limits();
@@ -175,7 +165,6 @@ export class AiAdminController {
     return this.overview.updateLimits(dto.values, user.id);
   }
 
-  // ---- quality ----
   @Get('quality')
   qualityOverview() {
     return this.quality.overview();

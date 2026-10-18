@@ -121,7 +121,6 @@ describe('LobbyWorldService', () => {
 
     it('corrects a teleport to the farthest legal point and sends it reliably', () => {
       world.acceptMove(move({ seq: 1, x: 0, z: 0 }), 'u1', 'sock', T0);
-      // 100 ms later: legal travel ≈ 4.6 × 1.5 × 0.1 + what is left of the 7.4 u budget.
       world.acceptMove(move({ seq: 2, x: 7, z: 0 }), 'u1', 'sock', T0 + 100); // spends the burst budget
       const res = world.acceptMove(
         move({ seq: 3, x: -7, z: 0 }),
@@ -131,8 +130,6 @@ describe('LobbyWorldService', () => {
       );
       expect(res?.correction).not.toBeNull();
       expect(res?.reliable).toBe(true);
-      // Pulled back towards the previous point: 0.4 u of budget was left plus
-      // 0.69 u earned in 100 ms, so it may only get 1.09 u away from x = 7.
       expect(res!.moved.x).toBeCloseTo(7 - 1.09, 1);
       expect(res!.moved.x).toEqual(res!.correction!.x);
     });
@@ -142,8 +139,7 @@ describe('LobbyWorldService', () => {
       let t = T0;
       world.acceptMove(move({ seq: 0, x, z: 0 }), 'u1', 'sock', t);
       for (let seq = 1; seq <= 30; seq++) {
-        x += 0.4; // 4 u/s at 10 Hz
-        // Every third message arrives late, then two more arrive at the same instant.
+        x += 0.4;
         t += seq % 3 === 0 ? 300 : 0;
         const res = world.acceptMove(
           move({ seq, x, z: 0, vx: 4, m: 2 }),
@@ -272,7 +268,6 @@ describe('LobbyWorldService', () => {
   });
 });
 
-/** Partial object match that reads like the payload. */
 function jasmineLike<T extends object>(o: T): T {
   return expect.objectContaining(o) as T;
 }

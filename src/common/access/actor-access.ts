@@ -3,17 +3,6 @@ import { PrismaService } from '../../modules/prisma/prisma.service';
 import type { AuthenticatedUser } from '../types/authenticated-user.interface';
 import { loadStaffScope, type StaffScope } from './staff-scope';
 
-/**
- * For services that authorise with `(id, ownerId, isPrivileged)`.
- *
- * The guard has already checked the staff member's PERMISSION KEY; this checks the
- * other half — that the venue is one of theirs. A staff member then acts AS their
- * owner (`actingOwnerId`) with `privileged = false`, so the service's own ownership
- * check still runs and admin-only fields (SEO overrides…) stay admin-only.
- *   admin → privileged (skips the ownership check)
- *   owner → not privileged, acts as themselves
- *   staff → not privileged, acts as the owner they work for
- */
 export async function venueActorPrivilege(
   prisma: PrismaService,
   user: AuthenticatedUser,
@@ -25,7 +14,6 @@ export async function venueActorPrivilege(
   return false;
 }
 
-/** The owner id to hand to ownership-checking services: the staff member's employer, else the caller. */
 export async function actingOwnerId(prisma: PrismaService, user: AuthenticatedUser): Promise<string> {
   if (user.roles.includes('admin') || user.roles.includes('owner')) return user.id;
   const scope = await loadStaffScope(prisma, user.id);

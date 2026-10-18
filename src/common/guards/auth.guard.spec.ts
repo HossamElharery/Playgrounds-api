@@ -24,7 +24,6 @@ function contextWithUser(user: unknown): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
-/** Route metadata by key, so tests read like the decorators they stand for. */
 function route(meta: Partial<Record<string, unknown>>) {
   return (key: string) => meta[key];
 }

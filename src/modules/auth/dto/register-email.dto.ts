@@ -10,8 +10,6 @@ import {
 } from 'class-validator';
 import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
-/** Player signup by email + password. Phone is optional — the OTP-SMS flow
- * remains available but is no longer required to create an account. */
 export class RegisterEmailDto {
   @ApiProperty({ example: 'player@matchena.com' })
   @IsEmail()

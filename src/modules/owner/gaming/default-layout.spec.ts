@@ -9,7 +9,6 @@ const table = (i: number, type = 'american-8-ball'): DefaultLayoutUnit => ({ id:
 describe('buildDefaultLayout', () => {
   const check = (units: DefaultLayoutUnit[], lang: 'ar' | 'en' = 'en') => {
     const doc = buildDefaultLayout('venue-1', units, lang, id);
-    // The server's own validator is the contract: every generated plan must publish as-is.
     expect(() => validateLayoutDocument(doc, 'venue-1', new Set(units.map((u) => u.id)))).not.toThrow();
     return doc;
   };

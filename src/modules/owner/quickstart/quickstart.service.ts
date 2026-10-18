@@ -5,7 +5,6 @@ import type { AuthenticatedUser } from '../../../common/types/authenticated-user
 import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
 import { bookingBlockers, venuePricingGaps, type BookingBlocker } from '../../../common/utils/venue-readiness.util';
 
-/** Anchors on the owner's venue page (`?section=`). */
 export type VenueSection = 'hours' | 'units' | 'prices' | 'location' | 'details' | 'more';
 const blockerSection: Record<BookingBlocker, VenueSection> = {
   hours: 'hours',
@@ -21,9 +20,7 @@ export type ReadinessKey = 'photos' | 'description' | 'address' | 'cancellation'
 export interface ReadinessItem {
   key: ReadinessKey;
   done: boolean;
-  /** `required` is what a public page cannot look serious without; `recommended` is what makes it convincing. */
   level: 'required' | 'recommended';
-  /** How many there are / how many we want, for things that are counted (photos). */
   have?: number;
   want?: number;
   route: string;
@@ -33,14 +30,9 @@ export interface QuickstartStep {
   key: QuickstartKey;
   done: boolean;
   optional: boolean;
-  /** Owner-app route to open for this step. */
   route: string;
 }
 
-/**
- * The new-owner checklist. Every step is derived from real data (never a flag someone can
- * forget to set), so it also tells the admin honestly who is still stuck.
- */
 @Injectable()
 export class QuickstartService {
   constructor(private readonly prisma: PrismaService) {}
@@ -50,7 +42,6 @@ export class QuickstartService {
     return this.compute(venue.id, venue.ownerId, venue.weeklyHours as WeeklyHours | null);
   }
 
-  /** Same computation without an actor — used by the admin health board. */
   async compute(venueId: string, ownerId: string, weeklyHours: WeeklyHours | null) {
     const [courts, staff, anyBooking, venue, photos, imported] = await Promise.all([
       this.prisma.court.findMany({
@@ -72,10 +63,7 @@ export class QuickstartService {
       this.prisma.venueImportBatch.count({ where: { venueId, undoneAt: null } }),
     ]);
     const hoursSet = !!weeklyHours && Object.values(weeklyHours).some((d) => d && !d.closed && d.open && d.close);
-    // Hours, courts and prices are all edited on the venue's own management page
-    // (`/owner/venues/:id`) — there is no separate screen for any of them.
     const venuePage = `/owner/venues/${venueId}`;
-    // Each step opens the venue page already scrolled to the section that fixes it.
     const section = (name: VenueSection) => `${venuePage}?section=${name}`;
     const gaps = venuePricingGaps(weeklyHours, courts.map((c) => ({ id: c.id, name: c.name, rules: c.pricingRules ?? [] })));
     const steps: QuickstartStep[] = [
@@ -84,7 +72,6 @@ export class QuickstartService {
       { key: 'prices', done: courts.length > 0 && courts.every((c) => c._count.pricingRules > 0), optional: false, route: section('prices') },
       { key: 'team', done: staff > 0, optional: true, route: '/owner/staff' },
       { key: 'firstBooking', done: !!anyBooking, optional: false, route: '/owner/today' },
-      // Bringing the existing notebook in is optional, but it is what lets the venue stop keeping two books.
       { key: 'import', done: imported > 0, optional: true, route: '/owner/import' },
     ];
     const text = (v?: string | null) => (v ?? '').trim();
@@ -95,7 +82,6 @@ export class QuickstartService {
       { key: 'phone', done: text(venue?.contactPhone).length > 0, level: 'required', route: section('details') },
       { key: 'cancellation', done: text(venue?.cancellationPolicy).length > 0, level: 'recommended', route: section('details') },
     ];
-    // Three photos are what make a page look real; one is enough to count as "not empty".
     const photoItem = readinessItems[0];
     const weights = readinessItems.map((i) => (i.key === 'photos' ? Math.min(1, photos / (i.want ?? 3)) : i.done ? 1 : 0));
     const readiness = {
@@ -103,7 +89,6 @@ export class QuickstartService {
       score: Math.round((weights.reduce((a, b) => a + b, 0) / readinessItems.length) * 100),
       complete: readinessItems.every((i) => i.done) && photos >= (photoItem.want ?? 3),
     };
-    // What players need before they can book at all — the same rule the approval and the booking paths enforce.
     const missing: BookingBlocker[] = venue
       ? bookingBlockers(
           { weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
@@ -118,9 +103,7 @@ export class QuickstartService {
         ready: missing.length === 0,
         missing,
         route: venuePage,
-        /** Deep link per missing piece, so "no prices" opens the prices, not the whole page. */
         routes: Object.fromEntries(missing.map((m) => [m, section(blockerSection[m])])),
-        /** Hours the venue is open but a court has no price for — warning, not a blocker. */
         pricingGaps: gaps,
       },
     };

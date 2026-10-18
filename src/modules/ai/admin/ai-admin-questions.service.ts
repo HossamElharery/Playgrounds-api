@@ -37,9 +37,7 @@ function present(r: Row) {
     surface: r.surface,
     userKind: r.userKind,
     text: r.textRedacted,
-    /** What Captain answered, as the player saw it. */
     reply: r.replyText,
-    /** Set for signed-in players: the admin can open their account. */
     userId: r.userId,
     lang: r.lang,
     intent: r.intent,
@@ -59,7 +57,6 @@ function present(r: Row) {
   };
 }
 
-/** What players asked Captain, as the admin works through it. */
 @Injectable()
 export class AiAdminQuestionsService {
   constructor(
@@ -101,7 +98,6 @@ export class AiAdminQuestionsService {
     };
   }
 
-  /** The worklist: questions Captain could not answer or players marked 👎, grouped by similarity, biggest first. */
   async inbox() {
     const since = new Date(Date.now() - INBOX_DAYS * 86_400_000);
     const open: Prisma.AiQuestionLogWhereInput = {
@@ -137,7 +133,6 @@ export class AiAdminQuestionsService {
     return present(row);
   }
 
-  /** "Reviewed", "ignore", or back to new — for one question or a whole cluster. */
   async setStatus(ids: string[], status: AiQuestionStatus, note: string | undefined, actorUserId: string) {
     const unique = [...new Set(ids)].slice(0, BULK_MAX);
     if (!unique.length) throw new BadRequestException('ids required');
@@ -154,11 +149,6 @@ export class AiAdminQuestionsService {
     return { updated: res.count };
   }
 
-  /**
-   * Marks questions resolved and, when an entry answers them, asks the real
-   * question again to prove the entry is now chosen. A failed test leaves the
-   * question resolved (the entry exists) but says so, so the admin can fix the topic.
-   */
   async resolve(id: string, body: { knowledgeId?: string; note?: string; ids?: string[]; verify?: boolean }, actorUserId: string) {
     const ids = [...new Set([id, ...(body.ids ?? [])])].slice(0, BULK_MAX);
     const rows = await this.prisma.aiQuestionLog.findMany({ where: { id: { in: ids } } });
@@ -187,7 +177,6 @@ export class AiAdminQuestionsService {
     return { resolved: rows.length, verification };
   }
 
-  /** Asks each sample again against the live knowledge: did Captain choose `knowledgeId`? */
   async verify(knowledgeId: string, samples: { text: string; lang?: 'ar' | 'en'; player: boolean }[]) {
     const entries = await this.knowledge.forPlayers();
     const results: { text: string; ok: boolean; intent: string | null; factIds: string[] }[] = [];
@@ -209,14 +198,12 @@ export class AiAdminQuestionsService {
     return { ok: results.length > 0 && results.every((r) => r.ok), passed: results.filter((r) => r.ok).length, total: results.length, modelAnswered, results };
   }
 
-  /** Re-asks one logged question against the live knowledge, to see what Captain would do with it today. */
   async retest(id: string): Promise<PreviewResult> {
     const row = await this.prisma.aiQuestionLog.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('question not found');
     return this.tools.preview({ text: row.textRedacted, lang: (row.lang as 'ar' | 'en' | null) ?? undefined, loggedIn: row.userKind === 'player' });
   }
 
-  /** Numbers for the page header. */
   async counts() {
     const today = dayDate(utcDayString());
     const week = dayDate(addDays(utcDayString(), -6));
@@ -227,11 +214,6 @@ export class AiAdminQuestionsService {
     return { today: today_, week: week_ };
   }
 
-  /**
-   * What venue owners asked their assistant, as typed, with the answer, who and where —
-   * read from the permanent transcript the server keeps (it survives a deleted venue,
-   * and it does not depend on the app having posted the line).
-   */
   async ownerRequests(f: {
     outcome?: string;
     q?: string;

@@ -15,7 +15,6 @@ import { ExtendSubscriptionDto, UpdateSubscriptionTermsDto } from './dto/subscri
 export class SubscriptionsController {
   constructor(private readonly subscriptions: SubscriptionsService) {}
 
-  /** The owner's "your plan" card. */
   @Roles('owner', 'admin')
   @OwnerOnly()
   @Get('owner/subscription')

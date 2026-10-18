@@ -9,11 +9,6 @@ import { pulseStatusFromOccupancy } from '../pulse/pulse-status.util';
 import { elapsedLiveMatchWhere } from '../social/match-lifecycle';
 import { moneyText } from '../../common/money/money-text';
 
-/**
- * Background sweeps that release time-bounded holds. This is what actually
- * frees a slot/claim after its window passes — the partial unique index and
- * PulseClaim state machine only *reserve* inventory, they don't expire it.
- */
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
@@ -44,10 +39,6 @@ export class JobsService {
   }
 
   private async releaseExpiredBookingHolds() {
-    // Coins are reserved off the balance the moment a hold is created (see
-    // BookingsService.holdSlot), so releasing an abandoned hold can no
-    // longer be a blind bulk update — each row with `coinsRedeemed > 0`
-    // needs its coins actually credited back, not just its status flipped.
     const expiring = await this.prisma.booking.findMany({
       where: { status: 'held', holdExpiresAt: { lt: new Date() } },
       select: { id: true, userId: true, coinsRedeemed: true },
@@ -162,13 +153,6 @@ export class JobsService {
     });
   }
 
-  /**
-   * Anti-leak: at_venue commission cannot be avoided by never scanning the QR.
-   * Confirmed platform bookings become `completed` 24h after slotEnd unless the
-   * owner marked them no_show or cancelled in that window. `completed` triggers
-   * at_venue accrual. The previous 3-hour auto-no-show job was removed because
-   * it zeroed commission whenever the owner skipped check-in.
-   */
   @Cron(CronExpression.EVERY_HOUR)
   async completeStalePlatformBookings() {
     await this.runJob('completeStalePlatformBookings', () =>
@@ -209,11 +193,6 @@ export class JobsService {
     }
   }
 
-  /**
-   * Cash-drawer safety net: a manual booking that starts within the hour but
-   * still has money outstanding nudges the venue once. Deduped on the
-   * notification payload, so a 5-minute sweep never repeats itself.
-   */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async remindUnpaidManualBookings() {
     await this.runJob('remindUnpaidManualBookings', async () => {
@@ -274,12 +253,6 @@ export class JobsService {
     return sent;
   }
 
-  /**
-   * The last chance to collect. The reminder above fires before the customer
-   * arrives; this one fires while they are still on the court — once the game
-   * ends and they walk out, an unpaid balance is a debt, not a collection.
-   * Deduped on its own payload key so a booking can legitimately get both.
-   */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async remindBookingsEndingUnpaid() {
     await this.runJob('remindBookingsEndingUnpaid', async () => {
@@ -350,15 +323,6 @@ export class JobsService {
   }
 
   private async expireInactiveCoinsNow() {
-    // §5.1: coins expire after 6 months of account inactivity.
-    //
-    // This deliberately reads `lastSeenAt`, not `updatedAt` — Prisma's
-    // `@updatedAt` on User bumps on *any* write to the row (a wallet credit,
-    // a profile edit, even the presence gateway's own "you're online" ping on
-    // every socket reconnect), so keying inactivity off it meant this never
-    // fired for anyone who ever opened the app. `lastSeenAt` is the field that
-    // actually means "was here." A user who never logged in at all has a null
-    // `lastSeenAt`, in which case `createdAt` is the honest inactivity clock.
     const cutoff = new Date(Date.now() - 180 * 86_400_000);
     const inactiveUsers = await this.prisma.user.findMany({
       where: {
@@ -442,15 +406,6 @@ export class JobsService {
     });
   }
 
-  /**
-   * Nothing else in the codebase ever creates a `PulseOpportunity` row, which
-   * means the Pulse feed's "rescue" column — the whole point of the page,
-   * per the product's "never play short" loop — is permanently empty in
-   * production no matter how many short-handed matches exist. This turns
-   * every open, still-upcoming match post that still needs players into a
-   * live rescue opportunity, and keeps it in sync (capacity, fullness,
-   * expiry) as that match post changes.
-   */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async syncPulseRescueOpportunities() {
     await this.runJob('syncPulseRescueOpportunities', () =>
@@ -517,8 +472,6 @@ export class JobsService {
           matchPostId: post.id,
           districtId: post.districtId ?? undefined,
           startsAt: post.dateTime,
-          // A rescue opportunity can't outlive the kickoff it's rescuing —
-          // matches the "no joining after it started" guard in requestJoin.
           expiresAt: post.dateTime,
           costPerPlayerAmount: post.costPerPlayerAmount ?? 0,
           currency: post.currency,
@@ -529,8 +482,6 @@ export class JobsService {
       created++;
     }
 
-    // The match post filled up, got cancelled, or kicked off — the
-    // opportunity representing it is no longer a real rescue.
     const stale = existing.filter(
       (o) => !openPostIds.has(o.matchPostId as string),
     );

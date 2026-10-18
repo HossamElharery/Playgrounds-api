@@ -19,7 +19,6 @@ import {
 export const DEFAULT_LIST_PRICE = 100_000; // 1,000 EGP in piasters
 export const DEFAULT_TRIAL_DAYS = 30;
 
-/** Local yyyy-mm-dd in a time zone. */
 function localDate(now: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
@@ -42,7 +41,6 @@ export class SubscriptionsService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Creates the subscription if a venue somehow has none (seed data, legacy rows). */
   async ensure(
     venueId: string,
     days = DEFAULT_TRIAL_DAYS,
@@ -55,7 +53,6 @@ export class SubscriptionsService {
     });
   }
 
-  /** Called from the approval flow with the days the admin typed. */
   async startOrExtendOnApproval(
     tx: Prisma.TransactionClient,
     adminId: string,
@@ -102,9 +99,7 @@ export class SubscriptionsService {
     });
   }
 
-  // ---- owner-facing ------------------------------------------------------
 
-  /** What the owner sees: the plan, the struck-through list price, the dates. Never the agreed price. */
   async forOwner(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const sub = await this.ensure(venueId);
@@ -124,7 +119,6 @@ export class SubscriptionsService {
     };
   }
 
-  // ---- admin -------------------------------------------------------------
 
   async forAdmin(venueId: string) {
     const venue = await this.prisma.venue.findUnique({
@@ -186,7 +180,6 @@ export class SubscriptionsService {
     return this.forAdmin(venueId);
   }
 
-  /** "I took the money — add the days." */
   async extend(admin: AuthenticatedUser, venueId: string, dto: ExtendSubscriptionDto) {
     const sub = await this.ensure(venueId);
     const end = extendedPeriodEnd(sub.currentPeriodEnd, dto.days);
@@ -246,7 +239,6 @@ export class SubscriptionsService {
     return this.forAdmin(venueId);
   }
 
-  /** Renewals list: every venue with its standing, soonest-ending first. */
   async listAdmin(query: { state?: string; q?: string }) {
     const venues = await this.prisma.venue.findMany({
       where: query.q?.trim()
@@ -260,7 +252,6 @@ export class SubscriptionsService {
         : {},
       select: { id: true, nameEn: true, nameAr: true, owner: { select: { id: true, name: true } } },
     });
-    // One query for all rows; only a venue that somehow has none pays for a create.
     const existing = await this.prisma.venueSubscription.findMany({
       where: { venueId: { in: venues.map((v) => v.id) } },
     });
@@ -283,7 +274,6 @@ export class SubscriptionsService {
     };
   }
 
-  // ---- the morning job ---------------------------------------------------
 
   @Cron('0 9 * * *', { timeZone: 'Africa/Cairo' })
   async morningReminders(): Promise<void> {
@@ -296,11 +286,6 @@ export class SubscriptionsService {
     }
   }
 
-  /**
-   * Runs once each morning. Owners hear about it when a plan is about to end (7, 3, 1
-   * days and the last day) and EVERY morning while it is past its end date. The admin
-   * gets one digest. Nothing is ever blocked.
-   */
   async sendDailyReminders(now: Date = new Date()): Promise<{ owners: number; admins: number }> {
     const horizon = new Date(now.getTime() + EXPIRING_SOON_DAYS * DAY_MS);
     const subs = await this.prisma.venueSubscription.findMany({

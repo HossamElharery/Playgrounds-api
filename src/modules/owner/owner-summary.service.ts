@@ -22,7 +22,6 @@ import {
 } from '../../common/utils/weekly-hours.util';
 import { zonedDayBounds } from '../../common/utils/timezone.util';
 
-/** Prisma predicate: platform booking that counts as collected Matchena revenue. */
 export function platformCollectedWhere(): Prisma.BookingWhereInput {
   return {
     source: 'platform',
@@ -56,7 +55,6 @@ export function ownerCollectedWhere(): Prisma.BookingWhereInput {
   return { OR: [platformCollectedWhere(), manualPaidWhere()] };
 }
 
-/** Keep in lockstep with `platformCollectedWhere()` / `PLATFORM_COLLECTED_SQL`. */
 export function matchesPlatformCollected(b: {
   source: string;
   status: string;
@@ -82,7 +80,6 @@ export function matchesManualPaid(b: {
   return b.source === 'manual' && b.status !== 'cancelled' && b.paymentStatus === 'paid';
 }
 
-/** Mirrors `MANUAL_RECEIVED_SQL`: what a manual booking has actually received so far. */
 export function manualReceived(b: { totalAmount: number; paymentStatus: string; receivedAmount?: number }): number {
   if (b.paymentStatus === 'paid') return b.totalAmount;
   return Math.max(0, Math.min(b.totalAmount, b.receivedAmount ?? 0));
@@ -100,7 +97,6 @@ export const PLATFORM_COLLECTED_SQL = `(
 
 export const MANUAL_PAID_SQL = `(source = 'manual' AND status <> 'cancelled' AND "paymentStatus" = 'paid')`;
 
-/** A manual booking that is not cancelled — its revenue is whatever has been received on it. */
 export const MANUAL_COUNTED_SQL = `(source = 'manual' AND status <> 'cancelled')`;
 
 export function collectedFromBookings(
@@ -114,7 +110,6 @@ export function collectedFromBookings(
     ownerFundedDiscount?: number | null;
     commissionAmount?: number | null;
     totalAmount: number;
-    /** Net payments received (partial deposits count). Falls back to "paid = whole price". */
     receivedAmount?: number;
   }>,
 ) {
@@ -162,25 +157,13 @@ export function availableMinutesInRange(
   return total;
 }
 
-
-/** Bookings that count as real reservations (not cancelled, not unpaid holds). */
 const COUNTABLE_SQL = Prisma.sql`"status" IN ('confirmed', 'completed', 'no_show')`;
 const PLATFORM_SQL = Prisma.sql`"source" = 'platform'`;
 const MANUAL_SQL = Prisma.sql`"source" = 'manual'`;
 
-/**
- * Owner revenue of ONE booking, per the money model (00 §4): platform bookings
- * that are collected count `baseAmount − ownerFundedDiscount` (never the player
- * fee); manual bookings count what was paid. Everything else is 0.
- */
-/**
- * Net money actually received on ONE booking: every counted payment minus the refunds.
- * A deposit counts the moment it is taken, so a part-paid booking shows what it really holds.
- */
 export const NET_PAID_SQL = `(COALESCE((SELECT SUM(p."amount"::numeric*100/p."moneyScale") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded')), 0) + COALESCE((SELECT SUM(a."amountMinor"::numeric*100/(SELECT go."moneyScale" FROM "GamingOrder" go WHERE go.id=l."orderId")) FROM "GamingPaymentAllocation" a JOIN "GamingOrderLine" l ON l.id=a."lineId" JOIN "UsageSession" s ON s.id=l."sourceId" JOIN "Payment" p ON p.id=a."paymentId" WHERE s."bookingId"="Booking".id AND l.kind='booking-time' AND p."bookingId" IS NULL AND p.status IN ('paid','refunded')),0))::double precision`;
 const NET_CASH_SQL = `(COALESCE((SELECT SUM(p."amount"::numeric*100/p."moneyScale") FROM "Payment" p WHERE p."bookingId" = "Booking"."id" AND p."status" IN ('paid','refunded') AND p."method" = 'cash'), 0) + COALESCE((SELECT SUM(a."amountMinor"::numeric*100/(SELECT go."moneyScale" FROM "GamingOrder" go WHERE go.id=l."orderId")) FROM "GamingPaymentAllocation" a JOIN "GamingOrderLine" l ON l.id=a."lineId" JOIN "UsageSession" s ON s.id=l."sourceId" JOIN "Payment" p ON p.id=a."paymentId" WHERE s."bookingId"="Booking".id AND l.kind='booking-time' AND p."bookingId" IS NULL AND p.status IN ('paid','refunded') AND p.method='cash'),0))::double precision`;
 
-/** A manual booking's revenue is what was received on it (a fully paid one is its whole price). */
 export const MANUAL_RECEIVED_SQL = `(CASE WHEN "paymentStatus" = 'paid' THEN "totalAmount" ELSE GREATEST(0, LEAST("totalAmount", ${NET_PAID_SQL})) END)`;
 
 export const AMOUNT_SQL = Prisma.sql`(CASE
@@ -188,21 +171,14 @@ export const AMOUNT_SQL = Prisma.sql`(CASE
   WHEN ${Prisma.raw(MANUAL_COUNTED_SQL)} THEN ${Prisma.raw(MANUAL_RECEIVED_SQL)}
   ELSE 0 END)`;
 
-/** Revenue that came in as cash: Matchena bookings paid at the venue, and the cash payments on the venue's own bookings. */
 const CASH_AMOUNT_SQL = Prisma.sql`(CASE
   WHEN ${Prisma.raw(PLATFORM_COLLECTED_SQL)} AND COALESCE("paymentModeSnapshot", 'at_venue') = 'at_venue' THEN GREATEST(0, "baseAmount" - "ownerFundedDiscount")
   WHEN ${Prisma.raw(MANUAL_COUNTED_SQL)} THEN GREATEST(0, ${Prisma.raw(NET_CASH_SQL)})
   ELSE 0 END)`;
 
-/**
- * `Booking.slotStart` is `timestamp without time zone` holding UTC. It must be
- * tagged as UTC first, then converted; `ts AT TIME ZONE tz` alone would treat
- * the stored UTC value as local wall-clock time (wrong by the tz offset).
- */
 export const localTs = (tz: string): Prisma.Sql =>
   Prisma.sql`(("slotStart" AT TIME ZONE 'UTC') AT TIME ZONE ${tz})`;
 
-/** Venue-local calendar date (YYYY-MM-DD) and time (HH:mm) of a UTC instant. */
 export function localDateTime(instant: Date, timeZone: string): { date: string; time: string } {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone,
@@ -218,7 +194,6 @@ export function localDateTime(instant: Date, timeZone: string): { date: string; 
   return { date: `${m.year}-${m.month}-${m.day}`, time: `${m.hour}:${m.minute}` };
 }
 
-/** Hours (0-23) in which the venue is open on at least one day. */
 export function openHourSet(weeklyHours: WeeklyHours | null | undefined): Set<number> {
   const all = new Set<number>(Array.from({ length: 24 }, (_, i) => i));
   if (!weeklyHours) return all;
@@ -262,8 +237,6 @@ export class OwnerSummaryService {
     };
     const now = new Date();
 
-    // Every figure below (totals and every breakdown) is derived from the same
-    // SQL amount expression (`AMOUNT_SQL`) so the parts always add up to the total.
     const [totalsRow, outstandingRows, expectedAgg, bySourceRows, byUnitRows, byDayRaw, byHourRaw, platCust, manCust, courts] =
       await Promise.all([
         this.totals(venueId, range.start, range.end),
@@ -330,7 +303,6 @@ export class OwnerSummaryService {
         spent: p.revenue,
       })),
       ...manCust.map((m) => ({
-        // Hashed: this list is open to `reports.view`, which must not reveal phone numbers (`customers.view`).
         key: `m:${createHash('sha256').update(m.guestPhone ?? m.guestName ?? 'unknown').digest('hex').slice(0, 12)}`,
         name: m.guestName,
         phoneMasked: null as string | null,
@@ -352,7 +324,6 @@ export class OwnerSummaryService {
     });
     const openHours = openHourSet(venue.weeklyHours as WeeklyHours | null);
 
-    // Real profit = money kept after Matchena's commission − what the owner spent, same period.
     const spent = this.expenses ? await this.expenses.totals(venueId, range.from, range.to) : { total: 0, byCategory: [] };
     const cashbook = await this.cashbook(venueId, range.start, range.end);
     const retained = await this.retainedFromCancelled(venueId, range.start, range.end);
@@ -384,9 +355,7 @@ export class OwnerSummaryService {
         commission: totalsRow.commission,
         takeHome: collectedRevenue - totalsRow.commission,
         expenses: spent.total,
-        /** Deposits the venue kept from bookings that were then cancelled — income, shown on its own line. */
         retainedFromCancelled: retained,
-        /** Games earned + deposits kept − Matchena commission − expenses (all by play date). */
         netProfit: collectedRevenue + retained - totalsRow.commission - spent.total,
         outstanding,
         expected,
@@ -429,8 +398,6 @@ export class OwnerSummaryService {
     };
   }
 
-  /** Order money uses existing Payment rows, by receipt date. Linked legacy payments
-   * stay counted by Booking; products never contribute platform commission. */
   async gamingIncome(venueId:string,start:Date,end:Date) {
     const rows = await this.prisma.$queryRaw<{kind:string; method:string; date:string; amount:number}[]>(Prisma.sql`
       SELECT l.kind, p.method::text AS method, TO_CHAR(p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE c.timezone,'YYYY-MM-DD') AS date,
@@ -449,17 +416,6 @@ export class OwnerSummaryService {
     return {received:rows.reduce((n,r)=>n+r.amount,0),cash:rows.filter(r=>r.method==='cash').reduce((n,r)=>n+r.amount,0),time:rows.filter(r=>r.kind!=='product').reduce((n,r)=>n+r.amount,0),products:rows.filter(r=>r.kind==='product').reduce((n,r)=>n+r.amount,0),byDay:[...byDay].map(([date,revenue])=>({date,revenue}))};
   }
 
-  /**
-   * Money that came IN during a period, by the day it was received — the other way to read the
-   * books. The play-date numbers answer "what did my bookings in this period earn"; this answers
-   * "what reached my hands in this period", and splits it so nothing is mysterious:
-   *   - `period`    : taken for a booking that is itself in the period,
-   *   - `advance`   : a deposit/payment for a booking AFTER the period (e.g. a Tuesday deposit),
-   *   - `late`      : collected now for a booking BEFORE the period,
-   *   - `cancelled` : kept from a booking that was later cancelled.
-   * Only money the venue itself handled counts: its own bookings and Matchena bookings paid at
-   * the venue. Wallet/online money Matchena holds is in the Matchena account, not here.
-   */
   async cashbook(venueId: string, start: Date, end: Date) {
     const rows = await this.prisma.$queryRaw<
       { method: string; bucket: 'period' | 'advance' | 'late' | 'cancelled'; amount: number; count: number; refunded: number }[]
@@ -505,12 +461,6 @@ export class OwnerSummaryService {
     };
   }
 
-  /**
-   * What the venue kept from bookings of this period that were cancelled (a forfeited deposit):
-   * payments received minus refunds, per booking, never below zero. Only money the venue handled
-   * itself counts, like the cashbook — its own bookings and Matchena bookings paid at the venue.
-   * This is income, so it is part of net profit; it is NOT part of "games earned".
-   */
   async retainedFromCancelled(venueId: string, start: Date, end: Date): Promise<number> {
     const [row] = await this.prisma.$queryRaw<{ retained: number }[]>(Prisma.sql`
       SELECT COALESCE(SUM(GREATEST(net, 0)), 0)::double precision AS retained
@@ -530,12 +480,6 @@ export class OwnerSummaryService {
     return row?.retained ?? 0;
   }
 
-  /**
-   * "Received today": every payment taken today, by the day it was taken (not the day of the
-   * booking it belongs to), split into what is for today's games, deposits for later days, and
-   * collections on past games — plus what today's bookings still owe. Closing the drawer is
-   * `CashService`; this is the live read-only picture.
-   */
   async cashToday(user: AuthenticatedUser, venueId: string) {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const tz =
@@ -606,7 +550,6 @@ export class OwnerSummaryService {
     const rows = bookings.map((b) => {
       const display = sourceDisplay(b.source, b.sourceKey, b.sourceLabel);
       const { received, refunded } = netOf(b.payments);
-      // The same statement the booking sheet shows, so the file can never disagree with the app.
       const st = buildBookingStatement(b, received, refunded);
       return this.csvRow([
         localDateTime(b.slotStart, summary.range.timezone).date,
@@ -638,11 +581,7 @@ export class OwnerSummaryService {
       .join(',');
   }
 
-  // ---- SQL breakdowns (one shared amount + timezone expression) -------------
-
   private rangeWhere(venueId: string, start: Date, end: Date): Prisma.Sql {
-    // `slotStart` is a UTC `timestamp`; bind the bounds as UTC timestamps too so
-    // the result never depends on the database session time zone.
     return Prisma.sql`"venueId" = ${venueId}
         AND "slotStart" >= (${start}::timestamptz AT TIME ZONE 'UTC')
         AND "slotStart" < (${end}::timestamptz AT TIME ZONE 'UTC')

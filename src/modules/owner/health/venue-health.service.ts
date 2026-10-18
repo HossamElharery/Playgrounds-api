@@ -7,10 +7,8 @@ import { addDays, zonedDate } from '../../../common/utils/fixed-series.util';
 import type { WeeklyHours } from '../../../common/utils/weekly-hours.util';
 
 const DAY_MS = 86_400_000;
-/** No booking created for this long = "quiet". */
 const QUIET_DAYS = 14;
 
-/** One row per venue for the admin: who is active, who is stuck, who needs a call. Only existing data. */
 @Injectable()
 export class VenueHealthService {
   constructor(

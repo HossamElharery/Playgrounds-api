@@ -2,7 +2,6 @@ import type { CaptainFilters, CaptainReading } from './captain.types';
 
 const AR_DIACRITICS = /[ً-ْـ]/g;
 
-/** Arabic spellings vary more than players do: compare on a flattened form. */
 export function normalize(text: string): string {
   return text
     .replace(AR_DIACRITICS, '')
@@ -40,7 +39,6 @@ export interface FaqRow {
   ctaLabelEn: string | null;
 }
 
-/** Equal, or one a prefix of the other ("حجز" / "حجزي"): Arabic hangs its pronouns on the word. */
 function hasToken(set: Set<string>, t: string): boolean {
   if (set.has(t)) return true;
   if (t.length < 3) return false;
@@ -48,7 +46,6 @@ function hasToken(set: Set<string>, t: string): boolean {
   return false;
 }
 
-/** Best real FAQ for a question, or null when nothing really matches. */
 export function bestFaq(query: string, rows: FaqRow[]): FaqRow | null {
   const q = new Set(tokens(query));
   if (!q.size) return null;
@@ -67,7 +64,6 @@ export function bestFaq(query: string, rows: FaqRow[]): FaqRow | null {
   return best && best.score >= 4 ? best.row : null;
 }
 
-/** A model-written line is shown verbatim, so it is stripped of anything that is not plain words. */
 export function plainLine(value: unknown, max = 240): string {
   if (typeof value !== 'string') return '';
   return value
@@ -78,7 +74,6 @@ export function plainLine(value: unknown, max = 240): string {
     .slice(0, max);
 }
 
-/** Only an in-app path, never a link out. */
 export function safeAppPath(value: string | null | undefined): string | null {
   if (!value) return null;
   const path = value.replace(/^\/+/, '').split(/[?#]/)[0];
@@ -102,11 +97,6 @@ export interface CatalogNames {
   districts: { slug: string; nameAr: string; nameEn: string }[];
 }
 
-/**
- * What a plain keyword pass can still do when no model is reachable: spot a
- * sport or area by name, and the words for "close" and "cheap". Enough to keep
- * the search useful, never enough to pretend to understand.
- */
 export function heuristicReading(text: string, catalog: CatalogNames): CaptainReading {
   const n = normalize(text);
   const has = (word: string) => !!word && n.includes(normalize(word));

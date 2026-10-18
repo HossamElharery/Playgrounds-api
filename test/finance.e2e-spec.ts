@@ -1,9 +1,3 @@
-/**
- * Real-Postgres integration tests for the owner finance stack
- * (bookings → snapshots → ledger → owner summary).
- * Run with `npm run test:integration` (creates and drops a throwaway database).
- * Refuses to run unless the target database name contains "test" or "tmp".
- */
 const dbUrl = process.env.TEST_DATABASE_URL ?? '';
 const dbName = dbUrl.split('?')[0].split('/').pop() ?? '';
 if (!/(test|tmp)/.test(dbName)) {
@@ -131,7 +125,6 @@ describe('finance integration (real Postgres)', () => {
     });
   }
 
-  /** Independent re-derivation of the money model (00 §4) — no shared helpers. */
   function expectedRevenue(r: Row): number {
     if (r.status === 'cancelled' || r.status === 'held') return 0;
     if (r.source === 'platform') {
@@ -160,7 +153,6 @@ describe('finance integration (real Postgres)', () => {
 
   it('timezone: bookings around local midnight land on the right civil day/hour (incl. DST switch)', async () => {
     const { venue, courts, user } = await makeVenue('tz');
-    // Instants straddling local midnight, before/after the Oct-2026 DST change.
     const instants = [
       '2026-09-20T20:59:00Z', // 23:59 local (UTC+3)
       '2026-09-20T21:00:00Z', // 00:00 next day local
@@ -368,7 +360,6 @@ describe('finance integration (real Postgres)', () => {
     const { OwnerService } = await import('../src/modules/owner/owner.service');
     const { venue, courts, user } = await makeVenue('board');
     await prisma.venue.update({ where: { id: venue.id }, data: { weeklyHours: Object.fromEntries([0,1,2,3,4,5,6].map(day => [String(day), { open: '08:00', close: '23:00', closed: false }])) } });
-    // 15:53–16:53 Cairo spans the 15:00 and 16:00 hourly cells, starting inside the first.
     const slotStart = new Date('2026-09-20T12:53:00Z');
     await insert(
       venue.id,
@@ -501,7 +492,6 @@ describe('finance integration (real Postgres)', () => {
     expect((await prisma.payment.aggregate({ where: { bookingId: booking.id }, _sum: { amount: true } }))._sum.amount).toBe(10005);
     await expect(service.addManualPayment(user, booking.id, 10006, 'cash', key)).rejects.toMatchObject({ status: 409 });
     await expect(service.addManualPayment(user, booking.id, 10005, 'card', key)).rejects.toMatchObject({ status: 409 });
-    // Cancelled with the deposit kept: replaying the very same collection must still not collect twice.
     await service.deleteManualBooking(user, booking.id, { refundAmount: 0 });
     await service.addManualPayment(user, booking.id, 10005, 'cash', key);
     expect(await prisma.payment.count({ where: { bookingId: booking.id } })).toBe(1);
@@ -518,10 +508,8 @@ describe('finance integration (real Postgres)', () => {
     expect(gone.status).toBe('cancelled');
     const rows = await prisma.payment.findMany({ where: { bookingId: booking.id }, orderBy: { createdAt: 'asc' } });
     expect(rows.reduce((n, r) => n + r.amount, 0)).toBe(0);
-    // Each method is handed back by itself, so the cash drawer only loses the cash.
     expect(rows.filter((r) => r.amount < 0).map((r) => [r.method, r.amount]).sort()).toEqual([['cash', -8000], ['instapay', -2000]]);
     expect(rows.filter((r) => r.amount < 0).every((r) => r.status === 'refunded' && r.reversesPaymentId)).toBe(true);
-    // A second booking, cancelled with the deposit kept, leaves every payment row exactly as it was.
     const other = await service.createManualBooking(user, { ...dto, startsAt: new Date(new Date(dto.startsAt).getTime() + 7200000).toISOString() });
     await service.addManualPayment(user, other.id, 3000, 'cash', crypto.randomUUID());
     await service.deleteManualBooking(user, other.id, { refundAmount: 0 });

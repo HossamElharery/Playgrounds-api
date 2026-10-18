@@ -6,7 +6,6 @@ export type GeoJsonPolygon = {
   coordinates: number[][][];
 };
 
-/** Normalize stored district polygon JSON into the explore-search GeoJSON shape. */
 export function toSearchBoundary(
   polygon: Prisma.JsonValue | null | undefined,
 ): GeoJsonPolygon | null {
@@ -29,7 +28,6 @@ export function encodeGeohash(lat: number, lng: number, precision = 9): string {
   return ngeohash.encode(lat, lng, precision);
 }
 
-/** Great-circle distance in kilometers. */
 export function haversineKm(
   lat1: number,
   lng1: number,
@@ -49,7 +47,6 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
-/** Ray-casting for a single GeoJSON linear ring (`[lng, lat][]`). */
 export function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
   if (ring.length < 3) return false;
   let inside = false;
@@ -67,7 +64,6 @@ export function pointInRing(lng: number, lat: number, ring: number[][]): boolean
   return inside;
 }
 
-/** True when `lng,lat` sits inside a GeoJSON Polygon (outer ring minus holes). */
 export function pointInPolygon(
   lng: number,
   lat: number,
@@ -80,7 +76,6 @@ export function pointInPolygon(
   return !holes.some((hole) => pointInRing(lng, lat, hole));
 }
 
-/** Geohash prefixes covering a bounding box, for a coarse pre-filter before Haversine refinement. */
 export function geohashPrefixesForBbox(
   west: number,
   south: number,
@@ -99,7 +94,6 @@ export function geohashPrefixesForBbox(
   return Array.from(prefixes);
 }
 
-/** west, south, east, north — cheap SQL pre-filter before Haversine. */
 export function bboxFromRadiusKm(
   lat: number,
   lng: number,
@@ -120,10 +114,6 @@ export type GeoCluster = {
   bbox: [number, number, number, number];
 };
 
-/**
- * When a viewport has more pins than `cap`, collapse dense geohash cells into
- * cluster bubbles so the payload stays map-sized (Airbnb-style).
- */
 export function clusterByGeohash<T extends PinLike>(
   points: T[],
   cap = 500,

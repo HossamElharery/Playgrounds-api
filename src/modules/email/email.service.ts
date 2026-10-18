@@ -193,9 +193,6 @@ export class EmailService {
     }
   }
 
-  /** Local `.env` leaves SMTP empty, so mail never leaves this machine. Print
-   *  the code the same way console SMS OTP does, otherwise register/reset
-   *  cannot be tested without production credentials. */
   private logDevCode(to: string, kind: string, code: string): void {
     this.assertDeliveryAvailable();
     if (this.config.get<string>('SMTP_HOST')) return;
@@ -203,11 +200,6 @@ export class EmailService {
   }
 
   private render(content: EmailContent): string {
-    // Absolute URL: email clients never resolve relative paths, and most
-    // strip <svg> outright — a hosted raster PNG of the approved wordmark
-    // is the only version that reliably renders across Gmail/Outlook/Apple
-    // Mail. Falls back to the plain-text wordmark via `alt` when images are
-    // blocked (the default in most clients until the recipient allows them).
     const siteUrl = this.config
       .get<string>('SITE_URL', 'https://matchena.com')
       .replace(/\/$/, '');

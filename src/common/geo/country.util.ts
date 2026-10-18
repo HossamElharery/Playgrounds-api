@@ -1,4 +1,3 @@
-/** ISO 3166-1 alpha-2. Empty / junk input returns undefined. */
 export function normalizeCountryCode(
   code?: string | null,
 ): string | undefined {

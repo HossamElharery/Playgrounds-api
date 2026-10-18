@@ -50,12 +50,6 @@ export class IndexNowService {
     }
   }
 
-  /**
-   * Safety net for mutation paths outside VenuesService (partner approval and
-   * admin management). Must not poll every second: that is one Venue query
-   * per second in production even when IndexNow is unset, and a log flood
-   * whenever Postgres blips.
-   */
   @Cron(CronExpression.EVERY_MINUTE)
   async notifyRecentlyChangedVenues(): Promise<void> {
     if (this.sweepInFlight || !this.configured()) return;

@@ -1,6 +1,5 @@
 import { SocialMode, SocialQuestion } from './social.types';
 
-// Original seed IDs are stable. All content remains draft pending human editorial review.
 const seed: [SocialMode, string, string, string][] = [
   ['light','Q001','changed-habit','إيه حاجة كنت بتتريق عليها… وبقيت بتعملها؟'],
   ['light','Q002','defend-food','إيه أكلة مستعد تدافع عنها لو القعدة كلها ضدك؟'],

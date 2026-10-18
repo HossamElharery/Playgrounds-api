@@ -38,8 +38,6 @@ import { AdminModule } from '../admin/admin.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { GamesModule } from '../games/games.module';
 import { BundlesModule } from '../bundles/bundles.module';
-// Player memberships disabled (no subscription plans offered yet).
-// import { MembershipModule } from '../membership/membership.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
 import { SearchModule } from '../search/search.module';
 import { AiAdminModule } from '../ai/admin/ai-admin.module';
@@ -61,8 +59,6 @@ import { CallsModule } from '../calls/calls.module';
     }),
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 120 }],
-      // Signed-in dashboard reads (owner board, inbox, friends) burst on
-      // load. Abuse protection stays on anonymous traffic and on writes.
       skipIf: (ctx) => {
         const req = ctx.switchToHttp().getRequest<{ method?: string; user?: unknown }>();
         return req.method === 'GET' && Boolean(req.user);

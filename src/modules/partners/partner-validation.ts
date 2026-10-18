@@ -19,7 +19,6 @@ function looksLikeE164(phone: string): boolean {
   return /^\+[1-9]\d{7,14}$/.test(phone);
 }
 
-/** Draft saves are partial. Submission re-runs this gate. */
 export function validatePartnerSubmission(
   payload: PartnerApplicationPayload,
 ): string[] {

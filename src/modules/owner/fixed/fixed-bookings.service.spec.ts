@@ -6,7 +6,6 @@ import { seriesDates, addDays, sessionWindow } from '../../../common/utils/fixed
 const owner: AuthenticatedUser = { id: 'o1', phone: '+2010', name: 'Owner', roles: ['owner'] };
 const admin: AuthenticatedUser = { id: 'a1', phone: '+2011', name: 'Admin', roles: ['admin'] };
 
-/** Tiny where-matcher covering exactly the filters the service uses. */
 function matches(row: any, where: any): boolean {
   return Object.entries(where ?? {}).every(([k, v]: [string, any]) => {
     if (k === 'OR') return v.some((w: any) => matches(row, w));
@@ -69,7 +68,6 @@ function setup(opts: { tz?: string; rules?: any[] } = {}) {
   return { svc, db, bookings, series, payments, blocks, notices, tz };
 }
 
-/** A start `days` from now at 20:00 Cairo, so the tests never depend on the calendar. */
 function futureStart(tz: string, days = 3, hhmm = '20:00') {
   const d = addDays(new Date().toISOString().slice(0, 10), days);
   return sessionWindow(d, hhmm, 60, tz).start.toISOString();
@@ -188,12 +186,11 @@ describe('FixedBookingsService', () => {
     expect(notices).toHaveLength(1);
     const b = await svc.extendAll(later);
     expect(b.created).toBe(0);
-    expect(notices).toHaveLength(1); // deduped
+    expect(notices).toHaveLength(1);
   });
 
   it('keeps the same local hour across a daylight-saving change', async () => {
     const { svc, bookings } = setup({ tz: 'Europe/Berlin' });
-    // Berlin leaves DST on the last Sunday of October; start the series the week before.
     const start = sessionWindow('2027-10-24', '20:00', 60, 'Europe/Berlin').start.toISOString();
     jest.useFakeTimers().setSystemTime(new Date('2027-10-20T10:00:00Z'));
     try {

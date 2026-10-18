@@ -1,7 +1,3 @@
-/**
- * How each currency is written to people. Amounts are stored as integers in
- * 1/100 of the major unit for every currency, so adding a country only needs a line here.
- */
 const LABELS: Record<string, { ar: string; arLong: string; en: string }> = {
   EGP: { ar: 'ج.م', arLong: 'جنيه', en: 'EGP' },
   AED: { ar: 'د.إ', arLong: 'درهم', en: 'AED' },

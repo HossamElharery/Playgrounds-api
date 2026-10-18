@@ -48,7 +48,6 @@ export class CaptainAskDto {
   @IsNumber()
   lng?: number;
 
-  /** A random id the browser keeps, so one visitor's messages are counted together. Never trusted for identity. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -56,14 +55,12 @@ export class CaptainAskDto {
   @MaxLength(80)
   deviceId?: string;
 
-  /** The token Cloudflare Turnstile produced in the visitor's browser; only sent after the server asked for it. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(2100)
   challengeToken?: string;
 
-  /** The last few turns, oldest first, so "وكمان" and "أرخص من كده" are read in context. */
   @ApiPropertyOptional({ type: () => [CaptainTurnDto] })
   @IsOptional()
   @IsArray()
@@ -72,7 +69,6 @@ export class CaptainAskDto {
   @Type(() => CaptainTurnDto)
   history?: CaptainTurnDto[];
 
-  /** `context` of the previous reply. Untrusted: every field is re-validated against the catalogue. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()

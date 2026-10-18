@@ -7,6 +7,5 @@ export interface AuthenticatedUser {
   name: string;
   roles: UserRole[];
   countryCode?: string;
-  /** Admin only: the request carries X-Admin-Edit, i.e. "edit as this venue" mode is on. */
   adminEdit?: boolean;
 }

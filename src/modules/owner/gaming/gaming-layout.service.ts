@@ -25,7 +25,6 @@ export class GamingLayoutService {
     return units;
   }
   private async checkApplication(db:Prisma.TransactionClient|PrismaService,venueId:string){const app=await db.partnerApplication.findUnique({where:{venueId},select:{status:true}});if(app&&app.status!=='approved')throw new ForbiddenException({code:'VENUE_NOT_APPROVED'});}
-  /** The sign logo must be one of THIS venue's own photos (never another venue's, never an arbitrary id). */
   private async assertLogo(db: Prisma.TransactionClient | PrismaService, venueId: string, document: LayoutDocument) {
     if (document.signLogoPhotoId && !(await db.venuePhoto.findFirst({ where: { id: document.signLogoPhotoId, venueId }, select: { id: true } }))) throw new BadRequestException({ code: 'LAYOUT_INVALID', message: 'Unknown sign logo' });
   }
@@ -36,7 +35,6 @@ export class GamingLayoutService {
     const units = await this.access(user, venueId, 'layout.view', false);
     await this.provisionDefault(user, venueId, units);
     const edit = !user.roles.includes('staff') || await this.canEdit(user);
-    // One snapshot: a concurrent publish cannot pair a new pointer with an old document.
     const logos = await this.prisma.venuePhoto.findMany({ where: { venueId }, select: { id: true, url: true }, orderBy: { position: 'asc' }, take: 20 });
     return this.prisma.$transaction(async tx => {
       const state = await tx.gamingLayout.findUnique({ where: { venueId } });
@@ -46,11 +44,6 @@ export class GamingLayoutService {
         serverNow: new Date().toISOString(), logos, units: units.map(u => ({ id: u.id, name: u.name, activityKind: u.sport.activityKind, gamingConfig: u.gamingConfig?Object.fromEntries(Object.entries(gamingConfigObject(u.gamingConfig)).filter(([k])=>['consoleType','seats','roomTier','setupWholeRoomOnly'].includes(k))):null, tableConfig: u.tableConfig?Object.fromEntries(Object.entries(gamingConfigObject(u.tableConfig)).filter(([k])=>['tableType','rentalAvailable','setupWholeRoomOnly'].includes(k))):null })) };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
-  /**
-   * First look at a hall that has units but no floor plan: publish a generated starting layout
-   * (revision 1) so the owner and staff land on a real map. Never touches a venue that already has a
-   * published layout or a draft in progress, and a concurrent first read simply loses the race.
-   */
   private async provisionDefault(user: AuthenticatedUser, venueId: string, units: { id: string; name: string; gamingConfig: unknown; tableConfig: unknown; sport: { activityKind: string | null } }[]) {
     // A mixed venue's courts (padel, football…) are not part of the hall plan.
     units = units.filter(u => ['gaming-station', 'table-game'].includes(u.sport.activityKind ?? ''));
@@ -75,7 +68,6 @@ export class GamingLayoutService {
         await tx.gamingOutbox.create({ data: { venueId, entityId: venueId, version: 1, type: 'layout.published' } });
       });
     } catch (error) {
-      // A unique clash means another request generated it first; anything else must not break reading.
       if (!(error instanceof Prisma.PrismaClientKnownRequestError)) throw error;
     }
   }
@@ -153,8 +145,6 @@ export class GamingLayoutService {
     // Retain stable room history; removed rooms stop grouping resources.
     await tx.gamingRoom.updateMany({where:{venueId,id:{notIn:ids}},data:{occupancy:'independent',bookableCourtId:null}});
     for(const p of document.placements)if(p.unitId&&p.roomId&&!previous.some(r=>r.id===p.roomId&&r.children.some(c=>c.id===p.unitId)))await tx.court.update({where:{id:p.unitId},data:{gamingRoomId:p.roomId}});
-    // Guided whole-room setup keeps physical contents visible, but only the room itself bookable.
-    // Preserve this when an owner moves furniture and publishes again. Legacy room policies stay intact.
     const wholeRoomChildren=await tx.court.findMany({where:{venueId,gamingRoomId:{in:proposed.filter(r=>r.occupancy==='exclusive').map(r=>r.id)}},select:{id:true,gamingConfig:true,tableConfig:true}});
     const hidden=wholeRoomChildren.filter(u=>(u.gamingConfig as {setupWholeRoomOnly?:boolean}|null)?.setupWholeRoomOnly||(u.tableConfig as {setupWholeRoomOnly?:boolean}|null)?.setupWholeRoomOnly).map(u=>u.id);
     if(hidden.length)await tx.court.updateMany({where:{venueId,id:{in:hidden}},data:{gamingPublished:false}});

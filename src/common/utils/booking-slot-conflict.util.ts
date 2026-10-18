@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 
-/** Unique index, serialization failure, or GiST EXCLUDE overlap on live slots. */
 export function isBookingSlotConflict(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002' || error.code === 'P2034') return true;

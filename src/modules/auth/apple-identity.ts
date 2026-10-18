@@ -17,10 +17,6 @@ const jwks = new JwksClient({
   rateLimit: true,
 });
 
-/**
- * Verify a Sign in with Apple identity token: RS256 signature against Apple's
- * published keys, issuer, audience (our bundle / services IDs) and expiry.
- */
 export async function verifyAppleIdentityToken(
   token: string,
   audiences: string[],

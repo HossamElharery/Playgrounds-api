@@ -21,7 +21,6 @@ export class CreateTeamMemberDto {
   @MaxLength(80)
   name!: string;
 
-  /** Any address the manager types. It is never verified: the manager vouches for it. */
   @ApiPropertyOptional()
   @IsOptional()
   @Transform(trim)
@@ -55,7 +54,6 @@ export class CreateTeamMemberDto {
   @IsString({ each: true })
   permissions!: string[];
 
-  /** Omit for "all venues of this owner". */
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()

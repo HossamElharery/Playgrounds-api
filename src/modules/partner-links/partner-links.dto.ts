@@ -8,7 +8,6 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PARTNER_EVENTS, type PartnerEvent } from './partner-links.util';
 
-/** Same alphabet the share tools generate (`partner`, `badge`, venue slugs). */
 const UTM = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 
 export class PartnerVisitDto {

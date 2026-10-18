@@ -29,13 +29,10 @@ export async function assertVenueAccess(
 
   if (user.roles.includes('owner')) {
     if(venue.ownerId===user.id)return venue;
-    // Owner permissions are global in AuthGuard; never use a secondary staff role
-    // to acquire those privileges on another owner's venue.
     throw new ForbiddenException('Not your venue');
   }
 
   if (user.roles.includes('staff')) {
-    // Staff reach a venue only through their StaffMember row: same owner, venue in their list.
     const scope = await loadStaffScope(prisma, user.id);
     if (scope && scope.ownerId === venue.ownerId && scope.venueIds.includes(venueId)) {
       return venue;
@@ -57,7 +54,6 @@ export async function assertBookingAccess(
   return { booking, venue };
 }
 
-/** Secondary permissions must also hold when an operation writes through another service. */
 export async function assertStaffPermission(prisma: PrismaService, user: AuthenticatedUser, permission: PermissionKey) {
   return assertStaffAnyPermission(prisma, user, [permission]);
 }

@@ -36,7 +36,6 @@ export function validateRegistrationGamingPlan(
     });
   }
 }
-/** Approval uses the already-created physical inventory, never another batch of devices. */
 export async function publishRegistrationGamingPlan(
   tx: Prisma.TransactionClient,
   venueId: string,

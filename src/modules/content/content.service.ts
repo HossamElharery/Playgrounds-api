@@ -29,7 +29,6 @@ export class ContentService {
     private readonly email: EmailService,
   ) {}
 
-  /** Tell IndexNow-enabled engines (Bing, Yandex, …) about a published article; never blocks the save. */
   private pingBlog(post: { slug: string; status: PublishStatus }): void {
     if (post.status !== 'published') return;
     const slug = encodeURIComponent(post.slug);
@@ -38,7 +37,6 @@ export class ContentService {
       .catch(() => undefined);
   }
 
-  // ---- Blog ----
   async listBlogPosts(
     page: number,
     perPage: number,
@@ -185,7 +183,6 @@ export class ContentService {
     }
   }
 
-  // ---- Banners ----
   listBanners(placement?: string) {
     return this.prisma.banner.findMany({
       where: { active: true, ...(placement ? { placement } : {}) },
@@ -209,7 +206,6 @@ export class ContentService {
     return this.prisma.banner.delete({ where: { id } });
   }
 
-  // ---- FAQ ----
   private pingHelp(): void {
     void this.indexNow
       .notifyUrls(['/ar/help', '/en/help'])
@@ -276,7 +272,6 @@ export class ContentService {
     return deleted;
   }
 
-  // ---- Support inquiries ----
   async createSupportInquiry(dto: CreateSupportInquiryDto, userId?: string) {
     const inquiry = await this.prisma.supportInquiry.create({
       data: {
@@ -303,7 +298,6 @@ export class ContentService {
     return inquiry;
   }
 
-  /** Files (once a week at most) an account-deletion request in the support inbox. */
   async requestAccountDeletion(userId: string): Promise<{ requestedAt: Date }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

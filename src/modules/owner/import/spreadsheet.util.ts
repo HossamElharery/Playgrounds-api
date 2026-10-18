@@ -1,13 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate';
 
-/**
- * Reads the two things an owner actually has: an Excel workbook (.xlsx) or a CSV. Both come back
- * as plain rows of text; deciding what a column MEANS is the mapper's job, so this stays dumb and
- * predictable. No formulas are evaluated and nothing is executed.
- */
 export interface SheetTable {
   sheetName: string | null;
-  /** Every non-empty row, cells as the text the owner would see (numbers keep their raw value). */
   rows: string[][];
 }
 
@@ -24,10 +18,6 @@ export class SpreadsheetError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Excel (.xlsx)
-// ---------------------------------------------------------------------------------------------
-
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
 function decodeXml(text: string): string {
@@ -40,7 +30,6 @@ function decodeXml(text: string): string {
   });
 }
 
-/** "C12" → 2 (zero-based column). */
 export function columnIndex(ref: string): number {
   const letters = /^[A-Za-z]+/.exec(ref)?.[0].toUpperCase() ?? 'A';
   let n = 0;
@@ -48,7 +37,6 @@ export function columnIndex(ref: string): number {
   return n - 1;
 }
 
-/** Joins every `<t>` run of a string item (rich text is split into runs). */
 function textOf(xmlFragment: string): string {
   const parts: string[] = [];
   const re = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
@@ -66,7 +54,6 @@ function sharedStrings(xml: string | undefined): string[] {
   return out;
 }
 
-/** Path of the first worksheet, following workbook.xml → its relationship. */
 function firstSheet(files: Record<string, Uint8Array>): { path: string; name: string | null } {
   const wb = files['xl/workbook.xml'] ? strFromU8(files['xl/workbook.xml']) : '';
   const sheetTag = /<sheet\b[^>]*>/.exec(wb)?.[0] ?? '';
@@ -144,11 +131,6 @@ export function readXlsx(bytes: Uint8Array): SheetTable {
   return { sheetName: sheet.name, rows: squareUp(rows) };
 }
 
-// ---------------------------------------------------------------------------------------------
-// CSV
-// ---------------------------------------------------------------------------------------------
-
-/** RFC-4180 style: quoted fields, doubled quotes, newlines inside quotes; delimiter auto-detected. */
 export function readCsv(text: string): SheetTable {
   const clean = text.replace(/^﻿/, '');
   const firstLine = clean.split(/\r?\n/, 1)[0] ?? '';
@@ -189,13 +171,11 @@ export function readCsv(text: string): SheetTable {
   return { sheetName: null, rows: squareUp(rows) };
 }
 
-/** Every row the same width, so a ragged export cannot shift a column. */
 function squareUp(rows: string[][]): string[][] {
   const width = Math.min(MAX_COLS, rows.reduce((w, r) => Math.max(w, r.length), 0));
   return rows.map((r) => Array.from({ length: width }, (_, i) => (r[i] ?? '').toString()));
 }
 
-/** Detects the format from the bytes themselves (a renamed file is still read correctly). */
 export function readSpreadsheet(bytes: Uint8Array, fileName?: string): SheetTable {
   if (bytes.byteLength > MAX_IMPORT_BYTES) throw new SpreadsheetError('TOO_BIG', 'The file is bigger than 5 MB');
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
@@ -206,7 +186,6 @@ export function readSpreadsheet(bytes: Uint8Array, fileName?: string): SheetTabl
   return readCsv(decodeText(bytes));
 }
 
-/** UTF-8 when it is valid; otherwise the Windows Arabic code page that Excel's plain "CSV" save uses in Egypt. */
 export function decodeText(bytes: Uint8Array): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);

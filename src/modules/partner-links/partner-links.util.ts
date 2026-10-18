@@ -1,10 +1,8 @@
 import { summarizeHours, type HoursSummary } from '../seo/local-landing.util';
 
-/** What a partner link can lead to. Bookings join this list once VENUE_BOOKING_ENABLED is back on. */
 export const PARTNER_EVENTS = ['landing', 'contact_click'] as const;
 export type PartnerEvent = (typeof PARTNER_EVENTS)[number];
 
-/** AnalyticsEvent.name for each partner event (names are indexed with createdAt). */
 export const PARTNER_EVENT_NAME: Record<PartnerEvent, string> = {
   landing: 'partner.landing',
   contact_click: 'partner.contact_click',
@@ -23,7 +21,6 @@ export interface PartnerStats {
   byMedium: { medium: string; landings: number; contactClicks: number }[];
 }
 
-/** Folds grouped SQL rows into the owner page's counters, busiest medium first. */
 export function foldPartnerStats(rows: PartnerStatRow[]): PartnerStats {
   const stats: PartnerStats = {
     total: { landings: 0, contactClicks: 0 },
@@ -83,7 +80,6 @@ export interface EmbedVenueCard {
   rating: { avg: number; count: number } | null;
 }
 
-/** The few facts the partner widget shows; nothing private and no reviews or courts. */
 export function toEmbedCard(
   venue: EmbedVenueSource,
   area: { nameAr: string; nameEn: string } | null,

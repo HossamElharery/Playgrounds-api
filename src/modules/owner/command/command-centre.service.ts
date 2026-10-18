@@ -17,22 +17,13 @@ export interface CommandVenue {
   currency: string;
   timezone: string;
   todayBookings: number;
-  /** Money that reached the venue's hands today, by the day it was taken (venue currency). */
   receivedToday: number;
   owed: { overdue: number; overdueCount: number; upcoming: number; upcomingCount: number };
-  /** Cash drawers: people holding unclosed cash, handed-over shifts not yet closed, and closed shifts nobody has reviewed that did not balance. */
   drawers: { open: number; handovers: number; toReview: number } | null;
-  /** What is stopping players from booking this venue. Empty = bookable. */
   blockers: BookingBlocker[];
-  /** One number for "does this venue need me?" — drives the order of the list. */
   attention: number;
 }
 
-/**
- * One screen for an owner of several venues: for each, today's bookings, what customers owe, drawers
- * still open and unbalanced shifts to review — then a tap to work inside one. Money is never added
- * across currencies: totals are kept per currency.
- */
 @Injectable()
 export class CommandCentreService {
   constructor(
@@ -130,9 +121,7 @@ export class CommandCentreService {
   }
 }
 
-/** What makes a venue float to the top: not bookable, money chased, a drawer to close, a shift that did not balance. Pure. */
 export function attentionScore(v: Pick<CommandVenue, 'owed' | 'drawers' | 'blockers'> & { status?: string }): number {
-  // A venue that is still in review (or paused) is not running yet: it must not nag "needs you".
   if (v.status && v.status !== 'active') return 0;
   return (
     (v.blockers.length ? 3 : 0) +

@@ -36,9 +36,7 @@ const view = (a: Agg) => ({
 
 export interface CreditInfo {
   checkedAt: string;
-  /** Prepaid balance of the OpenRouter account: bought minus used. */
   accountRemainingUsd: number | null;
-  /** What the key's own monthly limit still allows. */
   keyRemainingUsd: number | null;
   keyLimitUsd: number | null;
   error: string | null;
@@ -55,7 +53,6 @@ export type AiAlert = {
 const CREDIT_TTL_MS = 60_000;
 const LOW_CREDIT_USD = 2;
 
-/** The numbers behind the admin's AI overview and its limits screen. */
 @Injectable()
 export class AiAdminOverviewService {
   private readonly logger = new Logger(AiAdminOverviewService.name);
@@ -71,7 +68,6 @@ export class AiAdminOverviewService {
     private readonly turnstile: TurnstileService,
   ) {}
 
-  /** Everything this instance still holds in memory is written first, so the screen is current to the second. */
   private async settle(): Promise<void> {
     await Promise.all([this.usage.flush(), this.counters.flush()]);
   }
@@ -80,8 +76,6 @@ export class AiAdminOverviewService {
     const rows = await this.prisma.aiCounterDaily.findMany({ where: { scope: 'stat', day: { gte: dayDate(day) } } });
     return rows.map((r) => ({ day: r.day.toISOString().slice(0, 10), key: r.key, count: r.count }));
   }
-
-  // ------------------------------------------------------------ overview ----
 
   async overview() {
     await this.settle();
@@ -217,7 +211,6 @@ export class AiAdminOverviewService {
     };
   }
 
-  /** What is left to spend at OpenRouter, asked of OpenRouter itself with the server's key (never from the browser). */
   async openRouterCredit(): Promise<CreditInfo> {
     if (this.credit && this.credit.exp > Date.now()) return this.credit.value;
     const key = this.config.get<string>('OPENROUTER_API_KEY') ?? '';
@@ -255,8 +248,6 @@ export class AiAdminOverviewService {
     this.credit = { exp: Date.now() + CREDIT_TTL_MS, value };
     return value;
   }
-
-  // -------------------------------------------------------------- limits ----
 
   async limits() {
     await this.settle();
@@ -300,7 +291,6 @@ export class AiAdminOverviewService {
       return {
         audience: r.scope === 'quota:owner' ? 'owner' : kind === 'user' ? 'player' : 'guest',
         kind,
-        // Addresses and devices are already one-way hashes; a user id is shortened too.
         label: `${kind}:${id.slice(0, 8)}…`,
         count: r.count,
         limit,
@@ -326,7 +316,6 @@ export class AiAdminOverviewService {
     };
   }
 
-  /** Saves new limits (null = back to the environment/default). Every change is audited with before and after. */
   async updateLimits(patch: Record<string, unknown>, actorUserId: string) {
     const errors = validateSettingsPatch(patch);
     if (Object.keys(errors).length || !Object.keys(patch).length) {

@@ -53,7 +53,6 @@ interface Card {
   district: { nameAr: string; nameEn: string } | null;
 }
 
-/** What happened to one question, collected as it is answered and written to the admin log afterwards. */
 interface Trace {
   outcome: AiQuestionOutcome;
   detail?: string;
@@ -64,12 +63,6 @@ interface Trace {
   startedAt: number;
 }
 
-/**
- * The player's assistant. The model proposes a reading of the sentence; this
- * service is the part that knows what is true — which venues exist, what they
- * cost, what the player has booked, what the help center actually says — and
- * composes every answer from that, in the player's language.
- */
 @Injectable()
 export class CaptainService {
   private readonly logger = new Logger(CaptainService.name);
@@ -89,20 +82,17 @@ export class CaptainService {
     @Optional() private readonly turnstile?: TurnstileService,
   ) {}
 
-  /** Platform facts that are true in this deployment: a lobby feature that is switched off is not promised. */
   private async knowledge(): Promise<KnowledgeEntry[]> {
     if (this.knowledgeStore) return this.knowledgeStore.forPlayers();
     return filterKnowledgeByFlags(KNOWLEDGE, (name) => this.config.get<string>(name));
   }
 
-  /** A limit: the admin's value, else the environment variable, else the default. */
   private limit(key: AiSettingKey, env: string, fallback: number): number {
     if (this.settings) return this.settings.number(key) ?? fallback;
     const n = Number(this.config.get<string>(env));
     return Number.isFinite(n) && n > 0 ? n : fallback;
   }
 
-  /** Who may ask, and how often. A signed-in player gets far more room than a visitor, and a visitor gets less when the day's budget runs low. */
   private rulesFor(
     dto: CaptainAskDto,
     user: AuthenticatedUser | undefined,
@@ -125,7 +115,6 @@ export class CaptainService {
       {
         key: ipKey,
         perMinute: this.limit('captainGuestIpPerMinute', 'CAPTAIN_GUEST_IP_PER_MINUTE', 10),
-        // A whole café can share one address, so the address allowance is a multiple of one visitor's.
         perDay: this.limit('captainGuestIpPerDay', 'CAPTAIN_GUEST_IP_PER_DAY', guestDay * 4),
       },
     ];
@@ -155,7 +144,6 @@ export class CaptainService {
     return reply;
   }
 
-  /** The admin's view of this exchange: redacted text, what was understood, what answered, what it cost. Never delays the reply. */
   private record(dto: CaptainAskDto, user: AuthenticatedUser | undefined, ip: string | undefined, trace: Trace, reply: CaptainReply): string | null {
     if (!this.logs) return null;
     try {
@@ -224,7 +212,6 @@ export class CaptainService {
     const loggedIn = await this.isRegistered(user);
     trace.loggedIn = loggedIn;
 
-    // 2) A visitor can be switched off from the admin, and one who looks automated must prove they are not.
     let tight = false;
     if (!loggedIn) {
       if (this.settings && !this.settings.flag('captainGuestsEnabled')) {
@@ -314,11 +301,6 @@ export class CaptainService {
     }
   }
 
-  /**
-   * Turnstile for a visitor who looks automated. Returns a reply to send
-   * instead of answering, `'tight'` when Cloudflare could not be reached (carry
-   * on under a tighter allowance), or null when nothing is needed.
-   */
   private async challengeVisitor(
     dto: CaptainAskDto,
     ip: string | undefined,
@@ -350,7 +332,6 @@ export class CaptainService {
     return why ? ask(`challenge_${why}`) : null;
   }
 
-  // ------------------------------------------------------------ venues ----
 
   private async findVenues(
     reading: CaptainReading,
@@ -585,7 +566,6 @@ export class CaptainService {
     };
   }
 
-  /** The client echoes the previous filters back, so they are untrusted input like any other. */
   private sanitizeContext(raw: Record<string, unknown> | undefined, catalog: CatalogNames): CaptainFilters | null {
     if (!raw || typeof raw !== 'object') return null;
     const sports = new Set(catalog.sports.map((s) => s.slug));
@@ -612,7 +592,6 @@ export class CaptainService {
     };
   }
 
-  // ---------------------------------------------------------- bookings ----
 
   private async myBookings(user: AuthenticatedUser | undefined, loggedIn: boolean, b: Base): Promise<CaptainReply> {
     if (!user || !loggedIn) {
@@ -672,10 +651,8 @@ export class CaptainService {
     );
   }
 
-  // --------------------------------------------------------------- faq ----
 
   private async answerFaq(reading: CaptainReading, text: string, b: Base): Promise<CaptainReply> {
-    // The facts the model picked, shown exactly as written. It chooses; it does not author.
     const known = new Map(b.knowledge.map((k) => [k.id, k]));
     const picked = reading.factIds.map((id) => known.get(id)).filter((k): k is KnowledgeEntry => !!k);
     if (picked.length) {
@@ -693,7 +670,6 @@ export class CaptainService {
     const rows = await this.faqRows();
     const hit = bestFaq(`${reading.topic} ${text}`, rows);
     if (!hit) {
-      // The list of what players ask and Captain could not answer, for whoever maintains the help center.
       this.logger.log(`[captain-unanswered] ${JSON.stringify(text.replace(/\d{6,}/g, '#').slice(0, 160))}`);
       b.trace.outcome = 'unanswered';
       return this.reply(
@@ -718,7 +694,6 @@ export class CaptainService {
     });
   }
 
-  /** A knowledge entry's button: the named destinations the client already knows, or an in-app path. */
   private ctaFor(target: string, label: string): CaptainCta {
     const named: CaptainCtaKind[] = ['players', 'chat', 'community', 'tonight', 'bookings', 'help', 'login', 'explore'];
     if (named.includes(target as CaptainCtaKind)) return { kind: target as CaptainCtaKind, label };
@@ -742,8 +717,6 @@ export class CaptainService {
     this.faqCache = { exp: Date.now() + FAQ_TTL_MS, rows };
     return rows;
   }
-
-  // --------------------------------------------------------- navigation ----
 
   private navigate(intent: CaptainCtaKind & CaptainReading['intent'], loggedIn: boolean, b: Base): CaptainReply {
     const needsLogin = ['players', 'chat', 'tonight'].includes(intent) && !loggedIn;
@@ -769,7 +742,6 @@ export class CaptainService {
     });
   }
 
-  // ------------------------------------------------------------- chat ----
 
   private chat(reading: CaptainReading, modelAnswered: boolean, context: CaptainFilters | null, b: Base): CaptainReply {
     const suggestions = [
@@ -790,7 +762,6 @@ export class CaptainService {
     return this.reply('clarify', 'unknown', line, { context, suggestions });
   }
 
-  // ----------------------------------------------------------- helpers ----
 
   private async isRegistered(user: AuthenticatedUser | undefined): Promise<boolean> {
     if (!user?.id) return false;

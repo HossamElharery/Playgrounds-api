@@ -9,18 +9,11 @@ import type { Socket } from 'socket.io';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { CallsService } from './calls.service';
 
-/** SDP/ICE blobs are small; anything bigger is not a WebRTC message and is dropped. */
 const MAX_SIGNAL_BYTES = 24_000;
 const MAX_ID = 64;
 
 type Signal = 'call.offer' | 'call.answer' | 'call.ice';
 
-/**
- * Call messages (`call.*`) on the shared Socket.IO server. `RealtimeGateway` authenticates every
- * socket (`client.data.userId`); here a message is relayed only between the two parties of an
- * ANSWERED call, after the service has checked the sender is one of them. Messages of one socket run
- * strictly in order (an ICE candidate must never overtake the offer it belongs to).
- */
 @Injectable()
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class CallsGateway {
@@ -31,7 +24,6 @@ export class CallsGateway {
     private readonly emitter: RealtimeGatewayEmitter,
   ) {}
 
-  /** The callee's device shows the ringing screen: stops the push fallback (native) and tells the caller. */
   @SubscribeMessage('call.ringing')
   ringing(
     @ConnectedSocket() client: Socket,

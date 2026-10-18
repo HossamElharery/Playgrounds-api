@@ -198,7 +198,6 @@ describe('InsightsService end / dismiss / outcome', () => {
 
   it('measures the result once the discount has run two weeks: occupancy before vs after', async () => {
     const applied = new Date('2026-09-06T00:00:00Z');
-    // After it started, every Sunday 14–16 is fully booked; before it was empty.
     const filled = ['2026-09-06', '2026-09-13', '2026-09-20', '2026-09-27'].map((d) => ({ courtId: 'c1', slotStart: cairo(d, '14:00'), slotEnd: cairo(d, '16:00') }));
     const { svc, prisma } = build({ extraBookings: filled });
     prisma.pricingDiscount.findMany.mockResolvedValue([

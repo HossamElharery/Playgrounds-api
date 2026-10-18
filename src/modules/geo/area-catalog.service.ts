@@ -12,23 +12,15 @@ export interface CatalogGovernorate {
 
 export interface AreaCatalog {
   governorates: CatalogGovernorate[];
-  /** Named areas only (no census sub-areas). */
   areas: CatalogDistrict[];
   governorateById: Map<string, CatalogGovernorate>;
   areaById: Map<string, CatalogDistrict>;
-  /** Any district id → its named area id. */
   areaOf: Map<string, string>;
-  /** Named area id → every district id rolled up into it (itself included). */
   districtIdsOf: Map<string, string[]>;
 }
 
 const TTL_MS = 10 * 60_000;
 
-/**
- * The geography public pages speak in: governorates and named areas, with census
- * sub-areas folded into the area they belong to. The catalog changes only by migration,
- * so one read serves every request for ten minutes.
- */
 @Injectable()
 export class AreaCatalogService {
   private cached?: { until: number; value: AreaCatalog };
@@ -49,7 +41,6 @@ export class AreaCatalogService {
     return this.pending;
   }
 
-  /** District ids a search for `districtId` should match: an area includes its census sub-areas. */
   async searchDistrictIds(districtId: string): Promise<string[]> {
     const catalog = await this.get();
     return catalog.districtIdsOf.get(districtId) ?? [districtId];
@@ -91,7 +82,6 @@ export class AreaCatalogService {
   }
 }
 
-/** Global so venue search, venue pages and SEO landings share one catalog without import cycles. */
 @Global()
 @Module({
   providers: [AreaCatalogService],

@@ -37,7 +37,6 @@ function setup() {
   };
   world.attachBallSink(sink);
   const seqs = new Map<string, number>();
-  /** Put a member at (x, z) through the normal validated move path. */
   const place = (
     userId: string,
     x: number,
@@ -76,7 +75,6 @@ function setup() {
       now,
     );
   const events = (name: string) => out.filter((o) => o.event === name);
-  /** The ball, created as on the first lobby join with the flag on. */
   const ball = () => {
     world.snapshot(SQUAD, Date.now(), true);
     return world.ballState(SQUAD)!;
@@ -146,7 +144,6 @@ describe('LobbyWorldService — ball (Stage 2)', () => {
       const b = ball();
       place('a', 0, 0.6);
       expect(kick('a', { dirZ: 1, power: 0 })).toBe(true);
-      // Put the ball back at the kicker's feet: only the cooldown can refuse now.
       b.x = 0;
       b.z = 0.6;
       jest.setSystemTime(T0 + KICK_COOLDOWN_MS - 1);
@@ -513,8 +510,6 @@ describe('LobbyWorldService — ball (Stage 2)', () => {
         world.snapshot(sq, now, true);
         const b = world.ballState(sq)!;
         if (!ballResting(b)) return;
-        // A fresh kicker at the ball each time (then gone), so the dribbling
-        // walkers stay the only bodies on the floor.
         const u = `${sq}-kicker-${Math.round(now)}`;
         const m = parseLobbyMove({
           squadId: sq,

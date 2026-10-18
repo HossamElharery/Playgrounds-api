@@ -23,7 +23,6 @@ export interface AiCallRecord {
   ms: number;
   costUsd: number;
   status?: number;
-  /** Position of the answering route in the chain; above 0 means the first choice was skipped or failed. */
   routeIndex?: number;
 }
 
@@ -33,20 +32,10 @@ const EMPTY = (): Row => ({ calls: 0, failures: 0, fallbackCalls: 0, costMicros:
 const rowKey = (day: string, profile: string, provider: string, model: string) =>
   `${day}\u0000${profile}\u0000${provider}\u0000${model}`;
 
-/**
- * What the AI has cost today, per audience and per model, and the brake that
- * stops spending when a day's budget is gone. The table is the source of
- * truth: new calls are held in memory and added to it every few seconds, and
- * the totals are re-read from it, so a restart or a second instance neither
- * loses the day's spend nor double-counts it. With no database (tests, the
- * eval script) it behaves as a plain in-memory ledger.
- */
 @Injectable()
 export class AiUsageService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiUsageService.name);
-  /** Not yet written. */
   private readonly pending = new Map<string, Row>();
-  /** The table as of the last read: every instance's writes, today only. */
   private stored = new Map<string, Row>();
   private readonly localStats = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
@@ -72,7 +61,6 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     await this.flush();
   }
 
-  // ------------------------------------------------------------ budget ----
 
   budgetUsd(profile: AiProfile): number {
     const key = profile === 'owner' ? 'ownerBudgetUsd' : 'publicBudgetUsd';
@@ -97,7 +85,6 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     return fromMicros(this.sumMicros(profile, utcDayString()));
   }
 
-  /** Throws when today's budget for this audience is gone. The caller falls back to keyword matching. */
   assertBudget(profile: AiProfile): void {
     const day = utcDayString();
     if (day !== this.warnedDay) {
@@ -116,12 +103,10 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** True once public traffic has used most of its budget: guests are slowed down first, signed-in players keep going. */
   publicUnderPressure(): boolean {
     return this.spentToday('public') >= this.budgetUsd('public') * 0.7;
   }
 
-  // ------------------------------------------------------------ record ----
 
   record(call: AiCallRecord): void {
     const key = rowKey(utcDayString(), call.profile, call.provider, call.model);
@@ -132,13 +117,11 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     row.costMicros += toMicros(call.costUsd);
     row.totalMs += Math.max(0, Math.round(call.ms));
     this.pending.set(key, row);
-    // One structured line per call, so the answering model and its cost can be searched in the logs.
     this.logger.log(
       `[ai] profile=${call.profile} provider=${call.provider} model=${call.model} ok=${call.ok} ms=${call.ms} cost=${call.costUsd.toFixed(6)}${call.status ? ` status=${call.status}` : ''}${call.routeIndex ? ` route=${call.routeIndex}` : ''}`,
     );
   }
 
-  /** A named daily statistic (a refusal, a keyword fallback) for the admin overview. */
   bump(name: string, n = 1): void {
     if (this.counters) this.counters.add('stat', name, n);
     else this.localStats.set(name, (this.localStats.get(name) ?? 0) + n);
@@ -148,9 +131,7 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     return this.counters ? this.counters.get('stat', name) : (this.localStats.get(name) ?? 0);
   }
 
-  // ------------------------------------------------------- persistence ----
 
-  /** Adds everything held in memory to the table, then re-reads today's totals. */
   flush(): Promise<void> {
     if (!this.prisma) return Promise.resolve();
     if (this.flushing) return this.flushing;
@@ -201,7 +182,6 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     await this.refresh();
   }
 
-  /** Re-reads today's rows (all instances) from the table. */
   async refresh(): Promise<void> {
     if (!this.prisma) return;
     const day = utcDayString();
@@ -223,9 +203,7 @@ export class AiUsageService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ---------------------------------------------------------- snapshot ----
 
-  /** Today, merged from the table and this instance's unsaved calls. */
   snapshot() {
     const day = utcDayString();
     const models = new Map<string, Row & { profile: AiProfile; provider: string; model: string }>();

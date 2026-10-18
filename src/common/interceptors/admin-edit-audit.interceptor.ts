@@ -3,11 +3,6 @@ import { Prisma } from '@prisma/client';
 import { Observable, tap } from 'rxjs';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
-/**
- * Every change the admin makes while "editing as a venue" leaves a trail:
- * who, what route, which venue, and the reason he gave when he switched edit mode on.
- * Reads are not logged; nothing is logged for anyone but an admin in edit mode.
- */
 @Injectable()
 export class AdminEditAuditInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AdminEditAuditInterceptor.name);

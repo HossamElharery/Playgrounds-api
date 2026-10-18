@@ -37,7 +37,6 @@ export class MorphsController {
     return this.morphs.catalog();
   }
 
-  /** Stays 200 with `{ enabled: false }` while the flag is off so the client can hide the UI cleanly. */
   @Get('me')
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.morphs.me(user.id);

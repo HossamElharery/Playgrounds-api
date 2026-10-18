@@ -440,7 +440,7 @@ describe('Captain', () => {
       const { service } = build({ env: { CAPTAIN_GUEST_PER_DAY: '9', CAPTAIN_GUEST_PER_MINUTE: '50', CAPTAIN_GUEST_IP_PER_MINUTE: '50' }, services: { turnstile: t } });
       const modes: string[] = [];
       for (let i = 0; i < 4; i++) modes.push((await service.ask(dto(`بادل ${i}`, { deviceId: 'device-t-4', challengeToken: 'tok' }), undefined, '1.2.3.5')).mode);
-      expect(modes.slice(0, 3)).not.toContain('limited'); // 9 → 3 a day while the check is down
+      expect(modes.slice(0, 3)).not.toContain('limited');
       expect(modes[3]).toBe('limited');
     });
 

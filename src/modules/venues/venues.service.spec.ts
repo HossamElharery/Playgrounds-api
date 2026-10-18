@@ -1,11 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { VenuesService } from './venues.service';
 
-/**
- * Regression: opening hours had no update path anywhere in the app (only set once, at
- * partner-application approval) — the new-owner checklist pointed at a settings page that
- * couldn't touch them. `update()` is where the frontend's venue page now sends them.
- */
 function build() {
   const venue = { id: 'v1', ownerId: 'o1' };
   const prisma = {

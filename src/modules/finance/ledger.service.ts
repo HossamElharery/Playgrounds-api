@@ -28,12 +28,6 @@ export class LedgerService {
     private readonly commission: CommissionService,
   ) {}
 
-  /**
-   * Idempotent: computes the desired accrued delta from the booking's current
-   * state and writes at most one new entry for the difference vs existing
-   * accrual/adjustment rows. Caller MUST run this inside a transaction that
-   * already mutated the booking (or pass `tx` wrapping a `SELECT … FOR UPDATE`).
-   */
   async syncBookingLedger(
     tx: Prisma.TransactionClient,
     bookingId: string,

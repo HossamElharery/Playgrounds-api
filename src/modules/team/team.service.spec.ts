@@ -76,7 +76,6 @@ describe('TeamService', () => {
     expect(user.emailVerifiedAt).toBeInstanceOf(Date);
     expect(user.passwordHash).toBeTruthy();
     expect(user.passwordHash).not.toBe('secret1');
-    // "create bookings" pulled in "see bookings"; no venue list given = every venue of the owner.
     expect([...members.values()][0]).toMatchObject({ ownerId: 'owner-1', permissions: ['bookings.view', 'bookings.create'], venueIds: ['v1', 'v2'] });
     expect(created).not.toHaveProperty('passwordHash');
   });

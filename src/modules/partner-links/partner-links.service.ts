@@ -15,11 +15,6 @@ import {
   type PartnerStats,
 } from './partner-links.util';
 
-/**
- * Backlink tools for partner venues: the compact card behind the embeddable widget, and
- * the count of visitors that arrive through a venue's badge / widget / QR / bio link.
- * Visits are plain AnalyticsEvent rows (no schema change); the owner page reads them back.
- */
 @Injectable()
 export class PartnerLinksService {
   constructor(
@@ -55,7 +50,6 @@ export class PartnerLinksService {
     return toEmbedCard(venue, area);
   }
 
-  /** Best effort: a bad slug is dropped quietly so a stale badge never shows the visitor an error. */
   async recordVisit(
     dto: PartnerVisitDto,
     userId?: string,

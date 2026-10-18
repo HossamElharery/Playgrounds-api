@@ -1,10 +1,3 @@
-/**
- * Live check of the Excel import against a real (dev) database: reads a workbook, previews it,
- * imports it as one batch, proves history never lands in a cash drawer, re-imports (duplicates),
- * then undoes the batch and removes everything it created. Refuses to run in production.
- *
- *   npx ts-node src/scripts/qa-import-live.ts
- */
 /* eslint-disable no-console */
 import type { AuthenticatedUser } from '../common/types/authenticated-user.interface';
 

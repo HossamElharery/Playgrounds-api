@@ -3,7 +3,6 @@ import { Transform } from 'class-transformer';
 import { IsEmail, IsOptional, IsPhoneNumber, IsString, MinLength } from 'class-validator';
 import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
-/** Venue-owner / staff-facing signup (email+password), separate from the phone-OTP player flow. */
 export class RegisterOwnerDto {
   @ApiProperty({ example: 'new.owner@matchena.com' })
   @IsEmail()

@@ -1,9 +1,3 @@
-/**
- * The quality cases behind `npm run ai:eval` and the admin "Quality" tab: real
- * sentences (Egyptian Arabic, English, voice-transcript slips) and what a person
- * would expect each to mean. Synthetic — no customer data — so they may be sent
- * to any model being considered.
- */
 import { EMPTY_FILTERS } from '../../search/captain/captain-text';
 import type { CaptainFilters, CaptainReading } from '../../search/captain/captain.types';
 import type { AssistantReading } from '../../owner/assistant/assistant.types';
@@ -35,8 +29,6 @@ export const evalContext = {
     districts: new Set(EVAL_DISTRICTS.map((d) => d.slug)),
   }),
 };
-
-// -------------------------------------------------------------- Captain ----
 
 export interface CaptainCase {
   q: string;
@@ -90,8 +82,6 @@ export const CAPTAIN_CASES: CaptainCase[] = [
   { q: 'عايز اجيب ملعب لل 5 ادوار اسبوعي', expect: { intent: 'find_venues' } },
   { q: 'يا باشا حاجة في 6 اكتوبر؟ بلياردو', expect: { intent: 'find_venues', sport: 'billiards' } },
 ];
-
-// ---------------------------------------------------------------- Owner ----
 
 export const EVAL_COURTS = [
   { id: 'ps1', name: 'PS5 Room 1', details: 'playstation PS5 Room 1' },

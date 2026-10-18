@@ -12,7 +12,6 @@ const TZ = 'Africa/Cairo';
 const open = (o: string, c: string) => ({ closed: false, open: o, close: c });
 const everyDay = (o: string, c: string) => Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), open(o, c)]));
 
-/** Sundays in Sept 2026: 6, 13, 20, 27 (the 21st is a Monday). */
 const SUNDAYS = ['2026-09-06', '2026-09-13', '2026-09-20', '2026-09-27'];
 const cairo = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00+03:00`); // Egypt is +03 in summer 2026
 

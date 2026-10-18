@@ -5,7 +5,6 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AppService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Readiness: the database answers and no migration is left half-applied. Liveness stays `health()`. */
   async ready() {
     const started = Date.now();
     await this.prisma.$queryRaw`SELECT 1`;

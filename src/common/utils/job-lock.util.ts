@@ -1,17 +1,7 @@
 import type { PrismaService } from '../../modules/prisma/prisma.service';
 
-/** Longest a single job may hold its lock; the transaction (and lock) ends on its own after this. */
 const MAX_JOB_MS = 10 * 60_000;
 
-/**
- * Runs `work` only if no other app instance is running the same job right now.
- *
- * With several replicas every `@Cron` fires on all of them, so reminders and
- * horizon extensions would run N times. A transaction-scoped Postgres advisory
- * lock is held for the duration of the job: it is released automatically on
- * commit/rollback or if the process dies, so a crashed instance can never leave a
- * job stuck. Returns false when another instance holds the lock (job skipped).
- */
 export async function withJobLock(
   prisma: Pick<PrismaService, '$transaction'>,
   name: string,

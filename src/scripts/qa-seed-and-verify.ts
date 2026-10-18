@@ -1,10 +1,3 @@
-/**
- * Numeric verification for Owner OS + Admin Finance.
- * Refuses to run when NODE_ENV=production.
- *
- *   npx ts-node src/scripts/qa-seed-and-verify.ts
- *   npx ts-node src/scripts/qa-seed-and-verify.ts --live
- */
 import { verifyNumericCases } from './qa-numeric-cases';
 
 async function liveVerify(): Promise<boolean> {

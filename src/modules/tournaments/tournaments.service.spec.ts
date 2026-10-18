@@ -1,6 +1,5 @@
 import { TournamentsService } from './tournaments.service';
 
-// Who may run tournaments at a venue is covered by the access tests; here access is granted.
 jest.mock('../../common/access/venue-access', () => ({ assertVenueStaffAccess: jest.fn().mockResolvedValue(undefined) }));
 
 describe('Tournament entry fee payment', () => {
@@ -80,7 +79,6 @@ describe('Creating a tournament needs one name, not two', () => {
       tournament: { create: jest.fn().mockResolvedValue({ id: 't1' }) },
     };
     const service = new TournamentsService(prisma as never, {} as never, {} as never, {} as never, {} as never);
-    // Venue and activity rules are covered elsewhere; this pins only the names and the currency.
     jest.spyOn(service as never, 'resolveActivity').mockResolvedValue(undefined as never);
     return { service, prisma };
   }

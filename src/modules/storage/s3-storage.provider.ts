@@ -14,7 +14,6 @@ import {
   PresignedUpload,
 } from './storage.interface';
 
-/** Prod provider, activated by STORAGE_PROVIDER=s3 once real AWS credentials are supplied. */
 @Injectable()
 export class S3StorageProvider implements StorageProvider {
   private readonly client: S3Client;

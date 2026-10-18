@@ -8,11 +8,6 @@ import type { AuthenticatedUser } from '../../common/types/authenticated-user.in
 import { TeamService } from './team.service';
 import { CreateTeamMemberDto, UpdateTeamMemberDto } from './dto/team.dto';
 
-/**
- * The venue team: staff logins created by the owner, a delegated manager or the
- * platform admin. The admin is never read-only here — he can add, rename, change
- * and remove anyone (every action is audited with his id).
- */
 @ApiTags('team')
 @ApiBearerAuth()
 @UseGuards(AuthGuard)

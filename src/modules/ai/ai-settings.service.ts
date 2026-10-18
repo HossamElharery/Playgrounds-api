@@ -7,20 +7,13 @@ export type AiSettingKind = 'int' | 'usd' | 'bool';
 
 export interface AiSettingDef {
   kind: AiSettingKind;
-  /** The environment variable that meant the same thing before this was editable. */
   env?: string;
-  /** null = derived by the caller when nothing is set. */
   def: number | boolean | null;
   min?: number;
   max?: number;
   group: 'captain' | 'owner' | 'budget' | 'protection';
 }
 
-/**
- * Every AI limit an admin may change. Each has a floor and a ceiling so a typo
- * cannot switch the assistant off for everyone by accident (0 is only allowed
- * where "off" is a meaningful answer), nor open the budget to an unbounded bill.
- */
 export const AI_SETTING_DEFS = {
   captainGuestsEnabled: { kind: 'bool', def: true, group: 'captain' },
   captainGuestPerDay: { kind: 'int', env: 'CAPTAIN_GUEST_PER_DAY', def: 15, min: 0, max: 500, group: 'captain' },
@@ -54,7 +47,6 @@ export interface AiSettingView {
 
 const REFRESH_MS = 30_000;
 
-/** Why a submitted value was refused, per key. Empty = fine. */
 export function validateSettingsPatch(patch: Record<string, unknown>): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, raw] of Object.entries(patch)) {
@@ -82,12 +74,6 @@ export function validateSettingsPatch(patch: Record<string, unknown>): Record<st
   return errors;
 }
 
-/**
- * Admin-set values win over the environment variable of the same meaning,
- * which wins over the built-in default. Reads are synchronous from a cache
- * that is refreshed in the background: a hot path never waits on the database,
- * and a database hiccup keeps the last known values.
- */
 @Injectable()
 export class AiSettingsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiSettingsService.name);
@@ -136,7 +122,6 @@ export class AiSettingsService implements OnModuleInit, OnModuleDestroy {
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  /** The number in force. `null` only for a setting whose default is derived by the caller. */
   number(key: AiSettingKey): number | null {
     const def: AiSettingDef = AI_SETTING_DEFS[key];
     const o = this.overrides.get(key);
@@ -170,7 +155,6 @@ export class AiSettingsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Saves the given values (null removes an override). Throws nothing: the caller validates first with `validateSettingsPatch`. */
   async update(patch: Record<string, number | boolean | null>, actorUserId: string): Promise<void> {
     if (!this.prisma) throw new Error('settings need a database');
     const prisma = this.prisma;

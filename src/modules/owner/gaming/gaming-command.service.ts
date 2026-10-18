@@ -18,7 +18,6 @@ export class GamingCommandService {
     await assertStaffPermission(db as PrismaService, user, permission);
     if (write && (venue.status !== 'active' || !venue.approvedAt)) throw new ForbiddenException({ code: 'VENUE_NOT_APPROVED' });
     if(write){const application=await db.partnerApplication.findUnique({where:{venueId},select:{status:true}});if(application&&application.status!=='approved')throw new ForbiddenException({code:'VENUE_NOT_APPROVED'});}
-    // A brand-new gaming venue has declared its activities but has no devices yet; it must still be able to create the first one.
     const gamingKinds = { in: ['gaming-station','table-game'] };
     const gaming = await db.court.findFirst({ where: { venueId, sport: { activityKind: gamingKinds } }, select: { id: true } })
       ?? await db.venueSport.findFirst({ where: { venueId, sport: { activityKind: gamingKinds } }, select: { venueId: true } });
@@ -46,7 +45,6 @@ export class GamingCommandService {
         await tx.auditLogEntry.create({ data: { actorUserId: user.id, action: `owner.gaming.${operation}`, targetType: 'venue', targetId: dto.venueId, metadata: { requestKey: dto.requestKey } } });
         return response as T;
       }, { maxWait: 10000, timeout: 20000 });
-      // Stored idempotent responses are historical; disclosure follows current access.
       await this.access(this.prisma,user,dto.venueId,permission,true,allowSports);
       if (!user.roles.includes('staff') || user.roles.includes('owner') || user.roles.includes('admin')) return result;
       const scope=await loadStaffScope(this.prisma,user.id);

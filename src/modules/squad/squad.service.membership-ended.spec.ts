@@ -4,7 +4,6 @@ import { SquadService, type SquadMembershipEnded } from './squad.service';
 import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
 import { LobbyWorldService } from '../lobby-world/lobby-world.service';
 
-/** Lobby World positions die with the membership: leave, kick, and the emptied squad. */
 describe('SquadService membershipEnded$', () => {
   function setup(opts: { remaining?: number; isLeader?: boolean } = {}) {
     const prisma: any = {

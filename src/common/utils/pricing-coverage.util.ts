@@ -2,22 +2,14 @@ import { isTimeWithinDayHours, type WeeklyHours } from './weekly-hours.util';
 import type { PricingRuleLike } from './pricing-rule.util';
 
 export interface PricingGap {
-  /** 0 = Sunday … 6 = Saturday, like `PricingRule.daysOfWeek`. */
   day: number;
-  /** Venue-local HH:mm, inclusive. */
   from: string;
-  /** Venue-local HH:mm, exclusive (`24:00` = midnight). */
   to: string;
 }
 
 const hhmm = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
-/**
- * The opening hours that no everyday price rule covers, per weekday. A gap means a slot the
- * venue is open for but cannot quote a price for — it must be fixed before that hour is sold.
- * Time-boxed discounts never count as coverage. Pure: no clock, no database.
- */
 export function pricingGaps(
   rules: Array<Pick<PricingRuleLike, 'daysOfWeek' | 'startTime' | 'endTime' | 'kind'>>,
   weeklyHours: WeeklyHours | null | undefined,
@@ -51,7 +43,6 @@ export function pricingGaps(
   return gaps;
 }
 
-/** Does the price list cover at least one open hour? A court whose tariff misses every open hour cannot sell anything. */
 export function hasPricedHours(
   rules: Array<Pick<PricingRuleLike, 'daysOfWeek' | 'startTime' | 'endTime' | 'kind'>>,
   weeklyHours: WeeklyHours | null | undefined,

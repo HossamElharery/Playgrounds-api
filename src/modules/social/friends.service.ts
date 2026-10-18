@@ -34,11 +34,6 @@ export class FriendsService {
           where: { id: addresseeId },
           select: { status: true, isGuest: true },
         });
-        // Guests are throw-away squad-link identities: they have no way to
-        // ever come back and accept/decline, so a request to one would sit
-        // pending forever. (The reverse direction — a guest sending a
-        // request — is already blocked earlier, by AuthGuard's GUEST_ALLOWED
-        // allow-list, which does not include this route.)
         if (!recipient || recipient.status !== 'active' || recipient.isGuest)
           throw new NotFoundException('Player not found');
         const blocked = await tx.userBlock.findFirst({
@@ -67,7 +62,6 @@ export class FriendsService {
             throw new BadRequestException('Request already pending');
         }
 
-        // A new attempt gets a new ID: old notifications cannot accept a newer request.
         if (existing)
           await tx.friendship.delete({ where: { id: existing.id } });
         return tx.friendship.create({

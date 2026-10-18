@@ -47,7 +47,6 @@ export class ContentController {
     return this.content.listAmenities();
   }
 
-  // ---- Blog (public: published only. Admin list: GET /admin/blog?status=) ----
   @Public()
   @Get('blog')
   @ApiOperation({
@@ -63,8 +62,6 @@ export class ContentController {
       q.categoryId,
       q.relatedSportSlug,
     );
-    // Cards show title, cover and reading time, never the article: sending every post's HTML
-    // in both languages made the server-rendered journal page carry ~125 kB of state.
     const result =
       q.summary === 'true'
         ? items.map(({ contentAr, contentEn, ...post }) => ({
@@ -162,7 +159,6 @@ export class ContentController {
     return this.content.deleteBlogPost(id);
   }
 
-  // ---- Banners ----
   @Public()
   @Get('banners')
   listBanners(@Query() q: ListBannersQueryDto) {
@@ -201,7 +197,6 @@ export class ContentController {
     return this.content.deleteBanner(id);
   }
 
-  // ---- FAQ ----
   @Public()
   @Get('faq')
   listFaq() {
@@ -232,10 +227,6 @@ export class ContentController {
     return this.content.deleteFaq(id);
   }
 
-  /**
-   * Venue / staff accounts can't self-delete (venues, payouts and staff access must be handed
-   * over), but stores require an in-app way to ask: this files the request in the support inbox.
-   */
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
@@ -244,7 +235,6 @@ export class ContentController {
     return this.content.requestAccountDeletion(user.id);
   }
 
-  // ---- Support / contact ----
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('support')
@@ -282,7 +272,6 @@ export class ContentController {
   }
 }
 
-/** Words at 200 per minute, at least one minute; same estimate the web app shows. */
 export function readingMinutes(html: string | null | undefined): number {
   const words = (html ?? '')
     .replace(/<[^>]*>/g, ' ')

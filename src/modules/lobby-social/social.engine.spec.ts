@@ -10,7 +10,7 @@ describe('Social games authoritative rules', () => {
   const setup = (game: 'cards' | 'truth' = 'cards') => {
     now = 100_000;
     s = createSocialState('room', 'a', { squadId: 'room', requestId: 'create', action: 'create', game }, now);
-    delete s.cardRound; // Legacy stored-session compatibility. New shared rounds have their own suite.
+    delete s.cardRound;
     act('b', 'join', { role: 'player' });
     act('c', 'join', { role: 'player' });
     act('d', 'join', { role: 'listener' });

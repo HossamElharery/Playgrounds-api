@@ -7,18 +7,14 @@ export interface Proposal {
   proposerId: string;
   venueId: string;
   venueSlug: string;
-  /** Arabic name (the lobby's first language). */
   venueName: string;
   venueNameEn?: string;
   venuePhoto?: string;
   courtId: string | null;
-  /** YYYY-MM-DD in Africa/Cairo. */
   date: string;
-  /** HH:mm in Africa/Cairo. */
   startTime: string;
   durationMin: number;
   priceFrom?: number;
-  /** Display-only: how many players the sport wants (for example 5v5 → 10). */
   playersNeeded?: number;
   votes: Record<string, KioskVote>;
   createdAt: number;
@@ -29,10 +25,8 @@ export interface Proposal {
 export interface NextMatch {
   venueName: string;
   venueSlug: string;
-  /** ISO start instant. */
   startsAt: string;
   bookingId?: string;
-  /** The player who confirmed the booking. */
   bookerId?: string;
 }
 
@@ -41,7 +35,6 @@ export interface KioskShortlistItem {
   userId: string;
 }
 
-/** Shared map view. `center` is the map camera while panning, never the device GPS. */
 export interface KioskPresence {
   userId: string;
   venueId?: string;
@@ -67,7 +60,6 @@ export interface ProposeInput {
   playersNeeded?: number;
 }
 
-/** yes × 2 > members, or the leader voted yes, passes. no × 2 ≥ members fails. */
 export function judgeProposal(
   yes: number,
   no: number,

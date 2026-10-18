@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-// Post-deploy smoke test. Usage:
-//   BASE_URL=https://api.example.com/api/v1 SMOKE_EMAIL=owner@x SMOKE_PASSWORD=... node scripts/smoke-deploy.mjs
-// Creates ONE manual booking far in the future and cancels it again. Exits non-zero on the first failure.
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000/api/v1';
 const { SMOKE_EMAIL, SMOKE_PASSWORD } = process.env;
 let failed = 0;

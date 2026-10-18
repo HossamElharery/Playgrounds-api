@@ -93,7 +93,6 @@ describe('assistant guards', () => {
 
   it('warns when the same customer already has a booking that day', async () => {
     const { service, prisma } = build(null, reading({}));
-    // Only the same-day lookup (it filters on guestName) finds the other booking.
     prisma.booking.findMany.mockImplementation((args: { where: { guestName?: unknown } }) =>
       Promise.resolve(
         args.where.guestName

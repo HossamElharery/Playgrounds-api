@@ -2,11 +2,6 @@ import { BadRequestException } from '@nestjs/common';
 import { EXPENSE_CATEGORIES } from '../expenses/expenses.dto';
 import type { AssistantAction } from './assistant.types';
 
-/**
- * The action DTO cannot express "these fields are required for this kind", and
- * a half-filled action reaches Prisma as an undefined id or a NaN amount. This
- * checks the shape once, before anything is written.
- */
 export function assertActionShape(action: AssistantAction): void {
   const need = (ok: unknown, field: string) => {
     if (!ok) throw new BadRequestException(`${action.kind} requires ${field}`);

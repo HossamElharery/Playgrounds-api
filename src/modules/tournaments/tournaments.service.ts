@@ -26,25 +26,11 @@ interface BracketSlot {
   winnerId: string | null;
 }
 
-/**
- * An entrant feeding into a bracket slot: either a concrete participant (or
- * `id: null` meaning a genuine bye — no one there), or `pending: true`
- * meaning "the winner of an earlier real match, not decided yet". The
- * distinction matters: a bye auto-advances, a pending slot must not.
- */
 interface BracketEntrant {
   id: string | null;
   pending: boolean;
 }
 
-/**
- * Lightweight single-elimination esports tournaments (§3.9/§7.3) — a
- * deliberately scoped-down Phase-2 module: no sponsors, no prize
- * infrastructure. Bracket seeding is random for v1 (documented TODO:
- * ELO-seed once per-activity skill data exists — that needs the
- * `User.sports -> activities` widening the blueprint calls out as its own
- * dedicated mechanical commit, not done in this pass).
- */
 @Injectable()
 export class TournamentsService {
   constructor(
@@ -125,7 +111,6 @@ export class TournamentsService {
     const nameAr = dto.nameAr?.trim() || dto.nameEn?.trim();
     const nameEn = dto.nameEn?.trim() || nameAr;
     if (!nameAr || !nameEn) throw new BadRequestException('A tournament needs a name');
-    // A venue's tournament charges in the venue's currency; a platform-wide one defaults to EGP.
     const venueCurrency = dto.venueId
       ? (await this.prisma.venue.findUnique({ where: { id: dto.venueId }, select: { currency: true } }))?.currency
       : undefined;
@@ -164,10 +149,6 @@ export class TournamentsService {
       throw new ConflictException('Tournament is full');
     }
     const entryFee = tournament.entryFeeAmount ?? 0;
-    // The entry fee shown on the tournament card was previously decorative —
-    // registering never touched the wallet. Charge it in the same transaction
-    // as the participant row so a failed debit never leaves a free entrant,
-    // and a fee-less tournament (entryFee = 0) is a no-op debit.
     const participant = await this.prisma.$transaction(async (tx) => {
       if (entryFee > 0) {
         await this.wallet.debit(tx, {
@@ -212,8 +193,6 @@ export class TournamentsService {
     return participant;
   }
 
-  /** Only before the bracket exists — once matches are generated, pulling a
-   *  seat out from under an opponent isn't something a withdrawal can undo. */
   async withdraw(userId: string, tournamentId: string) {
     const tournament = await this.prisma.tournament.findUnique({
       where: { id: tournamentId },
@@ -247,7 +226,6 @@ export class TournamentsService {
     });
   }
 
-  /** Random-seeded single-elimination bracket (see class doc re: ELO TODO). */
   private buildBracket(entrants: BracketEntrant[], round = 1): BracketSlot[] {
     if (entrants.length <= 1) return [];
     const slots: BracketSlot[] = [];
@@ -362,9 +340,6 @@ export class TournamentsService {
       type: 'tournament.bracket.generated',
       tournamentId,
     });
-    // A "tournaments" socket room notifies only whoever happens to have the
-    // page open right now. Every entrant needs to actually be told the
-    // bracket is live and who they're facing in round one.
     await Promise.all(
       tournament.participants.map((p) =>
         this.notifications
@@ -471,9 +446,6 @@ export class TournamentsService {
         const tournament = await this.prisma.tournament.findUnique({
           where: { id: tournamentId },
         });
-        // Nobody but an admin can resolve this, and no admin is watching a
-        // random match room — page every admin directly or the dispute just
-        // sits there with both players locked out of the next round forever.
         const admins = await this.prisma.user.findMany({
           where: { roles: { has: 'admin' } },
           select: { id: true },
@@ -563,7 +535,6 @@ export class TournamentsService {
       },
     });
     if (!nextMatch) {
-      // No next round — this was the final. Tournament complete.
       await this.prisma.tournament.update({
         where: { id: tournamentId },
         data: { status: 'completed' },

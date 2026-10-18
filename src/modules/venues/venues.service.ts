@@ -32,7 +32,6 @@ import { buildPagination } from '../../common/dto/page-query.dto';
 import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
 import { AreaCatalogService } from '../geo/area-catalog.service';
 
-/** A price window must end after it starts (the end is exclusive; "24:00" is midnight). */
 function assertRuleWindow(dto: { startTime: string; endTime: string }): void {
   if (dto.startTime >= dto.endTime) {
     throw new BadRequestException({
@@ -137,7 +136,6 @@ export class VenuesService {
     return created;
   }
 
-  /** One deduplicated review request per venue; a notification failure never blocks onboarding. */
   private async notifyAdminsOfNewVenue(venue: { id: string; nameAr: string; nameEn: string }) {
     if (!this.notifications) return;
     try {
@@ -190,13 +188,10 @@ export class VenuesService {
   ) {
     await this.assertOwnership(venueId, ownerId, isPrivileged);
     if (dto.sportIds && !isPrivileged) {
-      // What a venue IS (courts vs a PlayStation lounge) is decided at approval; an owner who needs
-      // another kind adds a unit of it or asks support. Re-sending the same set is harmless.
       const have = new Set((await this.prisma.venueSport.findMany({ where: { venueId }, select: { sportId: true } })).map((s) => s.sportId));
       const same = dto.sportIds.length === have.size && dto.sportIds.every((id) => have.has(id));
       if (!same) throw new ForbiddenException({ code: 'ACTIVITIES_LOCKED', message: 'Venue activities are set at approval' });
     }
-    // One text in the owner's language → both languages for the public pages.
     if (this.texts && dto.name !== undefined) {
       const name = await this.texts.both(dto.name, 'name');
       if (name.ar || name.en) { dto.nameAr = name.ar; dto.nameEn = name.en; }
@@ -255,11 +250,6 @@ export class VenuesService {
     });
   }
 
-  /**
-   * Publishing a venue that players cannot actually book is the owner's worst first
-   * impression, so approval refuses until hours, courts, prices and a location exist.
-   * The admin can still force it (the admin is never locked out by a rule).
-   */
   async approve(adminId: string, venueId: string, force = false) {
     await this.getById(venueId);
     if (!force) {
@@ -308,8 +298,6 @@ export class VenuesService {
     await this.assertOwnership(id, ownerId, privileged);
     const venue = await this.getById(id);
     const rulesOf = (c: (typeof venue.courts)[number]) => c.pricingRules;
-    // What stops players from booking, and which hours have no price — computed with the venue
-    // so the owner's page never has to guess it from the raw rows.
     const readiness = {
       missing: bookingBlockers(
         { weeklyHours: venue.weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
@@ -350,8 +338,6 @@ export class VenuesService {
       }));
     if (!venue || venue.status !== 'active')
       throw new NotFoundException('Venue not found');
-    // Public page: the owner's legal/registration details and internal review
-    // bookkeeping are not for players.
     const {
       legalBusinessName: _legalBusinessName,
       registrationNumber: _registrationNumber,
@@ -361,9 +347,7 @@ export class VenuesService {
     const area = await this.areas?.areaFor(venue.districtId).catch(() => null);
     return {
       ...publicVenue,
-      // The district's map outline is never drawn on the venue page; it was most of the payload.
       district: venue.district ? { ...venue.district, polygon: null } : null,
-      // The named area a census sub-area belongs to, for breadcrumbs and local landing links.
       area: area ? { id: area.id, slug: area.slug, nameAr: area.nameAr, nameEn: area.nameEn } : null,
       reviews: venue.reviews.map(({ bookingId: _bookingId, ...review }) => review),
     };
@@ -381,7 +365,6 @@ export class VenuesService {
     });
     return venues.map((venue) => ({
       ...this.stripSeoOverrides(venue),
-      // The venue switcher marks a venue players cannot book yet, so an owner of ten sees which one to finish.
       bookingMissing: bookingBlockers(
         { weeklyHours: venue.weeklyHours, lat: venue.lat, lng: venue.lng, address: venue.address },
         venue.courts.map((c) => ({ pricingRules: c.pricingRules.length, rules: c.pricingRules })),
@@ -433,7 +416,6 @@ export class VenuesService {
       !!districtKey ||
       !!govKey;
     if (!hasScope) {
-      // Public explore/home omit a scope — default to the primary market.
       countryCode = 'EG';
     }
 
@@ -528,7 +510,6 @@ export class VenuesService {
 
     const where: Prisma.VenueWhereInput = {
       status: 'active',
-      // A venue with no opening hours cannot be booked, so it is not listed as bookable.
       NOT: { weeklyHours: { equals: Prisma.DbNull } },
       ...(resolvedCountry ? { countryCode: resolvedCountry } : {}),
       ...(sport ? { sports: { some: { sportId: sport.id } } } : {}),
@@ -616,7 +597,6 @@ export class VenuesService {
   }
 
   async refreshVenuePriceFrom(venueId: string) {
-    // "From" prices advertise the everyday price: a temporary discount must not rewrite it.
     const agg = await this.prisma.pricingRule.aggregate({
       where: { court: { venueId }, kind: { not: 'discount' } },
       _min: { priceAmount: true },
@@ -875,7 +855,6 @@ export class VenuesService {
     });
   }
 
-  // ---- Courts ----
   async addCourt(
     venueId: string,
     ownerId: string,
@@ -915,7 +894,6 @@ export class VenuesService {
     return deleted;
   }
 
-  // ---- Pricing rules ----
   async addPricingRule(
     courtId: string,
     ownerId: string,
@@ -985,7 +963,6 @@ export class VenuesService {
     return deleted;
   }
 
-  // ---- Photos ----
   async addPhoto(
     venueId: string,
     ownerId: string,
@@ -1043,7 +1020,6 @@ export class VenuesService {
     });
   }
 
-  // ---- Admin list ----
   listPendingApproval() {
     return this.prisma.venue.findMany({
       where: { status: 'pending' },

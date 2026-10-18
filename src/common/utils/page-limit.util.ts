@@ -1,4 +1,3 @@
-/** Clamp untrusted pagination query values. */
 export function clampLimit(
   raw: unknown,
   fallback = 30,

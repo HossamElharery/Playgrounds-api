@@ -1,12 +1,3 @@
-/**
- * The owner assistant's vocabulary.
- *
- * Everything the owner can say collapses into one of these intents, and
- * everything the assistant is willing to *do* collapses into one of the
- * actions below. Nothing else is executable — the model proposes, this
- * union constrains, and each action is re-validated server-side before it
- * runs (see owner-assistant.service.ts).
- */
 export type AssistantIntentKind =
   | 'block' // close slots
   | 'unblock' // reopen slots
@@ -17,23 +8,17 @@ export type AssistantIntentKind =
   | 'money' // "how much did I make?"
   | 'debts' // "who still owes me?"
   | 'expense' // record a cost
-  | 'agenda' // "what is booked?" — the day's bookings
-  | 'attention' // "anything I should know?" — debts, arrivals, tomorrow
+  | 'agenda'
+  | 'attention'
   | 'move' // change an existing booking's time / court / length / price
   | 'help'
   | 'unknown';
 
-/** Bilingual text — owners work in Arabic, the dashboard also ships English. */
 export interface Bi {
   ar: string;
   en: string;
 }
 
-/**
- * What the model read out of the sentence. Amounts are in MAJOR units here
- * (the owner says "٢٠٠ جنيه", not 20000 piastres) and are converted once, in
- * the service, so the conversion cannot happen twice by accident.
- */
 export interface AssistantReading {
   intent: AssistantIntentKind;
   courtIds: string[];
@@ -44,11 +29,8 @@ export interface AssistantReading {
   durationMinutes: number | null;
   customerName: string;
   customerPhone: string;
-  /** Total price the owner stated for the booking, major units. */
   totalAmount: number | null;
-  /** Money the owner says they already took, major units. */
   paidAmount: number | null;
-  /** Money the owner says is still owed, major units — the cross-check for the two above. */
   remainingAmount: number | null;
   paymentMethod: 'cash' | 'instapay' | 'wallet' | 'card' | 'other' | null;
   sourceKey: 'walk_in' | 'phone' | 'whatsapp' | 'other_platform' | null;
@@ -63,20 +45,13 @@ export interface AssistantReading {
     | null;
   reason: string;
   confidence: number;
-  /**
-   * For `move`: where the booking should go. `date`/`fromMins`/`courtIds` above
-   * identify the booking as it is today; these say what it should become.
-   */
   newDate: string | null;
   newFromMins: number | null;
   newCourtId: string | null;
-  /** A short question in the owner's language when something is missing or unclear. */
   question: string;
-  /** Which model read the sentence, how long it took and what it cost. Never holds the sentence itself. */
   meta?: { model: string; ms: number; costUsd: number };
 }
 
-/** A booking the assistant found and may act on — echoed back so the confirm card can name it. */
 export interface AssistantBookingRef {
   id: string;
   code: string;
@@ -90,12 +65,6 @@ export interface AssistantBookingRef {
   currency: string;
 }
 
-/**
- * Money actions run on the server (they touch the ledger). Schedule actions
- * are handed back to the day board instead: it already owns block splitting,
- * the optimistic overlay and the undo token, and re-deriving that here would
- * be a second source of truth for the same rows.
- */
 export type AssistantAction =
   | {
       kind: 'create_booking';
@@ -110,7 +79,6 @@ export type AssistantAction =
       customerPhone?: string;
       sourceKey?: 'walk_in' | 'phone' | 'whatsapp' | 'other_platform';
       notes?: string;
-      /** The owner confirmed reopening a window they had closed; the server carves the block out. */
       overrideBlocks?: boolean;
     }
   | {
@@ -138,7 +106,6 @@ export type AssistantAction =
       note?: string;
     };
 
-/** A schedule change the day board executes with its existing block/undo machinery. */
 export interface AssistantScheduleIntent {
   mode: 'block' | 'unblock';
   courtIds: string[];
@@ -149,12 +116,6 @@ export interface AssistantScheduleIntent {
   reason: string;
 }
 
-/**
- * Something that does not add up. `blocking: true` means the assistant refused
- * to write anything — the owner's own numbers contradict each other or the
- * venue's records, and guessing which one is right is how a cash drawer goes
- * wrong.
- */
 export interface AssistantIssue {
   code:
     | 'MATH_MISMATCH'
@@ -186,27 +147,17 @@ export interface AssistantQuery {
 }
 
 export interface AssistantPlan {
-  /** false when no AI provider is configured — the client falls back to its local parser. */
   available: boolean;
   intent: AssistantIntentKind;
   confidence: number;
-  /** What the assistant says back. Always populated, in both languages. */
   reply: Bi;
-  /** Shown on the confirm card above the buttons; empty for a pure answer. */
   summary: Bi | null;
   actions: AssistantAction[];
   schedule: AssistantScheduleIntent | null;
-  /** Populated for questions the day board answers off its own grid ("what is free?"). */
   query: AssistantQuery | null;
   issues: AssistantIssue[];
-  /** Bookings the reply refers to, so the client can deep-link to them. */
   bookings: AssistantBookingRef[];
   needsConfirm: boolean;
-  /**
-   * What the assistant understood so far when it had to ask a question. The
-   * client hands it back with the owner's next message so an answer like
-   * "PS5 Room 1" completes the earlier request instead of starting a new one.
-   */
   draft?: AssistantReading | null;
 }
 

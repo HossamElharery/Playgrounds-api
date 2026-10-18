@@ -7,16 +7,10 @@ export interface ClusterItem {
 }
 
 export interface Cluster<T extends ClusterItem> {
-  /** The most recent member, shown as the cluster's title. */
   sample: T;
   items: T[];
 }
 
-/**
- * Two questions are about the same thing when most of their words agree, or at
- * least two key words agree and they are not otherwise far apart — Egyptian
- * Arabic inflects the verb ("شغال" / "بيشتغل") but keeps the nouns ("المايك", "اللوبي").
- */
 function similar(a: Set<string>, b: Set<string>): boolean {
   if (!a.size || !b.size) return false;
   let shared = 0;
@@ -25,12 +19,6 @@ function similar(a: Set<string>, b: Set<string>): boolean {
   return jaccard >= 0.5 || (shared >= 2 && jaccard >= 0.3);
 }
 
-/**
- * Groups near-identical questions ("المايك مش شغال" / "المايك مبيشتغلش ليه")
- * so the admin answers a topic once, not forty times. Word overlap is crude on
- * purpose — it is predictable, free and good enough for a worklist; the admin
- * can always open the members.
- */
 export function clusterQuestions<T extends ClusterItem>(items: T[]): Cluster<T>[] {
   const sorted = [...items].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   const clusters: { key: Set<string>; norm: string; cluster: Cluster<T> }[] = [];

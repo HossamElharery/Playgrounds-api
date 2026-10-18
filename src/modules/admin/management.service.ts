@@ -138,12 +138,6 @@ export class ManagementService {
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
-  /**
-   * Oversight for the project owner: everything this owner and the assistant have
-   * said to each other, across every venue they run, newest first. It reads the
-   * permanent transcript the server keeps — not the owner's own chat window — so it
-   * is complete even if the app failed to post a line or the venue was deleted.
-   */
   async assistantMessages(ownerId: string, limit = 30, cursor?: string) {
     if (!this.transcript) return { items: [], nextCursor: null };
     const page = await this.transcript.forOwner(ownerId, limit, cursor);
@@ -157,7 +151,6 @@ export class ManagementService {
     };
   }
 
-  /** What this user asked Captain (players and owners alike) and what it answered, newest first. */
   async captainQuestions(userId: string, limit = 30, cursor?: string) {
     const size = Math.min(Math.max(limit, 1), 100);
     const rows = await this.db.aiQuestionLog.findMany({
@@ -360,7 +353,6 @@ export class ManagementService {
       const districtId = data.districtId ?? before.districtId;
       if (!/^[A-Z]{2}$/.test(countryCode))
         throw new BadRequestException('Invalid country code');
-      // The venue's currency follows its country — but never changes under existing money.
       let nextCurrency: string | undefined;
       if (countryCode !== before.countryCode) {
         const country = await tx.countryConfig.findUnique({ where: { code: countryCode } });
@@ -478,9 +470,6 @@ export class ManagementService {
           data: amenities.map((a) => ({ venueId: id, amenityId: a.id })),
         });
       }
-      // Keep the partner application in step with the venue, otherwise a venue the
-      // admin suspended here still reads "approved" on the owner's side (and the
-      // reverse after reactivating it).
       if (data.status && data.status !== before.status) {
         const flip =
           data.status === 'suspended'
@@ -518,7 +507,6 @@ export class ManagementService {
     if (statusChange) await this.notifyVenueStatus(id, statusChange, reason, result.updatedAt);
     return result;
   }
-  /** Tells the owner what the new status means for them; never blocks or fails the admin edit. */
   private async notifyVenueStatus(
     venueId: string,
     change: { to: string; ownerId: string; nameAr: string; nameEn: string },

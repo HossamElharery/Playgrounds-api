@@ -10,7 +10,6 @@ import {
   warmImageVariants,
 } from './image-variants';
 
-/** Dev-default provider: saves under ./uploads, served statically at STORAGE_LOCAL_PUBLIC_BASE. */
 @Injectable()
 export class LocalDiskStorageProvider implements StorageProvider {
   private readonly root = path.join(process.cwd(), 'uploads');
@@ -34,7 +33,6 @@ export class LocalDiskStorageProvider implements StorageProvider {
     const fullPath = path.join(this.root, key);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.writeFile(fullPath, buffer);
-    // Cut the responsive WebP sizes in the background so the first viewer never waits for them.
     void warmImageVariants(this.root, key).catch(() => undefined);
     return { key, url: this.urlFor(key) };
   }

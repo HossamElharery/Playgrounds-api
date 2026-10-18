@@ -62,14 +62,12 @@ describe('ExportService', () => {
     expect(rows['Take-home after commission']).toBe(940);
     expect(rows['Kept from cancelled bookings (deposits)']).toBe(50);
     expect(rows['Expenses']).toBe(200);
-    // Profit says out loud what it is made of: games earned + deposits kept − commission − expenses.
     expect(rows[NET]).toBe(790);
     expect(rows[NET]).toBe(
       (rows['Take-home after commission'] as number) +
         (rows['Kept from cancelled bookings (deposits)'] as number) -
         (rows['Expenses'] as number),
     );
-    // The two bases are both on the sheet, and the received money splits into exactly its parts.
     expect(rows['Money received (by day received)']).toBe(700);
     expect(
       (rows['of which: for games in the period'] as number) +

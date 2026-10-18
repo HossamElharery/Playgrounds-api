@@ -1,10 +1,3 @@
-/**
- * Verify venue ledger integrity. Safe to run in production (read-only unless --repair).
- *
- *   npx ts-node src/scripts/verify-ledger.ts
- *   npx ts-node src/scripts/verify-ledger.ts --repair
- *   npx ts-node src/scripts/verify-ledger.ts --venue <uuid>
- */
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../modules/app/app.module';
 import { LedgerService } from '../modules/finance/ledger.service';

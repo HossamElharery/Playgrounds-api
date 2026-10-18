@@ -8,16 +8,12 @@ export type MorphRollPolicy =
 
 export interface QuotaState {
   allowed: boolean;
-  /** Which bucket this roll would consume. */
   source: 'FREE' | 'BONUS' | null;
-  /** null = unlimited. */
   remainingFree: number | null;
   bonusRolls: number;
-  /** ISO, next local midnight for 'daily'. */
   resetsAt: string | null;
 }
 
-/** `MORPH_DAILY_FREE_ROLLS`: empty/unset/invalid → unlimited (today's behavior). */
 export function policyFromEnv(raw: string | undefined | null): MorphRollPolicy {
   const trimmed = (raw ?? '').trim();
   if (!/^\d+$/.test(trimmed)) return { kind: 'unlimited' };
@@ -26,7 +22,6 @@ export function policyFromEnv(raw: string | undefined | null): MorphRollPolicy {
   return { kind: 'daily', freePerDay, timeZone: MORPH_QUOTA_TIME_ZONE };
 }
 
-/** Local calendar date (YYYY-MM-DD) of `instant` in `timeZone`. */
 export function zonedDateString(instant: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -36,7 +31,6 @@ export function zonedDateString(instant: Date, timeZone: string): string {
   }).format(instant);
 }
 
-/** [start, end) of the local day containing `now`. */
 export function quotaDayBounds(
   now: Date,
   timeZone: string,

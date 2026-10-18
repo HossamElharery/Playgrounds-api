@@ -32,8 +32,8 @@ describe('AiSettingsService', () => {
     const prisma = { aiSetting: { findMany: jest.fn().mockImplementation(async () => rows) } };
     const s = new AiSettingsService(config({ CAPTAIN_GUEST_PER_DAY: '9' }), prisma as never);
     await s.refresh();
-    expect(s.number('captainGuestPerMinute')).toBe(5); // default
-    expect(s.number('captainGuestPerDay')).toBe(9); // env
+    expect(s.number('captainGuestPerMinute')).toBe(5);
+    expect(s.number('captainGuestPerDay')).toBe(9);
     rows.push({ key: 'captainGuestPerDay', value: 30 });
     await s.refresh();
     expect(s.number('captainGuestPerDay')).toBe(30); // override wins

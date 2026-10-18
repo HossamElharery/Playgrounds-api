@@ -5,10 +5,6 @@ import type { GlobalSearchResult } from './global-search.types';
 
 const DEFAULT_LIMIT = 5;
 
-/**
- * One round-trip for the in-app command palette. Each source is a tight
- * `contains` query with a small `take` — never a full table scan, never AI.
- */
 @Injectable()
 export class GlobalSearchService {
   constructor(private readonly prisma: PrismaService) {}

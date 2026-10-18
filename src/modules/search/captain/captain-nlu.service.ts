@@ -22,11 +22,8 @@ export interface CaptainNluInput {
   loggedIn: boolean;
   hasCoords: boolean;
   history: CaptainTurn[];
-  /** Filters of the search the player is looking at right now, if any. */
   context: CaptainFilters | null;
-  /** The platform facts Captain is allowed to answer from, so the model can name the ones that apply. */
   knowledge: KnowledgeEntry[];
-  /** Admin tools only: ask exactly these models, and do not stop for a spent daily budget. */
   modelsOverride?: string[];
   skipBudget?: boolean;
 }
@@ -78,10 +75,6 @@ const SYSTEM_PROMPT = `أنت "كابتن"، مساعد تطبيق ماتشنا 
 const SORTS = ['rating', 'price', 'distance'] as const;
 const TIMES = ['now', 'tonight', 'tomorrow'] as const;
 
-/**
- * Sentence in, structured reading out. Never touches the database or executes
- * anything; every field is re-checked against the real catalogue before use.
- */
 @Injectable()
 export class CaptainNluService {
   private readonly logger = new Logger(CaptainNluService.name);
@@ -95,7 +88,6 @@ export class CaptainNluService {
     return this.aiProvider.enabled;
   }
 
-  /** null = no model reachable (the caller falls back to keyword matching). */
   async read(input: CaptainNluInput): Promise<CaptainReading | null> {
     if (!this.enabled) return null;
     const platform = await this.aiContext.buildPlatformContext();
@@ -133,7 +125,6 @@ export class CaptainNluService {
     }
   }
 
-  /** Never trust the model's own claims — every field is re-checked here. */
   private async parse(raw: string, factIds: Set<string>): Promise<CaptainReading | null> {
     let parsed: unknown;
     try {

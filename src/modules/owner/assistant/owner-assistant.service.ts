@@ -59,14 +59,7 @@ import {
   zonedDayBounds,
 } from '../../../common/utils/timezone.util';
 
-/** Below this the model is guessing; a question is cheap, so questions are answered at this bar. */
 const MIN_CONFIDENCE = 0.35;
-/**
- * Anything that writes money or edits a booking needs a firmer read. Under it
- * the assistant asks instead of proposing — the owner's confirm tap is the
- * second guard, not the first, and a half-heard "محمد دفع ٢٠٠" should not reach
- * a confirm card at all.
- */
 const MIN_CONFIDENCE_WRITE = 0.6;
 const WRITES_MONEY: ReadonlySet<AssistantReading['intent']> = new Set([
   'book',
@@ -79,21 +72,6 @@ const WRITES_MONEY: ReadonlySet<AssistantReading['intent']> = new Set([
 // Kept for the callers and specs that always imported them from here.
 export { completeReading, isAffirmative, nextDay };
 
-/**
- * The owner's assistant. The NLU proposes a reading of the sentence; this
- * service is the part that knows what is actually true — real courts, real
- * prices, real money already collected — and turns a reading into either a
- * plain answer or a plan the owner confirms.
- *
- * Two rules hold everywhere below:
- *  1. Nothing the model says about money is trusted. Every amount is
- *     re-derived from the venue's own tariff and payment rows, and a sentence
- *     whose numbers contradict each other is refused, never "rounded into"
- *     the books.
- *  2. Execution goes through the same services the dashboard's own buttons
- *     use, so an assistant action can never do something the owner (or a
- *     staff member with fewer permissions) could not do by hand.
- */
 @Injectable()
 export class OwnerAssistantService {
   private readonly logger = new Logger(OwnerAssistantService.name);
@@ -114,12 +92,6 @@ export class OwnerAssistantService {
     return this.nlu.enabled;
   }
 
-  // ---------------------------------------------------------------- ask ----
-
-  /**
-   * Reads one sentence and plans what it asks for. Besides the plan it leaves a
-   * trace for the admin: the sentence as typed, intent, outcome, model, time, cost.
-   */
   async ask(
     user: AuthenticatedUser,
     venueId: string,
@@ -189,8 +161,6 @@ export class OwnerAssistantService {
     if (!this.nlu.enabled)
       return this.blank('unknown', bi('', ''), { available: false });
 
-    // A generous allowance per person: enough for a busy day at the venue, tight
-    // enough that a stuck script cannot spend the day's AI budget on one account.
     const verdict = await this.quota?.take('owner', [
       {
         key: `user:${user.id}`,
@@ -263,8 +233,6 @@ export class OwnerAssistantService {
       ? MIN_CONFIDENCE_WRITE
       : MIN_CONFIDENCE;
     if (reading.confidence < bar || reading.intent === 'unknown') {
-      // A question about what they meant beats a canned menu — and an
-      // unfinished request stays alive across a stray "شكرًا".
       return this.blank('unknown', this.clarify(reading), {
         confidence: reading.confidence,
         draft,
@@ -316,13 +284,6 @@ export class OwnerAssistantService {
     }
   }
 
-  // --------------------------------------------------------------- book ----
-
-  /**
-   * The heart of the module: put a real customer, on a real court, with real
-   * money, into the books — and refuse when the owner's own numbers do not
-   * survive arithmetic.
-   */
   private async planBook(
     user: AuthenticatedUser,
     venueId: string,
@@ -381,8 +342,6 @@ export class OwnerAssistantService {
 
     const issues: AssistantIssue[] = [];
     if (startsAt.getTime() < Date.now()) {
-      // "بكرة" is far more likely than "yesterday's 2pm": offer it, and a bare
-      // "أيوه" next turn books it.
       if (r.date === todayIn(tz)) {
         const tomorrow = nextDay(r.date);
         return this.blank(
@@ -431,8 +390,6 @@ export class OwnerAssistantService {
         ),
       ].join('، ');
       if (await this.can(user, venueId, 'schedule.manage')) {
-        // The owner closed this on purpose. Never overwrite that silently —
-        // and never refuse either: they may simply have changed their mind.
         overrideBlocks = true;
         issues.push({
           code: 'BLOCK_OVERRIDE',
@@ -508,9 +465,6 @@ export class OwnerAssistantService {
       durationMinutes,
       tz,
     ).priceAmount;
-    // Nothing said about money at all: the booking goes in unpaid at the
-    // tariff, and "محمد دفع" collects it later. Assuming it was paid would put
-    // cash in the books that nobody handed over.
     const saidNothingAboutMoney =
       r.totalAmount === null &&
       r.paidAmount === null &&
@@ -603,7 +557,6 @@ export class OwnerAssistantService {
     };
   }
 
-  /** Delegates to the pure reconciler, and carries its findings into the plan's issue list. */
   private reconcileBookingMoney(
     r: AssistantReading,
     tariffMinor: number | null,
@@ -623,8 +576,6 @@ export class OwnerAssistantService {
     issues.push(...verdict.issues);
     return verdict.money;
   }
-
-  // ---------------------------------------------------------------- pay ----
 
   private async planPay(
     user: AuthenticatedUser,
@@ -718,8 +669,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // ------------------------------------------------------------- cancel ----
-
   private async planCancel(
     user: AuthenticatedUser,
     venueId: string,
@@ -737,7 +686,6 @@ export class OwnerAssistantService {
     if ('issue' in picked) return picked.plan;
     const booking = picked.booking;
 
-    // Money already received is never kept or returned by guesswork: the owner says which.
     const paid = booking.paidAmount;
     let refundAmount: number | undefined;
     if (paid > 0) {
@@ -796,8 +744,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // -------------------------------------------------------------- money ----
-
   private async planMoney(
     user: AuthenticatedUser,
     venueId: string,
@@ -816,7 +762,6 @@ export class OwnerAssistantService {
         `${label.en}: ${t.bookings} bookings, ${fmt(t.collectedRevenue, currency).en} of game revenue.`,
       ),
     ];
-    // The drawer counts money by the day it was received, which is not always the day of the game.
     const cashbook = s.cashbook;
     if (cashbook && cashbook.received !== t.collectedRevenue) {
       const extra: Bi[] = [];
@@ -857,8 +802,6 @@ export class OwnerAssistantService {
       confidence: r.confidence,
     });
   }
-
-  // -------------------------------------------------------------- debts ----
 
   private async planDebts(
     user: AuthenticatedUser,
@@ -926,8 +869,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // ------------------------------------------------------------ expense ----
-
   private async planExpense(
     user: AuthenticatedUser,
     venueId: string,
@@ -974,13 +915,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // ----------------------------------------------------- schedule / free ----
-
-  /**
-   * Block and unblock stay on the day board: it already owns block splitting,
-   * the optimistic overlay and the undo token. The assistant's job here is
-   * only to say *what* the owner meant, accurately.
-   */
   private async planSchedule(
     user: AuthenticatedUser,
     venueId: string,
@@ -1077,8 +1011,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // ------------------------------------------------------------- agenda ----
-
   private async planAgenda(
     user: AuthenticatedUser,
     venueId: string,
@@ -1138,9 +1070,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // --------------------------------------------------------------- move ----
-
-  /** Reschedule, resize or re-price an existing booking — one confirm card, one update. */
   private async planMove(
     user: AuthenticatedUser,
     venueId: string,
@@ -1151,9 +1080,6 @@ export class OwnerAssistantService {
   ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.edit')))
       return this.denied('move');
-    // On a move the court in the sentence is usually the *new* place, so the
-    // booking is found by name and date; the time only narrows it when the
-    // owner also gave a new one (then `fromMins` is the old time).
     const candidates = await this.findBookings(
       venueId,
       tz,
@@ -1321,18 +1247,6 @@ export class OwnerAssistantService {
     };
   }
 
-  // ------------------------------------------------------------ execute ----
-
-  /**
-   * Runs a confirmed plan. Every action goes through the same service the
-   * dashboard's own button calls, so permissions, overpayment guards, slot
-   * conflicts and the ledger behave identically — the assistant is a faster
-   * way to press the buttons, never a way around them.
-   */
-
-  // ---------------------------------------------------------- attention ----
-
-  /** Everything worth the owner's eye right now: money owed, arrivals with a balance, tomorrow. */
   async attention(
     user: AuthenticatedUser,
     venueId: string,
@@ -1406,7 +1320,6 @@ export class OwnerAssistantService {
     }
     return {
       ...this.blank('attention', joinBi(lines, '\n'), { confidence: 1 }),
-      // Lets the dashboard decide whether the digest deserves a message of its own.
       bookings: [...soon, ...overdue].slice(0, 10).map((b) => ({
         id: b.id,
         code: b.code,
@@ -1422,7 +1335,6 @@ export class OwnerAssistantService {
     };
   }
 
-  /** Public entry for the dashboard's proactive message. */
   async attentionDigest(user: AuthenticatedUser, venueId: string) {
     const venue = await assertVenueAccess(this.prisma, user, venueId, {
       write: false,
@@ -1431,9 +1343,6 @@ export class OwnerAssistantService {
     return this.attention(user, venueId, tz, venue.currency);
   }
 
-  // ------------------------------------------------------ smart-guard bits ----
-
-  /** Free options near a taken window: other courts at the same time, then nearby times on this one. */
   private async alternatives(
     venueId: string,
     tz: string,
@@ -1493,15 +1402,6 @@ export class OwnerAssistantService {
     );
   }
 
-  /**
-   * Opens [start, end) on one court out of any block that covers it, keeping
-   * whatever is left of the block on either side (and, for a venue-wide block,
-   * on every other court). Returns a function that puts everything back.
-   */
-  // ------------------------------------------------------------ helpers ----
-
-  /** Manual bookings with money still on them, for the day asked about and the week after it. */
-  /** Every booking that still owes money — finished and upcoming — so a payment can be matched to an old debt too. */
   private async openBalanceBookings(venueId: string): Promise<AssistantBookingRef[]> {
     const { overdue, upcoming } = await findAllOwed(this.prisma, venueId);
     return [...overdue, ...upcoming].map((b) => ({
@@ -1544,12 +1444,6 @@ export class OwnerAssistantService {
     };
   }
 
-  /**
-   * Finds the booking the owner is talking about. The name is matched loosely
-   * (Arabic spelling drifts), the day comes from the sentence, and the search
-   * widens to the coming week when today has no match — owners say "محمد"
-   * about tomorrow's booking as often as today's.
-   */
   private async findBookings(
     venueId: string,
     tz: string,
@@ -1569,7 +1463,6 @@ export class OwnerAssistantService {
     const include = {
       court: { select: { name: true } },
       payments: {
-        // Net of refunds: a payment taken back must not count as money still received.
         where: { status: { in: ['paid' as const, 'refunded' as const] } },
         select: { amount: true },
       },
@@ -1601,7 +1494,6 @@ export class OwnerAssistantService {
     const named = this.matchName(rows, r.customerName);
     const byName = r.customerName ? named : rows;
     if (r.fromMins === null) return byName.map((b) => this.toRef(b));
-    // A stated time narrows it further, but only if something actually matches.
     const at = byName.filter(
       (b) => zonedHhmm(b.slotStart, tz) === hhmm(r.fromMins!),
     );
@@ -1621,7 +1513,6 @@ export class OwnerAssistantService {
     });
   }
 
-  /** Zero or many matches is a question, never a guess — money is about to move. */
   private pickOne(
     candidates: AssistantBookingRef[],
     r: AssistantReading,
@@ -1724,7 +1615,6 @@ export class OwnerAssistantService {
     };
   }
 
-  /** A blocking issue replaces the summary; a warning rides along with it. */
   private issueReply(issues: AssistantIssue[], fallback: Bi): Bi {
     const blocking = issues.filter((i) => i.blocking);
     if (blocking.length)
@@ -1736,7 +1626,6 @@ export class OwnerAssistantService {
     return warnings.length ? joinBi([fallback, ...warnings], '\n') : fallback;
   }
 
-  /** The unit noun this venue's own units go by, from what they really are. */
   private async unitWordsFor(venueId: string) {
     const rows = await this.prisma.court.findMany({
       where: { venueId },
@@ -1745,7 +1634,6 @@ export class OwnerAssistantService {
     return unitWords(rows.map((r) => r.sport?.activityKind));
   }
 
-  /** Examples use this venue's own units, so a billiards club never reads about padel courts. */
   private async helpText(venueId: string): Promise<Bi> {
     const rows = await this.prisma.court.findMany({
       where: { venueId },
@@ -1776,7 +1664,6 @@ export class OwnerAssistantService {
     );
   }
 
-  /** What to say when the sentence did not become a plan: the model's own question, else a short one. */
   private clarify(r: AssistantReading): Bi {
     if (r.question) return bi(r.question, r.question);
     return bi(

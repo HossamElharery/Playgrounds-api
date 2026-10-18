@@ -19,8 +19,6 @@ describe('SquadService invite links', () => {
   });
 
   it('never opens a new lobby for a caller who is no longer in one', async () => {
-    // The link request can land just after the player pressed "leave" —
-    // creating a squad here put them straight back into a lobby.
     prisma.squadMember.findFirst.mockResolvedValue(null);
     await expect(service.getOrCreateInviteLink('u-1')).rejects.toMatchObject({ status: 404 });
     expect(prisma.squad.create).not.toHaveBeenCalled();

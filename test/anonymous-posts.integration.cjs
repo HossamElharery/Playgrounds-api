@@ -1,4 +1,3 @@
-// Local-only privacy regression: disposable accounts, cleaned up in finally.
 require('dotenv').config({ quiet: true });
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');

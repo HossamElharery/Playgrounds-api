@@ -199,7 +199,6 @@ describe('AdminFinanceService', () => {
       nextCursor: undefined,
     });
     const out = await service(prisma).venueLedger('v1', 'cursor-1');
-    // balance 500 minus 100 already shown on earlier pages → first row shows 400
     expect(out.items.map((i: { runningBalance: number }) => i.runningBalance)).toEqual([400, 360]);
   });
 

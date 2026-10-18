@@ -57,7 +57,6 @@ export class SeoDiscoveryController {
   @Header('Content-Type', 'application/xml; charset=utf-8')
   async hashtags(@Res() response: Response) { response.send(await this.sitemap.hashtags()); }
 
-  /** Governorates and named areas with live venue counts (footer, home, explore filter, HTML sitemap). */
   @Public()
   @Get('locations')
   @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
@@ -65,7 +64,6 @@ export class SeoDiscoveryController {
     return this.landingPages.directory((country || 'EG').toUpperCase());
   }
 
-  /** A local landing page, e.g. `path=egypt/cairo/nasr-city/football`. */
   @Public()
   @Get('landing')
   @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
@@ -75,7 +73,6 @@ export class SeoDiscoveryController {
     return this.landingPages.landing(country, segments, Number(page) || 1);
   }
 
-  /** Maps legacy explore filters (`governorate`/`district`/`sport`) to their landing path. */
   @Public()
   @Get('landing-path')
   @Header('Cache-Control', 'public, max-age=300')

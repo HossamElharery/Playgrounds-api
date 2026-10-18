@@ -18,7 +18,6 @@ const rule = (startTime: string, endTime: string, over: Record<string, unknown> 
 
 describe('coveringPricingRule', () => {
   it('returns the rule that covers the hour', () => {
-    // 20:00 Cairo (+03 in October is +03? Cairo DST ended — use a winter date to be unambiguous)
     const at = new Date('2026-12-05T18:00:00Z'); // 20:00 Cairo (UTC+2)
     expect(coveringPricingRule([rule('08:00', '23:00')], 6, at, TZ)?.priceAmount).toBe(20000);
   });

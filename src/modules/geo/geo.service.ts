@@ -7,7 +7,6 @@ import {
   toSearchBoundary,
 } from '../../common/utils/geo.util';
 
-/** Max distance from a district centroid when the GPS point is outside every polygon. */
 const NEAREST_DISTRICT_KM = 50;
 
 export type ResolvedArea = {
@@ -165,10 +164,6 @@ export class GeoService {
     });
   }
 
-  /**
-   * Map GPS to our catalog: polygon hit first, then nearest district centroid
-   * within 50km. Unknown coordinates still return nulls so we can store lat/lng.
-   */
   async resolveArea(lat: number, lng: number, country?: string): Promise<ResolvedArea> {
     const countryCode = normalizeCountryCode(country) ?? 'EG';
     const districts = await this.listDistricts(undefined, undefined, countryCode);

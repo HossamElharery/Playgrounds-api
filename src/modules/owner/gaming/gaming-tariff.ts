@@ -3,7 +3,6 @@ export type PlayMode = 'standard' | 'multi';
 export function gamingConfigObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
-/** Never infer a paid mode from seats. An absent legacy mode means standard. */
 export function selectGamingTariff(config: unknown, standardMinor: number, mode: PlayMode = 'standard'): number {
   if (mode === 'standard') return standardMinor;
   const c = gamingConfigObject(config);

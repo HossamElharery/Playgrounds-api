@@ -39,7 +39,6 @@ function setup() {
     })!;
     return world.acceptMove(m, userId, `sock-${userId}`, Date.now());
   };
-  /** Walks in legal steps (the travel budget refills over time). */
   const walk = (userId: string, x: number, z: number) => {
     for (let i = 0; i < 12; i++) {
       jest.advanceTimersByTime(400);
@@ -59,7 +58,6 @@ function setup() {
       userId,
       Date.now(),
     );
-  /** Two players in the lobby, ball created, shootout started by a. */
   const start = (players = ['a', 'b']) => {
     players.forEach((id, i) => move(id, i * 0.9, 1));
     world.snapshot(SQUAD, Date.now(), true);
@@ -169,8 +167,7 @@ describe('LobbyWorldService — penalty shootout', () => {
     expect(kick('a')).toBe(true);
     expect(last().phase).toBe('flight');
     jest.advanceTimersByTime(300);
-    expect(kick('a')).toBe(false); // one kick per turn
-    // c stood in the way, but the ball went through: a goal.
+    expect(kick('a')).toBe(false);
     jest.advanceTimersByTime(2000);
     expect(last()).toEqual(
       expect.objectContaining({
