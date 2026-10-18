@@ -1,0 +1,98 @@
+import { UnprocessableEntityException } from '@nestjs/common';
+// The backend uses legacy CommonJS resolution; sharp's runtime export is callable.
+const sharp: typeof import('sharp').default = require('sharp');
+
+/**
+ * What an uploaded image is for. Each purpose has a hard minimum (below it the upload is refused,
+ * because stretching a small file always looks bad) and a recommended width (below it the upload
+ * works but the response carries a warning the dashboard shows).
+ */
+export type UploadPurpose = 'cover' | 'inline' | 'general';
+export const UPLOAD_PURPOSE_RULES: Record<
+  UploadPurpose,
+  { minWidth: number; recommendedWidth: number }
+> = {
+  cover: { minWidth: 1200, recommendedWidth: 1600 },
+  inline: { minWidth: 640, recommendedWidth: 1200 },
+  general: { minWidth: 0, recommendedWidth: 0 },
+};
+/** Longest edge kept for the stored original; responsive variants are cut from it. */
+export const MAX_ORIGINAL_EDGE = 3840;
+
+export function parseUploadPurpose(value: unknown): UploadPurpose {
+  return value === 'cover' || value === 'inline' ? value : 'general';
+}
+
+export interface PreparedImage {
+  buffer: Buffer;
+  mimeType: string;
+  width: number;
+  height: number;
+  warnings: string[];
+}
+
+/**
+ * Validates and normalises an uploaded image before it is stored:
+ * refuses undecodable files and images too small for their purpose, applies EXIF orientation,
+ * and caps the longest edge at 3840px. Images needing no transformation are stored byte for byte
+ * to avoid generation loss, so their original metadata (including location) may remain present.
+ */
+export async function prepareUploadImage(
+  input: Buffer,
+  mimeType: string,
+  purpose: UploadPurpose,
+): Promise<PreparedImage> {
+  let meta: import('sharp').Metadata;
+  try {
+    meta = await sharp(input, { limitInputPixels: 80_000_000 }).metadata();
+  } catch {
+    throw new UnprocessableEntityException('The file is not a readable image');
+  }
+  const rotated = (meta.orientation ?? 1) >= 5; // 5-8 swap width and height
+  const srcWidth = (rotated ? meta.height : meta.width) ?? 0;
+  const srcHeight = (rotated ? meta.width : meta.height) ?? 0;
+  if (!srcWidth || !srcHeight)
+    throw new UnprocessableEntityException('The file is not a readable image');
+
+  const rules = UPLOAD_PURPOSE_RULES[purpose];
+  if (srcWidth < rules.minWidth) {
+    throw new UnprocessableEntityException(
+      `Image is too small (${srcWidth}px wide). Upload at least ${rules.minWidth}px wide ` +
+        `(${rules.recommendedWidth}px or more recommended).`,
+    );
+  }
+
+  const needsResize = Math.max(srcWidth, srcHeight) > MAX_ORIGINAL_EDGE;
+  const needsRotate = (meta.orientation ?? 1) > 1;
+  let buffer = input;
+  let width = srcWidth;
+  let height = srcHeight;
+  if (needsResize || needsRotate) {
+    let pipeline = sharp(input, { limitInputPixels: 80_000_000 }).rotate();
+    if (needsResize)
+      pipeline = pipeline.resize({
+        width: MAX_ORIGINAL_EDGE,
+        height: MAX_ORIGINAL_EDGE,
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    pipeline =
+      mimeType === 'image/png'
+        ? pipeline.png({ compressionLevel: 9 })
+        : mimeType === 'image/webp'
+          ? pipeline.webp({ quality: 90 })
+          : pipeline.jpeg({ quality: 90, mozjpeg: true });
+    const out = await pipeline.toBuffer({ resolveWithObject: true });
+    buffer = out.data;
+    width = out.info.width;
+    height = out.info.height;
+  }
+
+  const warnings: string[] = [];
+  if (width < rules.recommendedWidth) {
+    warnings.push(
+      `low_resolution: ${width}px wide; ${rules.recommendedWidth}px or more recommended for sharp display`,
+    );
+  }
+  return { buffer, mimeType, width, height, warnings };
+}

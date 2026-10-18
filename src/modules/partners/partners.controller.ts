@@ -22,6 +22,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import type { MulterFile } from '../../common/types/multer-file.type';
 import { StorageService } from '../storage/storage.service';
+import {
+  prepareUploadImage,
+  parseUploadPurpose,
+} from '../storage/upload-image';
 import { IMAGE_UPLOAD_OPTIONS } from '../../common/uploads/image-upload';
 import { DOCUMENT_UPLOAD_OPTIONS } from '../../common/uploads/document-upload';
 import { PartnersService } from './partners.service';
@@ -78,11 +82,7 @@ export class PartnersController {
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.partners.listMine(
-      user.id,
-      cursor,
-      limit ? Number(limit) : 20,
-    );
+    return this.partners.listMine(user.id, cursor, limit ? Number(limit) : 20);
   }
 
   @ApiBearerAuth()
@@ -133,9 +133,11 @@ export class PartnersController {
   async upload(
     @UploadedFile() file: MulterFile,
     @Query('kind') kind: 'image' | 'document' = 'image',
+    @Query('purpose') purpose?: string,
   ) {
     if (!file?.buffer) throw new BadRequestException('file is required');
-    const options = kind === 'document' ? DOCUMENT_UPLOAD_OPTIONS : IMAGE_UPLOAD_OPTIONS;
+    const options =
+      kind === 'document' ? DOCUMENT_UPLOAD_OPTIONS : IMAGE_UPLOAD_OPTIONS;
     await new Promise<void>((resolve, reject) => {
       options.fileFilter?.(null as never, file, (err, ok) => {
         if (err || !ok) {
@@ -145,15 +147,39 @@ export class PartnersController {
         resolve();
       });
     });
-    if (file.size > (options.limits?.fileSize ?? file.size)) {
+    // Photos may be up to the interceptor's 10 MB (high-resolution covers); documents keep their own cap.
+    const maxBytes =
+      kind === 'document'
+        ? (options.limits?.fileSize ?? file.size)
+        : 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
       throw new BadRequestException('File is too large');
     }
-    return this.storage.uploadBuffer(
+    if (kind === 'document') {
+      return this.storage.uploadBuffer(
+        file.buffer,
+        file.originalname,
+        file.mimetype,
+        'partner-docs',
+      );
+    }
+    const image = await prepareUploadImage(
       file.buffer,
-      file.originalname,
       file.mimetype,
-      kind === 'document' ? 'partner-docs' : 'partner-photos',
+      parseUploadPurpose(purpose),
     );
+    const stored = await this.storage.uploadBuffer(
+      image.buffer,
+      file.originalname,
+      image.mimeType,
+      'partner-photos',
+    );
+    return {
+      ...stored,
+      width: image.width,
+      height: image.height,
+      warnings: image.warnings,
+    };
   }
 
   @ApiBearerAuth()
