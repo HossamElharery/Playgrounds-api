@@ -6,7 +6,6 @@ if (dsn) {
   Sentry.init({
     dsn,
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1,
-    sendDefaultPii: false,
     beforeSend(event) {
       if (event.user) delete event.user.email;
       if (event.request) {
