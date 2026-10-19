@@ -5,6 +5,9 @@ import { WalletService } from './wallet.service';
 import { WalletController } from './wallet.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsConfigService } from './payments-config.service';
+import { ConfigService } from '@nestjs/config';
+import { PAYMENT_GATEWAY } from './payment-gateway.interface';
+import { createGateway } from './gateways/create-gateway';
 
 @Module({
   imports: [NotificationsModule],
@@ -13,8 +16,9 @@ import { PaymentsConfigService } from './payments-config.service';
     { provide: PAYMENT_PROVIDER, useExisting: MockPaymentProvider },
     WalletService,
     PaymentsConfigService,
+    { provide: PAYMENT_GATEWAY, useFactory: (config: ConfigService) => createGateway(config), inject: [ConfigService] },
   ],
   controllers: [WalletController],
-  exports: [PAYMENT_PROVIDER, WalletService, PaymentsConfigService],
+  exports: [PAYMENT_PROVIDER, PAYMENT_GATEWAY, WalletService, PaymentsConfigService],
 })
 export class PaymentsModule {}

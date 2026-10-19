@@ -17,6 +17,9 @@ import { NotificationsService } from '../../src/modules/notifications/notificati
 import { CommissionService } from '../../src/modules/finance/commission.service';
 import { LedgerService } from '../../src/modules/finance/ledger.service';
 import { PaymentsConfigService } from '../../src/modules/payments/payments-config.service';
+import { PaymentIntentsService } from '../../src/modules/bookings/payment-intents.service';
+import { PaymentReconciler } from '../../src/modules/bookings/payment-reconciler.service';
+import { TestGateway } from './test-gateway';
 import { VenueListingService } from '../../src/modules/venues/venue-listing.service';
 import type { AuthenticatedUser } from '../../src/common/types/authenticated-user.interface';
 
@@ -49,19 +52,27 @@ export const notifier = new BookingNotifier(prisma, notifications, emitter as ne
 const commission = new CommissionService(prisma, {} as never);
 const ledger = new LedgerService(prisma, commission);
 export const provider = { isLive: false, charge: jest.fn(), refund: jest.fn() };
+export const gateway = new TestGateway();
+const testConfig = {
+  get: (key: string) =>
+    ({ QR_SIGNING_SECRET: 'qr-secret-'.repeat(5), API_PUBLIC_URL: 'https://api.test', SITE_URL: 'https://app.test' } as Record<string, string>)[key],
+};
 
 export const bookings = new BookingsService(
   prisma,
-  { get: () => 'qr-secret-'.repeat(5) } as never,
+  testConfig as never,
   provider as never,
   { onBookingCompleted: jest.fn() } as never,
   { debit: jest.fn(), credit: jest.fn() } as never,
   notifications,
   commission,
   ledger,
-  new PaymentsConfigService(provider as never),
+  new PaymentsConfigService(provider as never, gateway),
   notifier,
+  gateway,
 );
+export const intents = new PaymentIntentsService(prisma, gateway, bookings, notifications, ledger, testConfig as never);
+export const reconciler = new PaymentReconciler(prisma, intents, gateway);
 export const listing = new VenueListingService(prisma, notifications, emitter as never);
 
 let seq = 0;

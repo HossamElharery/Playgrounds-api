@@ -67,6 +67,16 @@ export const envValidationSchema = Joi.object({
 
   QR_SIGNING_SECRET: Joi.string().min(32).required(),
 
+  // Card payments. Empty = disabled: every booking is pay-at-venue. `paymob` needs its keys, or boot fails.
+  PAYMENT_GATEWAY: Joi.string().valid('', 'paymob').default(''),
+  PAYMOB_SECRET_KEY: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
+  PAYMOB_PUBLIC_KEY: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
+  PAYMOB_HMAC_SECRET: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
+  PAYMOB_INTEGRATION_IDS: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().pattern(/^\d+(,\s*\d+)*$/).required(), otherwise: Joi.string().allow('').optional() }),
+  PAYMOB_BASE_URL: Joi.string().uri().allow('').optional(),
+  PAYMENT_RETURN_BASE_URL: Joi.string().uri().allow('').optional(),
+  API_PUBLIC_URL: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().uri().required(), otherwise: Joi.string().uri().allow('').optional() }),
+
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
   SITE_URL: Joi.string().uri().default('https://matchena.com'),
   INDEXNOW_KEY: Joi.string().allow('').optional(),

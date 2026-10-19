@@ -130,6 +130,7 @@ model User {
   squadInviteHoldsFrom      SquadInviteHold[]         @relation("SquadInviteHoldFrom")
   coinLedger                CoinLedgerEntry[]
   walletLedger              WalletLedgerEntry[]
+  paymentIntents            PaymentIntent[]
   walletWithdrawals         WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
   walletWithdrawalsResolved WalletWithdrawalRequest[] @relation("WalletWithdrawalResolvedBy")
   questProgress             UserQuestProgress[]
@@ -873,6 +874,7 @@ model Booking {
   // see prisma/migrations/20260904031300_booking_slot_uniqueness and
   // prisma/migrations/20260905090000_booking_slot_range_exclude.
   platformRequests    PlatformBookingRequest[]
+  paymentIntents      PaymentIntent[]
 
   @@index([courtId, slotStart])
   @@index([userId])
@@ -3424,4 +3426,61 @@ model SlotChange {
   createdAt DateTime  @default(now())
 
   @@index([createdAt])
+}
+
+enum PaymentIntentStatus {
+  created
+  pending
+  paid
+  failed
+  expired
+  cancelled
+  refund_pending
+  refunded
+  partially_refunded
+  needs_review
+}
+
+/// One attempt to pay a held booking by card. The amount is the booking's server-computed
+/// total. Partial unique indexes (one open attempt per booking, one intent per provider
+/// reference) live in migrations/20261021090000_payment_intents.
+model PaymentIntent {
+  id                 String              @id @default(uuid())
+  bookingId          String
+  booking            Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  provider           String
+  status             PaymentIntentStatus @default(created)
+  amount             Int
+  currency           String
+  providerOrderRef   String?
+  providerPaymentRef String?
+  checkoutUrl        String?
+  failureCode        String?
+  refundedAmount     Int                 @default(0)
+  /// Money owed back to the player that the provider has not yet confirmed returning (retried by the reconciler).
+  refundDueAmount    Int                 @default(0)
+  expiresAt          DateTime
+  paidAt             DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @default(now()) @updatedAt
+
+  @@index([bookingId])
+  @@index([status, expiresAt])
+}
+
+/// Every provider notification, once per (provider, eventId).
+model PaymentWebhookEvent {
+  id          String    @id @default(uuid())
+  provider    String
+  eventId     String
+  intentId    String?
+  status      String
+  outcome     String?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventId])
+  @@index([intentId])
 }

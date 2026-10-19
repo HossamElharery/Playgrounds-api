@@ -45,6 +45,7 @@ import {
 } from '../payments/payment-provider.interface';
 import { WalletService } from '../payments/wallet.service';
 import { PaymentsConfigService } from '../payments/payments-config.service';
+import { PAYMENT_GATEWAY, GatewayError, type PaymentGateway } from '../payments/payment-gateway.interface';
 import { BookingNotifier } from './booking-notifier.service';
 import { lockVenueSlots } from '../../common/utils/slot-lock.util';
 import { assertVenueBookable, computeVenueState, withoutInternalVenueFields } from '../../common/utils/venue-visibility.util';
@@ -106,6 +107,7 @@ export class BookingsService {
     private readonly ledger: LedgerService,
     private readonly paymentsConfig: PaymentsConfigService,
     private readonly notifier: BookingNotifier,
+    @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
   private readonly logger = new Logger(BookingsService.name);
@@ -609,6 +611,146 @@ export class BookingsService {
     return this.validatePromo(code, userId, amount);
   }
 
+  /**
+   * Tells the player (and, through BookingNotifier, the venue side) that a booking is
+   * confirmed. Idempotent through dedup keys, so it is safe from the confirm call, the
+   * payment notification and any retry.
+   */
+  async announceConfirmed(bookingId: string): Promise<void> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { venue: { select: { id: true, nameEn: true, nameAr: true } } },
+    });
+    if (!booking || booking.status !== 'confirmed') return;
+    await this.notifications
+      .create({
+        dedupKey: `booking-confirmed-player:${bookingId}:${booking.userId}`,
+        userId: booking.userId,
+        category: 'bookings',
+        titleEn: `Booking confirmed — ${booking.venue.nameEn}`,
+        titleAr: `تم تأكيد الحجز — ${booking.venue.nameAr}`,
+        bodyEn: booking.paymentStatus === 'paid' ? `Code ${booking.code} · Paid` : `Code ${booking.code}`,
+        bodyAr: booking.paymentStatus === 'paid' ? `كود ${booking.code} · مدفوع` : `كود ${booking.code}`,
+        deepLink: '/app/bookings',
+        payload: { kind: 'booking_confirmed', bookingId, venueId: booking.venueId, code: booking.code },
+      })
+      .catch((error: unknown) =>
+        this.logger.warn(`Player booking notice failed for ${bookingId}: ${String(error)}`),
+      );
+    await this.notifier.notifyVenueSide(bookingId, 'booking_confirmed');
+  }
+
+  /** Releases a hold nobody is going to pay for (payment window over), restoring coins. */
+  async releaseUnpaidHold(bookingId: string): Promise<void> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { id: true, userId: true, coinsRedeemed: true, status: true },
+    });
+    if (booking?.status === 'held') await this.releaseHold(booking);
+  }
+
+  /**
+   * Called from inside the payment-notification transaction, with the venue's slot lock held
+   * and the intent row locked. Turns a verified payment into a confirmed booking.
+   *
+   *   confirmed          the hold was still there
+   *   revived            the hold had lapsed but the time was still free, so the player keeps it
+   *   already_confirmed  the booking was confirmed by something else; this payment is a duplicate
+   *   slot_lost          somebody took the time first; this payment must be refunded
+   */
+  async confirmPaidByGateway(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    paid: { amount: number; currency: string; provider: string; providerPaymentRef: string },
+  ): Promise<'confirmed' | 'revived' | 'already_confirmed' | 'slot_lost'> {
+    await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${bookingId} FOR UPDATE`;
+    const booking = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    if (booking.status === 'confirmed' || booking.status === 'completed') return 'already_confirmed';
+
+    let outcome: 'confirmed' | 'revived' = 'confirmed';
+    if (booking.status !== 'held') {
+      // Only a lapsed hold can be revived: a booking somebody cancelled stays cancelled (and is refunded).
+      if (booking.status !== 'cancelled' || booking.cancelledAt || booking.slotStart <= new Date()) return 'slot_lost';
+      // The hold lapsed before the money arrived. Keep the player's slot if nobody took it.
+      const busy = await tx.booking.findFirst({
+        where: {
+          id: { not: bookingId },
+          status: { in: ['held', 'confirmed'] },
+          slotStart: { lt: booking.slotEnd },
+          slotEnd: { gt: booking.slotStart },
+          OR: [{ courtId: booking.courtId }, { userId: booking.userId }],
+        },
+        select: { id: true },
+      });
+      const blocked = await tx.calendarBlock.findFirst({
+        where: {
+          venueId: booking.venueId,
+          OR: [{ courtId: booking.courtId }, { courtId: null }],
+          startsAt: { lt: booking.slotEnd },
+          endsAt: { gt: booking.slotStart },
+        },
+        select: { id: true },
+      });
+      if (busy || blocked) return 'slot_lost';
+      if (booking.coinsRedeemed > 0) {
+        // The coins were given back when the hold lapsed: spend them again, or give the slot up.
+        const spent = await tx.user.updateMany({
+          where: { id: booking.userId, coinsBalance: { gte: booking.coinsRedeemed } },
+          data: { coinsBalance: { decrement: booking.coinsRedeemed } },
+        });
+        if (spent.count !== 1) return 'slot_lost';
+        await tx.coinLedgerEntry.create({
+          data: { userId: booking.userId, amount: -booking.coinsRedeemed, reason: 'booking_redemption', bookingId },
+        });
+      }
+      outcome = 'revived';
+    }
+
+    await tx.$executeRaw`SAVEPOINT confirm_paid`;
+    try {
+      const updated = await tx.booking.updateMany({
+        where: { id: bookingId, status: booking.status },
+        data: {
+          status: 'confirmed',
+          holdExpiresAt: null,
+          cancelledAt: null,
+          cancellationReason: null,
+          paymentMethod: 'card',
+          paymentStatus: 'paid',
+          isSplitPayment: false,
+          qrPayload: signQrPayload(bookingId, this.config.get<string>('QR_SIGNING_SECRET')!),
+        },
+      });
+      if (updated.count !== 1) {
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT confirm_paid`;
+        return 'slot_lost';
+      }
+    } catch (error) {
+      if (!isBookingSlotConflict(error) && !isUserBookingTimeConflict(error)) throw error;
+      // The exclusion constraint is the final word: the time is taken.
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT confirm_paid`;
+      return 'slot_lost';
+    }
+    await tx.$executeRaw`RELEASE SAVEPOINT confirm_paid`;
+
+    await tx.payment.create({
+      data: {
+        bookingId,
+        amount: paid.amount,
+        currency: paid.currency,
+        method: 'card',
+        status: 'paid',
+        providerRef: `gw:${paid.provider}:${paid.providerPaymentRef}`,
+      },
+    });
+    if (booking.promoCodeId) {
+      const used = await tx.promoRedemption.findFirst({ where: { promoCodeId: booking.promoCodeId, bookingId }, select: { id: true } });
+      if (!used) await tx.promoRedemption.create({ data: { promoCodeId: booking.promoCodeId, userId: booking.userId, bookingId } });
+    }
+    await this.ledger.syncBookingLedger(tx, bookingId, 'payment_paid');
+    return outcome;
+  }
+
   private holdExpired() {
     return new ApiException(
       HttpStatus.CONFLICT,
@@ -735,6 +877,15 @@ export class BookingsService {
       }
     }
 
+    // With a card gateway live, an online booking is confirmed by the verified payment
+    // notification, never by this call (and never by a redirect the browser claims).
+    if (mode === 'online' && this.paymentsConfig.isGatewayLive() && booking.totalAmount > 0 && booking.paymentStatus !== 'paid') {
+      if (isSplit) {
+        throw new ApiException(HttpStatus.CONFLICT, 'PAYMENT_SPLIT_NOT_SUPPORTED', 'Split payment is not available for card payments');
+      }
+      throw new ApiException(HttpStatus.PAYMENT_REQUIRED, 'PAYMENT_REQUIRED', 'Pay online to confirm this booking');
+    }
+
     const paymentStatus =
       mode === 'at_venue' ? 'pending' : isSplit ? 'partial' : 'paid';
     const paymentMethod =
@@ -745,7 +896,8 @@ export class BookingsService {
     );
 
     const confirmedBooking = await this.prisma.$transaction(async (tx) => {
-        if (mode === 'online') {
+        const takeWallet = mode === 'online' && chargeAmount > 0;
+        if (takeWallet) {
           await this.wallet.debit(tx, {
             userId,
             amount: chargeAmount,
@@ -775,7 +927,7 @@ export class BookingsService {
           throw this.holdExpired();
         }
 
-        if (mode === 'online') {
+        if (takeWallet) {
           await tx.payment.create({
             data: {
               bookingId,
@@ -807,24 +959,7 @@ export class BookingsService {
         await this.ledger.syncBookingLedger(tx, bookingId, 'payment_paid');
         return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
     });
-    await this.notifications
-      .create({
-        dedupKey: `booking-confirmed-player:${bookingId}:${userId}`,
-        userId,
-        category: 'bookings',
-        titleEn: `Booking confirmed — ${booking.venue.nameEn}`,
-        titleAr: `تم تأكيد الحجز — ${booking.venue.nameAr}`,
-        bodyEn: `Code ${confirmedBooking.code}`,
-        bodyAr: `كود ${confirmedBooking.code}`,
-        deepLink: '/app/bookings',
-        payload: { kind: 'booking_confirmed', bookingId, venueId: booking.venueId, code: confirmedBooking.code },
-      })
-      .catch((error: unknown) =>
-        this.logger.warn(`Player booking notice failed for ${bookingId}: ${String(error)}`),
-      );
-    // The venue side hears about it too: owner plus staff who can see this venue.
-    // Retried and monitored inside the notifier; never fails the booking.
-    await this.notifier.notifyVenueSide(bookingId, 'booking_confirmed');
+    await this.announceConfirmed(bookingId);
     return confirmedBooking;
   }
 
@@ -1210,6 +1345,13 @@ export class BookingsService {
     if (wasPaid && refundPct > 0) {
       refundAmount = Math.round((booking.totalAmount * refundPct) / 100);
     }
+    // A card payment made through the gateway is refunded through the gateway, to the card.
+    const cardIntent =
+      wasPaid && refundAmount > 0
+        ? await this.prisma.paymentIntent.findFirst({
+            where: { bookingId: booking.id, status: { in: ['paid', 'partially_refunded'] } },
+          })
+        : null;
 
     const settled = await this.prisma.$transaction(async (tx) => {
       const cancelled = await tx.booking.updateMany({
@@ -1224,7 +1366,47 @@ export class BookingsService {
       if (cancelled.count !== 1) {
         throw new ConflictException('Booking was already resolved');
       }
-      if (refundAmount > 0) {
+      // A checkout still open for this booking can no longer confirm it.
+      await tx.paymentIntent.updateMany({
+        where: { bookingId: booking.id, status: { in: ['created', 'pending'] } },
+        data: { status: 'cancelled' },
+      });
+      if (refundAmount > 0 && cardIntent) {
+        const room = cardIntent.amount - cardIntent.refundedAmount;
+        const due = Math.min(refundAmount, room);
+        refundAmount = due;
+        let done: { providerRefundRef: string } | null = null;
+        try {
+          done = await this.gateway.refund({
+            providerPaymentRef: cardIntent.providerPaymentRef!,
+            amount: due,
+            currency: cardIntent.currency,
+            idempotencyKey: `refund:${cardIntent.id}`,
+          });
+        } catch (error) {
+          if (!(error instanceof GatewayError)) throw error;
+          // The provider is unreachable: the cancellation stands and the refund is retried
+          // by the reconciler until the provider confirms it. The money is never forgotten.
+          await tx.paymentIntent.update({ where: { id: cardIntent.id }, data: { status: 'refund_pending', refundDueAmount: due } });
+        }
+        if (done) {
+          await tx.payment.create({
+            data: {
+              bookingId: booking.id,
+              amount: -due,
+              currency: booking.currency,
+              method: 'card',
+              status: 'refunded',
+              providerRef: `gwr:${cardIntent.provider}:${done.providerRefundRef}`,
+            },
+          });
+          const total = cardIntent.refundedAmount + due;
+          await tx.paymentIntent.update({
+            where: { id: cardIntent.id },
+            data: { refundedAmount: total, status: total >= cardIntent.amount ? 'refunded' : 'partially_refunded' },
+          });
+        }
+      } else if (refundAmount > 0) {
         if (!refundToWallet) {
           // Only after this request has won the cancellation: a concurrent cancel
           // that lost the race above never reaches the provider, so a refund is
@@ -1289,8 +1471,8 @@ export class BookingsService {
         titleAr: cancelledByPlayer
           ? 'تم إلغاء حجزك'
           : 'الملعب ألغى حجزك',
-        bodyEn: refundAmount > 0 ? `${moneyText(refundAmount, booking.currency, 'en')} refunded to your wallet` : 'No refund was due under the cancellation policy',
-        bodyAr: refundAmount > 0 ? `تم رد ${moneyText(refundAmount, booking.currency, 'ar')} إلى محفظتك` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
+        bodyEn: refundAmount > 0 ? `${moneyText(refundAmount, booking.currency, 'en')} ${cardIntent ? 'is being refunded to your card' : 'refunded to your wallet'}` : 'No refund was due under the cancellation policy',
+        bodyAr: refundAmount > 0 ? `${cardIntent ? 'جاري رد' : 'تم رد'} ${moneyText(refundAmount, booking.currency, 'ar')} إلى ${cardIntent ? 'بطاقتك' : 'محفظتك'}` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
         deepLink: '/app/bookings',
         payload: { kind: 'booking_cancelled', bookingId: booking.id, venueId: booking.venueId, refundAmount },
       })

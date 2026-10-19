@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { BookingsService } from './bookings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PAYMENT_PROVIDER } from '../payments/payment-provider.interface';
+import { PAYMENT_GATEWAY } from '../payments/payment-gateway.interface';
 import { RewardsService } from '../rewards/rewards.service';
 import { WalletService } from '../payments/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -71,7 +72,8 @@ describe('BookingsService', () => {
           provide: CommissionService,
           useValue: { resolveBps: jest.fn().mockResolvedValue(1000) },
         },
-        { provide: PaymentsConfigService, useValue: { isOnlinePaymentsLive: () => false } },
+        { provide: PaymentsConfigService, useValue: { isOnlinePaymentsLive: () => false, isGatewayLive: () => false } },
+        { provide: PAYMENT_GATEWAY, useValue: { name: 'none', isLive: false } },
         { provide: BookingNotifier, useValue: { notifyVenueSide: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: LedgerService,

@@ -325,7 +325,7 @@ Startup fails fast with a clear message (Joi schema in `common/config/env.valida
 
 - **SMS delivery** — `OtpDelivery` logs to the console. Implement the interface (`modules/sms/otp-delivery.interface.ts`) against a real provider (Twilio etc.) and swap it in `sms.module.ts`; nothing else changes, because the OTP never touches an HTTP response.
 - **OAuth secrets** — Google/Facebook verify real tokens correctly but 501 until real client IDs/secrets are in `.env`. Passkeys (Face ID / fingerprint) work without any of those.
-- **Payments** — `MockPaymentProvider` always "succeeds" (except cash, which stays pending). Swap `PaymentProvider` for a real PSP integration in `payments.module.ts`; `BookingsService` never changes.
+- **Payments** — see section 13. The legacy wallet `MockPaymentProvider` always "succeeds" (except cash, which stays pending). Swap `PaymentProvider` for a real PSP integration in `payments.module.ts`; `BookingsService` never changes.
 - **S3** — `StorageProvider` interface has a full working S3 implementation; it's just not the active one until `STORAGE_PROVIDER=s3` and real AWS credentials are set.
 - **Squad voice media path** — WebRTC **signaling is fully implemented** (offer/answer/ICE/speaking/hangup + `GET /squad/ice-servers`). Audio itself is peer-to-peer in the browser. A TURN server (`TURN_URLS`) is needed for players behind strict NAT; a hosted SFU (LiveKit/mediasoup) is only required if you outgrow a 7-person mesh.
 - **Push notifications (FCM)** — device-token registration, per-category preferences, in-app inbox, and socket `notification.created` all work. HTTP push fires when `FCM_SERVER_KEY` is set; otherwise tokens are stored and delivery stays in-app/socket.
@@ -526,7 +526,50 @@ New stable codes: `HOLD_EXPIRED`, `ACCOUNT_RESTRICTED`, `SLOT_IN_PAST`, `VENUE_L
 Failure handling: 3 retries with back-off, then `logger.error` + Sentry; `BookingNoticeReconciler` (every minute, advisory-locked) re-sends any confirmed Matchena booking from the last 30 minutes that has no owner notification. FCM sends retry once or twice on 429/5xx. A push failure never fails a booking.
 
 ### 12.4 Payments — what is real
-`PAYMENT_PROVIDER` is bound to `MockPaymentProvider` (`isLive = false`). There is **no live PSP integration** (no charge/intent API, no webhook endpoint, no signature verification) in this codebase. Online mode is derived from `PaymentsConfigService.isOnlinePaymentsLive()` (the provider's `isLive`) instead of a hard-coded constant, so it stays `at_venue` until a live provider exists; in `NODE_ENV=production` the mock refuses every electronic charge/refund (`503`). The player wallet is an internal ledger; its top-up needs a live provider.
+See section 13. Short version: a provider-agnostic card flow now exists (PaymentIntent, signed notifications, refunds) with a **Paymob adapter that has not been run against Paymob's sandbox**; it is off until `PAYMENT_GATEWAY=paymob` is configured, and until then every booking is pay-at-venue. The player wallet is an internal ledger; its top-up still needs a live provider.
 
 ### 12.5 Tests
-`npm run test:integration` runs the real-Postgres suites: `booking-concurrency` (exclusion constraints, 10-way race, overlapping ranges, same-player overlap, double-click, expiry, confirm/cancel/expiry races, venue changes between Hold and Confirm, owner notifications, staff scope) and `venue-listing` (owner/admin controls, audit, readiness, admin precedence, public surfaces). It needs `TEST_PG_URL` (server URL) and creates a throwaway `*_test` database.
+`npm run test:integration` runs the real-Postgres suites: `booking-concurrency` (exclusion constraints, 10-way race, overlapping ranges, same-player overlap, double-click, expiry, confirm/cancel/expiry races, venue changes between Hold and Confirm, owner notifications, staff scope) and `venue-listing` (owner/admin controls, audit, readiness, admin precedence, public surfaces), `slot-live` (the change outbox and the realtime relay) and `payments` (the whole card flow against a controllable test gateway). It needs `TEST_PG_URL` (server URL) and creates a throwaway `*_test` database.
+
+## 13. Live availability and card payments (2026-10-21)
+
+### 13.1 Live slot availability
+* Every change to a booking's court/time/status, and every calendar block, is recorded by a Postgres trigger into the `SlotChange` outbox (same transaction as the change, so a rolled-back change emits nothing).
+* `SlotChangeRelay` runs on **every** backend instance, polls the outbox once a second from its own cursor, coalesces bursts per venue/court/range and emits `slots.changed` to the Socket.IO room `venue-slots:<venueId>`. Clients join with `venue.slots.watch` (public rooms; payload holds only ids and time ranges, never player data). Venue visibility changes are published the same way. Because each instance reads the database, it works with several instances and without Redis.
+* The hold transaction is READ COMMITTED and takes a per-venue advisory lock (`pg_advisory_xact_lock`) as its first statement, so concurrent holds of different free slots do not fail and a calendar block cannot slip in between the availability check and the insert. The exclusion constraints stay the last line of defence.
+* Apps (`SlotsLiveService`) refresh only what is on screen, with a ~300 ms debounce, and fall back to a re-read before every hold.
+
+### 13.2 Card payment flow (provider-agnostic)
+```
+held booking ─ POST /bookings/:id/pay {lang} ─▶ PaymentIntent(pending) + checkoutUrl   (amount = booking.totalAmount, server-side)
+player pays on the provider page ─▶ provider POSTs  /payments/webhooks/:provider  (HMAC verified)
+                                    └▶ PaymentIntentsService.applyEvent ─▶ booking confirmed, Payment row, ledger, notifications
+redirect back  /:lang/app/payment/return?booking=…  ─▶ polls GET /bookings/:id/payment (the server decides; a redirect proves nothing)
+```
+* `POST /bookings/:id/confirm` answers `402 PAYMENT_REQUIRED` for an online booking while a gateway is live; it can never confirm a card payment.
+* One open intent per booking (partial unique index): double taps return the same checkout. The first checkout stretches the hold to 10 minutes (once).
+* `applyEvent` runs under the venue's slot lock and a row lock on the intent, records each provider event once (`PaymentWebhookEvent`, unique `(provider, eventId)`), and checks amount and currency against the intent. Outcomes: `confirmed`, `revived` (paid just after the hold lapsed and the time was still free), `slot_lost` (somebody took it, or the player cancelled: refund), `duplicate_payment` (second payment for the same booking: refunded), `amount_mismatch` (booking stays held, intent `needs_review`, Sentry).
+* Refunds: cancelling a paid card booking refunds through the gateway (`refund:<intentId>` key). If the provider is unreachable the cancellation stands, the intent becomes `refund_pending` with `refundDueAmount`, and `PaymentReconciler` retries every minute (Sentry alert after 6 h).
+* `PaymentReconciler` (every minute, advisory-locked) also asks the provider about open intents older than 2 minutes (lost notifications) and expires abandoned ones 15 minutes after the hold. `GET /bookings/:id/payment` does the same lookup for the player who is waiting.
+* Notifications: player "booking confirmed" (dedupKey), owner/staff "new booking" with `Paid` and the amount for those allowed to see money, player "payment could not be used / refund sent", player reminder an hour before the game (`booking-reminder-player:<id>`).
+* `GET /admin/payments/attention` (admin) lists intents in `needs_review` or `refund_pending` (API only; there is no admin screen for it yet).
+* Not supported with card payment: split payment (`409 PAYMENT_SPLIT_NOT_SUPPORTED`) and recurring-series confirmation (the series confirm answers `402 PAYMENT_REQUIRED`).
+* Fail-closed: with `PAYMENT_GATEWAY` empty the `DisabledGateway` is bound, `GET /payments/config` says `card.enabled=false`, `POST /pay` answers `503 ONLINE_PAYMENTS_NOT_LIVE`, and bookings stay pay-at-venue. `API_PUBLIC_URL` and all `PAYMOB_*` values are required at boot when `paymob` is selected.
+
+### 13.3 Environment
+`PAYMENT_GATEWAY` (`paymob` or empty), `PAYMOB_SECRET_KEY`, `PAYMOB_PUBLIC_KEY`, `PAYMOB_HMAC_SECRET`, `PAYMOB_INTEGRATION_IDS`, `PAYMOB_BASE_URL` (optional), `API_PUBLIC_URL`, `PAYMENT_RETURN_BASE_URL` (optional, defaults to `SITE_URL`). Keys never appear in logs or error messages.
+
+### 13.4 What is verified and what is not
+Verified: the whole flow against a controllable in-process gateway on real PostgreSQL (`test/payments.e2e-spec.ts`: signature rejection, replays, concurrent deliveries, amount mismatch, late payment revive/refund, cancelled-while-paying, provider outages, reconciliation), and the Paymob adapter against fixtures (HMAC field order, status mapping, request shapes) in `paymob.gateway.spec.ts`.
+**Not verified:** the Paymob adapter against Paymob's real sandbox or production. The HMAC field list, the Intention API fields, the transaction-inquiry and refund endpoints were written from Paymob's public documentation. Paymob's refund endpoint does not honour an idempotency key, so a refund whose answer was lost (timeout after Paymob accepted it) could be repeated by the reconciler; Paymob rejects a refund above the captured amount, which bounds the risk.
+
+### 13.5 Sandbox checklist before `PAYMENT_GATEWAY=paymob` in production
+1. Create a sandbox integration; set the `PAYMOB_*` values and a public `API_PUBLIC_URL`; in the Paymob dashboard set the transaction-processed callback to `<API_PUBLIC_URL>/api/v1/payments/webhooks/paymob`.
+2. Pay a test booking with a success card: expect the booking `confirmed`, one `Payment` row (`gw:paymob:<txn>`), owner and player notifications, and the return page showing "Paid".
+3. Pay with a declined card: intent `failed`, booking still `held`, retry works.
+4. Replay the success callback (same body and `hmac`): response `outcome: duplicate`, nothing changes.
+5. Alter one field of a callback: `401`.
+6. Let the hold lapse, pay late with the slot free (`revived`) and with the slot taken (`slot_lost`, refund arrives).
+7. Cancel a paid booking: refund appears in the Paymob dashboard and as a `gwr:paymob:` payment row.
+8. Stop the API during a payment, start it again: the reconciler confirms the booking within about two minutes.
+9. If any field name differs from the adapter (`paymob.gateway.ts`: `PAYMOB_HMAC_FIELDS`, `toEvent`, `createCheckout`), fix the adapter and its fixture spec; nothing else changes.
