@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsObject,
@@ -57,6 +59,13 @@ export class RegisterDeviceTokenDto {
   @IsOptional()
   @IsIn(['web', 'ios', 'android'])
   platform?: string;
+
+  @ApiPropertyOptional({ example: ['native-call-ui'] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsIn(['native-call-ui'], { each: true })
+  capabilities?: string[];
 }
 
 export class UpdateNotificationPrefsDto {

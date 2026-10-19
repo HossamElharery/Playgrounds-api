@@ -59,40 +59,61 @@ export class FcmService {
   }
 
   async sendToUser(userId: string, message: FcmMessage): Promise<void> {
-    await this.deliver(userId, (token) => buildMessage(token, message));
+    await this.deliver(userId, (device) => buildMessage(device.token, message));
   }
 
-  async sendCall(userId: string, message: FcmCallMessage): Promise<void> {
-    await this.deliver(userId, (token) => buildCallMessage(token, message));
+  /**
+   * Rings or reports a call. Returns how many devices FCM accepted the message for (0 when push is
+   * not configured or the person has no device), so the caller can tell "pushed" from "nobody to push to".
+   * Android builds with the native call screen get a data-only message that their app turns into a
+   * full-screen incoming call; every other device gets the ordinary notification.
+   */
+  async sendCall(userId: string, message: FcmCallMessage): Promise<number> {
+    return this.deliver(userId, (device) =>
+      message.kind === 'ring' && isNativeCallDevice(device)
+        ? buildNativeCallMessage(device.token, message)
+        : buildCallMessage(device.token, message),
+    );
   }
 
-  private async deliver(userId: string, build: (token: string) => object): Promise<void> {
-    if (!this.client || !this.account) return;
+  /** Stops a ringing call screen on the person's Android devices (the call ended or was answered). */
+  async sendCallCancel(userId: string, callId: string): Promise<number> {
+    return this.deliver(userId, (device) => (isNativeCallDevice(device) ? buildNativeCallCancel(device.token, callId) : null));
+  }
+
+  private async deliver(userId: string, build: (device: DeviceInfo) => object | null): Promise<number> {
+    if (!this.client || !this.account) return 0;
     const tokens = await this.prisma.deviceToken.findMany({
       where: { userId },
-      select: { id: true, token: true, platform: true },
+      select: { id: true, token: true, platform: true, capabilities: true },
     });
-    if (!tokens.length) return;
+    if (!tokens.length) return 0;
     let accessToken: string | null | undefined;
     try {
       accessToken = (await this.client.getAccessToken()).token;
     } catch (err) {
       this.logger.warn(`FCM auth failed: ${String(err)}`);
-      return;
+      return 0;
     }
-    if (!accessToken) return;
+    if (!accessToken) return 0;
     const url = `https://fcm.googleapis.com/v1/projects/${this.account.project_id}/messages:send`;
+    let accepted = 0;
     await Promise.all(
       tokens.map(async (device) => {
+        const message = build(device);
+        if (!message) return;
         try {
           const res = await sendWithRetry(() =>
             fetch(url, {
               method: 'POST',
               headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: build(device.token) }),
+              body: JSON.stringify({ message }),
             }),
           );
-          if (res.ok) return;
+          if (res.ok) {
+            accepted += 1;
+            return;
+          }
           const detail = await res.text();
           if (res.status === 404 || /UNREGISTERED|registration-token-not-registered/i.test(detail) ||
               (res.status === 400 && /INVALID_ARGUMENT/.test(detail) && /token/i.test(detail))) {
@@ -106,7 +127,45 @@ export class FcmService {
         }
       }),
     );
+    return accepted;
   }
+}
+
+interface DeviceInfo {
+  token: string;
+  platform: string;
+  capabilities: string[];
+}
+
+export function isNativeCallDevice(device: Pick<DeviceInfo, 'platform' | 'capabilities'>): boolean {
+  return device.platform === 'android' && (device.capabilities ?? []).includes('native-call-ui');
+}
+
+/**
+ * Data-only, high priority: the Android app (not the system tray) handles it and shows the
+ * full-screen incoming call. Short TTL, so a phone that comes online late does not ring for a dead call.
+ */
+export function buildNativeCallMessage(token: string, message: FcmCallMessage) {
+  return {
+    token,
+    data: {
+      type: 'call',
+      kind: 'ring',
+      callId: message.callId,
+      title: message.title,
+      body: message.body || message.title,
+      deepLink: message.deepLink,
+    },
+    android: { priority: 'HIGH', ttl: `${CALL_PUSH_TTL_S}s`, collapse_key: `call:${message.callId}` },
+  };
+}
+
+export function buildNativeCallCancel(token: string, callId: string) {
+  return {
+    token,
+    data: { type: 'call', kind: 'cancel', callId },
+    android: { priority: 'HIGH', ttl: '60s', collapse_key: `call:${callId}` },
+  };
 }
 
 export function buildMessage(token: string, message: FcmMessage) {

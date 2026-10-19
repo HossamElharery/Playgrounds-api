@@ -573,3 +573,11 @@ Verified: the whole flow against a controllable in-process gateway on real Postg
 7. Cancel a paid booking: refund appears in the Paymob dashboard and as a `gwr:paymob:` payment row.
 8. Stop the API during a payment, start it again: the reconciler confirms the booking within about two minutes.
 9. If any field name differs from the adapter (`paymob.gateway.ts`: `PAYMOB_HMAC_FIELDS`, `toEvent`, `createCheckout`), fix the adapter and its fixture spec; nothing else changes.
+
+## 14. Team calls and phone push (2026-10-22)
+* `DeviceToken.capabilities` (`native-call-ui`) is reported by the app at registration (`POST /notifications/device-tokens { capabilities }`). `FcmService.sendCall` sends a **data-only** `ring` message to Android devices with that capability and the ordinary notification to everything else; `sendCallCancel` stops a ring (same `collapse_key` as the ring, so a ring that was never delivered is replaced).
+* `CallsService.pushRing` returns how many devices FCM accepted. If at least one did, the caller gets `call.ringing` and the call is not recorded as `unreached` when nobody opens it (it becomes `missed`, with the missed-call notice). `finish` and `accept` send the cancel.
+* The app confirms "ringing" over the socket only while visible: a suspended app that still receives the socket event no longer cancels the phone-push fallback.
+* In production a missing `FIREBASE_SERVICE_ACCOUNT` is logged as an error at boot: without it no phone is ever pushed.
+* Apple (iOS) would need PushKit/CallKit and an APNs VoIP key; not implemented. Details of the Android side: frontend `PROJECT_BLUEPRINT.md` §26.
+

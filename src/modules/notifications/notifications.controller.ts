@@ -85,6 +85,7 @@ export class NotificationsController {
       user.id,
       dto.token,
       dto.platform ?? 'web',
+      dto.capabilities ?? [],
     );
   }
 

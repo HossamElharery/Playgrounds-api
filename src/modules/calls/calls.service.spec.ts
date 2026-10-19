@@ -208,7 +208,7 @@ function setup(env: Record<string, string> = { STAFF_CALLS_ENABLED: 'true' }) {
     emitToUser: (to: string, event: Row) => emitted.push({ to, event }),
   };
   const notifications = { create: jest.fn().mockResolvedValue({}) };
-  const fcm = { sendCall: jest.fn().mockResolvedValue(undefined) };
+  const fcm = { sendCall: jest.fn().mockResolvedValue(0), sendCallCancel: jest.fn().mockResolvedValue(0) };
   const webPush = { sendCall: jest.fn().mockResolvedValue(undefined) };
   const squad = { iceServers: jest.fn().mockReturnValue({ iceServers: [] }) };
   const service = new CallsService(
@@ -350,6 +350,38 @@ describe('CallsService', () => {
       await service.create(OWNER, ALICE);
       await jest.advanceTimersByTimeAsync(1);
       expect(fcm.sendCall).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells the caller it is ringing once the phone push is accepted, and does not call it unreachable', async () => {
+      const { service, fcm, eventsTo, prisma } = setup();
+      fcm.sendCall.mockResolvedValue(1);
+      const { call } = await service.create(OWNER, ALICE);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(eventsTo(OWNER, 'call.ringing')).toHaveLength(1);
+      await jest.advanceTimersByTimeAsync(CALL_RING_MS + 5);
+      expect(prisma.staffCall.rows.find((r: { id: string }) => r.id === call.id)).toMatchObject({ status: 'missed' });
+    });
+
+    it('stays silent for the caller when no device accepted the push', async () => {
+      const { service, fcm, eventsTo } = setup();
+      fcm.sendCall.mockResolvedValue(0);
+      await service.create(OWNER, ALICE);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(eventsTo(OWNER, 'call.ringing')).toHaveLength(0);
+    });
+
+    it('stops the ring on the callee phone when the caller hangs up, and when the call is answered', async () => {
+      const { service, fcm } = setup();
+      fcm.sendCall.mockResolvedValue(1);
+      const first = await service.create(OWNER, ALICE);
+      await jest.advanceTimersByTimeAsync(1);
+      await service.cancel(OWNER, first.call.id);
+      expect(fcm.sendCallCancel).toHaveBeenCalledWith(ALICE, first.call.id);
+      fcm.sendCallCancel.mockClear();
+      const second = await service.create(OWNER, ALICE);
+      await jest.advanceTimersByTimeAsync(1);
+      await service.accept(ALICE, second.call.id);
+      expect(fcm.sendCallCancel).toHaveBeenCalledWith(ALICE, second.call.id);
     });
 
     it('only the callee can confirm ringing', async () => {

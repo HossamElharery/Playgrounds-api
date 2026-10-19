@@ -1,4 +1,4 @@
-import { FcmService, buildCallMessage, buildMessage, parseServiceAccount } from './fcm.service';
+import { FcmService, buildCallMessage, buildMessage, buildNativeCallCancel, buildNativeCallMessage, isNativeCallDevice, parseServiceAccount } from './fcm.service';
 
 jest.mock('google-auth-library', () => ({
   JWT: jest.fn().mockImplementation(() => ({
@@ -135,5 +135,54 @@ describe('sendWithRetry', () => {
     const send = jest.fn().mockRejectedValue(new Error('socket hang up'));
     await expect(sendWithRetry(send, [1, 1])).rejects.toThrow('socket hang up');
     expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('native call push', () => {
+  const msg = { callId: 'c1', kind: 'ring' as const, title: 'Call from Sara', body: 'Tap to answer', deepLink: '/ar/owner' };
+
+  it('is data-only for the Android build that has the native call screen', () => {
+    const m = buildNativeCallMessage('tok', msg) as Record<string, unknown>;
+    expect(m['notification']).toBeUndefined();
+    expect(m['data']).toMatchObject({ type: 'call', kind: 'ring', callId: 'c1', title: 'Call from Sara' });
+    expect(m['android']).toMatchObject({ priority: 'HIGH', ttl: '30s', collapse_key: 'call:c1' });
+  });
+
+  it('cancels with the same collapse key so an undelivered ring is replaced', () => {
+    expect(buildNativeCallCancel('tok', 'c1')).toMatchObject({ data: { kind: 'cancel', callId: 'c1' }, android: { collapse_key: 'call:c1' } });
+  });
+
+  it('only Android builds that registered the capability get it; everyone else keeps the notification', () => {
+    expect(isNativeCallDevice({ platform: 'android', capabilities: ['native-call-ui'] })).toBe(true);
+    expect(isNativeCallDevice({ platform: 'android', capabilities: [] })).toBe(false);
+    expect(isNativeCallDevice({ platform: 'ios', capabilities: ['native-call-ui'] })).toBe(false);
+    expect(isNativeCallDevice({ platform: 'android', capabilities: undefined as never })).toBe(false);
+  });
+
+  it('sendCall picks the right message per device and counts accepted sends', async () => {
+    const sent: any[] = [];
+    (global as any).fetch = jest.fn(async (_url: string, init: { body: string }) => {
+      sent.push(JSON.parse(init.body).message);
+      return { ok: true, status: 200, text: async () => '' };
+    });
+    const prisma = {
+      deviceToken: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'a', token: 'new-android', platform: 'android', capabilities: ['native-call-ui'] },
+          { id: 'b', token: 'old-android', platform: 'android', capabilities: [] },
+          { id: 'c', token: 'iphone', platform: 'ios', capabilities: [] },
+        ]),
+        delete: jest.fn(),
+      },
+    };
+    const service = new FcmService(prisma as never, { get: () => JSON.stringify(account) } as never);
+    const accepted = await service.sendCall('u', msg);
+    expect(accepted).toBe(3);
+    expect(sent.find((m) => m.token === 'new-android').notification).toBeUndefined();
+    expect(sent.find((m) => m.token === 'old-android').notification).toBeDefined();
+    expect(sent.find((m) => m.token === 'iphone').notification).toBeDefined();
+    sent.length = 0;
+    expect(await service.sendCallCancel('u', 'c1')).toBe(1); // only the capable device
+    expect(sent.map((m) => m.token)).toEqual(['new-android']);
   });
 });

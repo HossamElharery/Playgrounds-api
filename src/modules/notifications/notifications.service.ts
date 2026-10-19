@@ -244,12 +244,12 @@ export class NotificationsService {
     return next;
   }
 
-  async registerDevice(userId: string, token: string, platform = 'web') {
+  async registerDevice(userId: string, token: string, platform = 'web', capabilities: string[] = []) {
     await this.prisma.deviceToken.deleteMany({ where: { token, userId: { not: userId } } });
     return this.prisma.deviceToken.upsert({
       where: { userId_token: { userId, token } },
-      update: { platform, updatedAt: new Date() },
-      create: { userId, token, platform },
+      update: { platform, capabilities, updatedAt: new Date() },
+      create: { userId, token, platform, capabilities },
     });
   }
 

@@ -263,6 +263,8 @@ model DeviceToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   token     String
   platform  String   @default("web") // web | ios | android
+  /// Features of the app build that registered this token (e.g. 'native-call-ui').
+  capabilities String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

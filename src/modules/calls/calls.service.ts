@@ -78,6 +78,8 @@ interface LiveCall {
   pushed: boolean;
   ackNative: boolean;
   ackWeb: boolean;
+  /** FCM accepted the ring for at least one of the callee's devices. */
+  pushAccepted?: boolean;
   ringingEmitted: boolean;
 }
 
@@ -534,7 +536,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         body: ar ? 'اضغط للرد' : 'Tap to answer',
         deepLink: `/${ar ? 'ar' : 'en'}/owner`,
       };
-      await Promise.all([
+      const [accepted] = await Promise.all([
         this.fcm.sendCall(live.calleeId, message),
         live.ackWeb
           ? Promise.resolve()
@@ -543,6 +545,15 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
               url: message.deepLink,
             }),
       ]);
+      if (typeof accepted === 'number' && accepted > 0) {
+        live.pushAccepted = true;
+        // The phone has been handed the ring: tell the caller it is ringing (not only when the
+        // callee's app happens to be open), and do not report the call as unreachable afterwards.
+        if (!live.ringingEmitted && live.status === 'ringing') {
+          live.ringingEmitted = true;
+          this.emitter.emitToUser(live.callerId, { type: 'call.ringing', callId });
+        }
+      }
     } catch (err) {
       this.logger.warn(`call push failed: ${String(err)}`);
     }
@@ -593,6 +604,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         ackWeb: false,
         ringingEmitted: true,
       });
+    if (live?.pushed) void this.fcm.sendCallCancel(row.calleeId, callId)?.catch?.(() => undefined);
     const event = { type: 'call.accepted', callId, byUserId: userId };
     this.emitter.emitToUser(row.callerId, event);
     this.emitter.emitToUser(row.calleeId, event);
@@ -650,7 +662,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const live = this.live.get(callId);
     const unconfirmed = from === 'ringing' &&
       (to === 'missed' || to === 'cancelled') &&
-      !live?.ackNative && !live?.ackWeb;
+      !live?.ackNative && !live?.ackWeb && !live?.pushAccepted;
     const finalStatus = unconfirmed ? 'failed' : to;
     const finalReason = unconfirmed ? 'unreached' : reason;
     const done = await this.prisma.staffCall.updateMany({
@@ -669,6 +681,10 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       const event = { type: 'call.ended', callId, status: finalStatus, reason: finalReason };
       this.emitter.emitToUser(row.callerId, event);
       this.emitter.emitToUser(row.calleeId, event);
+    }
+    if (from === 'ringing' && live?.pushed) {
+      // Stop the full-screen ring on the callee's phone: hung up, answered elsewhere, declined or timed out.
+      void this.fcm.sendCallCancel(row.calleeId, callId)?.catch?.(() => undefined);
     }
     if (from === 'ringing' && (finalStatus === 'missed' || finalStatus === 'cancelled')) {
       await this.missedNotice(row, live?.pushed ?? false).catch((err) =>
