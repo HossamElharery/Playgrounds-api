@@ -71,6 +71,7 @@ export const envValidationSchema = Joi.object({
   INDEXNOW_ENDPOINT: Joi.string()
     .uri()
     .default('https://api.indexnow.org/indexnow'),
+  SENTRY_DSN: Joi.string().uri().allow('').optional(),
 
   FCM_SERVER_KEY: Joi.string().allow('').optional(),
   FIREBASE_SERVICE_ACCOUNT: Joi.string().allow('').optional(),

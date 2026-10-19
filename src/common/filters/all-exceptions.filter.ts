@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Prisma } from '@prisma/client';
+import * as Sentry from '@sentry/nestjs';
 import { ApiException } from '../errors/api-exception';
 
 @Catch()
@@ -85,6 +86,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
 
+    Sentry.captureException(exception);
     this.logger.error(exception instanceof Error ? exception.stack : exception);
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       message:
