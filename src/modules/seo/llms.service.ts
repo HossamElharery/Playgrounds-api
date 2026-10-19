@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -51,7 +52,7 @@ export class LlmsService {
     const [sports, venues, posts, faqs, venueCount] = await Promise.all([
       this.prisma.sportCategory.findMany({ select: { slug: true, nameEn: true, nameAr: true }, orderBy: { slug: 'asc' } }),
       this.prisma.venue.findMany({
-        where: { status: 'active' },
+        where: publicVenueWhere(),
         select: {
           slug: true, nameEn: true, nameAr: true, descriptionEn: true, address: true,
           governorate: { select: { nameEn: true } },
@@ -68,7 +69,7 @@ export class LlmsService {
         take: full ? 100 : 50,
       }),
       this.prisma.faqEntry.findMany({ orderBy: { position: 'asc' }, take: 100 }),
-      this.prisma.venue.count({ where: { status: 'active' } }),
+      this.prisma.venue.count({ where: publicVenueWhere() }),
     ]);
 
     const out: string[] = [];

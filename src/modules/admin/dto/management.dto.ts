@@ -83,3 +83,14 @@ export class AdminReviewDto extends ReasonDto {
   @IsOptional() @IsString() @MaxLength(5000) text?: string;
   @IsOptional() @IsString() @MaxLength(5000) ownerReply?: string;
 }
+
+/** Admin hide / show of a venue's public listing. A reason is always required. */
+export class AdminVenueListingDto extends ReasonDto {
+  @IsBoolean() hidden!: boolean;
+}
+/** Admin approval / suspension decision. A reason is always required. */
+export class AdminVenueStatusDto extends ReasonDto {
+  @IsIn(['pending', 'active', 'suspended']) status!: VenueStatus;
+  /** Publish a venue that fails the readiness checks. Admin only, audited. */
+  @IsOptional() @IsBoolean() force?: boolean;
+}

@@ -222,8 +222,34 @@ describe('Administrator management', () => {
 
     it('leaves applications alone when the status did not change', async () => {
       wire('active', 'approved');
-      await service.updateVenue('admin-1', 'v1', { status: 'active', reason: 'Edit', force: true } as any);
+      await service.updateVenue('admin-1', 'v1', { status: 'active', reason: 'Routine edit', force: true } as any);
       expect(db.partnerApplication.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['suspending', { status: 'suspended' }],
+      ['sending back to review', { status: 'pending' }],
+      ['force-publishing', { status: 'active', force: true }],
+    ])('requires a real reason when %s a venue', async (_label, change) => {
+      wire('active', 'approved');
+      await expect(service.updateVenue('admin-1', 'v1', change as any)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'REASON_REQUIRED' }),
+      });
+      await expect(
+        service.updateVenue('admin-1', 'v1', { ...change, reason: 'abc' } as any),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'REASON_REQUIRED' }) });
+      expect(db.venue.update).not.toHaveBeenCalled();
+    });
+
+    it('records who suspended the venue, when and why, and keeps the reason for the owner screen', async () => {
+      wire('active', 'approved');
+      await service.updateVenue('admin-1', 'v1', { status: 'suspended', reason: 'Unpaid for two months' } as any);
+      expect(db.venue.update.mock.calls[0][0].data).toMatchObject({
+        status: 'suspended',
+        moderationReason: 'Unpaid for two months',
+        moderatedById: 'admin-1',
+        moderatedAt: expect.any(Date),
+      });
     });
   });
 });

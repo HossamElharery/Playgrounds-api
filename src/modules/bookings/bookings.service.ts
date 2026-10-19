@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { hasOpeningHours } from '../../common/utils/venue-readiness.util';
@@ -43,6 +44,9 @@ import {
   PaymentProvider,
 } from '../payments/payment-provider.interface';
 import { WalletService } from '../payments/wallet.service';
+import { PaymentsConfigService } from '../payments/payments-config.service';
+import { BookingNotifier } from './booking-notifier.service';
+import { assertVenueBookable, computeVenueState, withoutInternalVenueFields } from '../../common/utils/venue-visibility.util';
 import { RewardsService } from '../rewards/rewards.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CommissionService } from '../finance/commission.service';
@@ -58,9 +62,9 @@ const FIRST_BOOKING_BONUS_COINS = 200;
 const FIRST_BOOKING_MIN_TOTAL = 5000;
 const MAX_COIN_DISCOUNT_PCT = 30;
 const MAX_ADVANCE_DAYS = 90;
-// Keep player checkout strictly pay-at-venue until a production payment
-// gateway is configured, verified and enabled deliberately.
-const ONLINE_PLAYER_PAYMENTS_ENABLED = false;
+// Player checkout is pay-at-venue unless the active payment provider reports
+// itself live (PaymentsConfigService.isOnlinePaymentsLive). This is derived, not a
+// hand-flipped constant: with no live provider nothing online can be offered.
 
 const ONLINE_ONLY_METHODS = new Set([
   'card',
@@ -99,7 +103,11 @@ export class BookingsService {
     private readonly notifications: NotificationsService,
     private readonly commission: CommissionService,
     private readonly ledger: LedgerService,
+    private readonly paymentsConfig: PaymentsConfigService,
+    private readonly notifier: BookingNotifier,
   ) {}
+
+  private readonly logger = new Logger(BookingsService.name);
 
 
   async getSlotGrid(courtId: string, dateStr: string): Promise<SlotCell[]> {
@@ -112,7 +120,7 @@ export class BookingsService {
       },
     });
     if (!court) throw new NotFoundException('Court not found');
-    if (court.gamingPublished === false || court.venue.status !== 'active' || court.venue.instantBook === false) return [];
+    if (court.gamingPublished === false || !computeVenueState(court.venue).bookable) return [];
 
     // No opening hours means "not set up yet", never "open all day".
     if (!hasOpeningHours(court.venue.weeklyHours)) return [];
@@ -199,13 +207,9 @@ export class BookingsService {
       include: { sport: true, pricingRules: true, venue: { include: { country: true } } },
     });
     if (!court) throw new NotFoundException('Court not found');
-    if (court.venue.status !== 'active') {
-      throw new ConflictException({
-        code: 'VENUE_UNAVAILABLE',
-        message: 'This venue is not accepting bookings right now',
-      });
-    }
-    if (court.venue.instantBook === false || court.gamingPublished === false) {
+    // Approved, listed by the owner, not hidden by the platform and accepting bookings.
+    assertVenueBookable(court.venue);
+    if (court.gamingPublished === false) {
       throw new ConflictException({
         code: 'VENUE_BOOKING_DISABLED',
         message: 'This venue is not accepting online bookings right now',
@@ -218,10 +222,25 @@ export class BookingsService {
       });
     }
 
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true },
+    });
+    if (!account) throw new NotFoundException('User not found');
+    if (account.status !== 'active') {
+      throw new ForbiddenException({
+        code: 'ACCOUNT_RESTRICTED',
+        message: 'Your account cannot make bookings right now',
+      });
+    }
+
     const slotStart = new Date(dto.slotStart);
     const now = new Date();
     if (slotStart <= now)
-      throw new BadRequestException('Cannot book a past slot');
+      throw new BadRequestException({
+        code: 'SLOT_IN_PAST',
+        message: 'Cannot book a past slot',
+      });
 
     if (slotStart.getTime() > now.getTime() + MAX_ADVANCE_DAYS * 86_400_000) {
       throw new BadRequestException({
@@ -331,9 +350,33 @@ export class BookingsService {
 
     const totalAmount = Math.max(0, baseAmount + feeAmount - discountAmount);
 
+    // A hold that has run out stops blocking the slot immediately, not on the
+    // next 10-second sweep. Done in its own small transactions so it can never
+    // make the booking transaction below fail with a serialization error.
+    await this.releaseExpiredHolds({
+      OR: [
+        { courtId: court.id, slotStart: { lt: slotEnd }, slotEnd: { gt: slotStart } },
+        { userId, slotStart: { lt: slotEnd }, slotEnd: { gt: slotStart } },
+      ],
+    });
+
     try {
       return await this.prisma.$transaction(
         async (tx) => {
+          // Double-click / network retry: the same player asking for the same slot
+          // again gets their live hold back instead of a confusing conflict.
+          const sameHold = await tx.booking.findFirst({
+            where: {
+              userId,
+              courtId: court.id,
+              slotStart,
+              slotEnd,
+              status: 'held',
+              holdExpiresAt: { gt: new Date() },
+            },
+          });
+          if (sameHold) return sameHold;
+
           const blocked = await tx.calendarBlock.findFirst({
             where: {
               venueId: court.venueId,
@@ -432,7 +475,7 @@ export class BookingsService {
               holdExpiresAt: new Date(Date.now() + HOLD_DURATION_MS),
               ...bookingSnapshotFields(
                 money,
-                ONLINE_PLAYER_PAYMENTS_ENABLED
+                this.paymentsConfig.isOnlinePaymentsLive()
                   ? court.venue.paymentMode
                   : 'at_venue',
               ),
@@ -455,6 +498,25 @@ export class BookingsService {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
+      // Two identical requests from one player (double-click, flaky-network retry) race
+      // each other: one wins, the other must receive that same hold, not a conflict.
+      if (
+        error instanceof ConflictException ||
+        isUserBookingTimeConflict(error) ||
+        isBookingSlotConflict(error)
+      ) {
+        const mine = await this.prisma.booking.findFirst({
+          where: {
+            userId,
+            courtId: court.id,
+            slotStart,
+            slotEnd,
+            status: 'held',
+            holdExpiresAt: { gt: new Date() },
+          },
+        });
+        if (mine) return mine;
+      }
       if (error instanceof ConflictException) throw error;
       if (isUserBookingTimeConflict(error)) {
         throw new ConflictException({
@@ -542,6 +604,50 @@ export class BookingsService {
     return this.validatePromo(code, userId, amount);
   }
 
+  private holdExpired() {
+    return new ApiException(
+      HttpStatus.CONFLICT,
+      'HOLD_EXPIRED',
+      'This hold has expired. Pick a slot again.',
+    );
+  }
+
+  /** Cancels a still-held booking and gives the coins back. Safe to repeat. */
+  private async releaseHold(booking: { id: string; userId: string; coinsRedeemed: number }) {
+    await this.prisma.$transaction(async (tx) => {
+      const released = await tx.booking.updateMany({
+        where: { id: booking.id, status: 'held' },
+        data: { status: 'cancelled', holdExpiresAt: null },
+      });
+      if (released.count !== 1) return;
+      if (booking.coinsRedeemed > 0) {
+        await tx.user.update({
+          where: { id: booking.userId },
+          data: { coinsBalance: { increment: booking.coinsRedeemed } },
+        });
+        await tx.coinLedgerEntry.create({
+          data: {
+            userId: booking.userId,
+            amount: booking.coinsRedeemed,
+            reason: 'booking_cancel_restore',
+            bookingId: booking.id,
+          },
+        });
+      }
+      await this.ledger.syncBookingLedger(tx, booking.id, 'cancelled');
+    });
+  }
+
+  /** Frees holds whose window has run out so they stop blocking the slot. */
+  private async releaseExpiredHolds(scope: Prisma.BookingWhereInput) {
+    const expired = await this.prisma.booking.findMany({
+      where: { status: 'held', holdExpiresAt: { lt: new Date() }, ...scope },
+      select: { id: true, userId: true, coinsRedeemed: true },
+      take: 20,
+    });
+    for (const hold of expired) await this.releaseHold(hold);
+  }
+
   private generateBookingCode(): string {
     return `MAT-${randomUUID().slice(0, 8).toUpperCase()}`;
   }
@@ -561,27 +667,16 @@ export class BookingsService {
     if (booking.status !== 'held')
       throw new BadRequestException('Booking is not in a holdable state');
     if (!booking.holdExpiresAt || booking.holdExpiresAt < new Date()) {
-      await this.prisma.$transaction(async (tx) => {
-        const released = await tx.booking.updateMany({
-          where: { id: bookingId, status: 'held' },
-          data: { status: 'cancelled', holdExpiresAt: null },
-        });
-        if (released.count === 1 && booking.coinsRedeemed > 0) {
-          await tx.user.update({
-            where: { id: userId },
-            data: { coinsBalance: { increment: booking.coinsRedeemed } },
-          });
-          await tx.coinLedgerEntry.create({
-            data: {
-              userId,
-              amount: booking.coinsRedeemed,
-              reason: 'booking_cancel_restore',
-              bookingId,
-            },
-          });
-        }
-      });
-      throw new ConflictException('PULSE_EXPIRED');
+      await this.releaseHold(booking);
+      throw this.holdExpired();
+    }
+    // The venue may have been hidden, suspended or paused since the hold was made.
+    // Release the hold right away so the slot and the coins come back at once.
+    try {
+      assertVenueBookable(booking.venue);
+    } catch (error) {
+      await this.releaseHold(booking);
+      throw error;
     }
 
     const isSplit = !!dto.splitShares?.length;
@@ -595,6 +690,15 @@ export class BookingsService {
           );
         }
       }
+      const seen = new Set<string>();
+      for (const share of shares) {
+        if (!Number.isSafeInteger(share.amount) || share.amount <= 0) {
+          throw new BadRequestException('SPLIT_AMOUNT_INVALID');
+        }
+        const key = share.userId ? `u:${share.userId}` : `p:${share.phone}`;
+        if (seen.has(key)) throw new BadRequestException('SPLIT_DUPLICATE_PAYER');
+        seen.add(key);
+      }
       const sum = shares.reduce((acc, share) => acc + share.amount, 0);
       if (sum !== booking.totalAmount) {
         throw new BadRequestException('SPLIT_AMOUNT_MISMATCH');
@@ -606,7 +710,7 @@ export class BookingsService {
       chargeAmount = organizerShare.amount;
     }
 
-    const mode = ONLINE_PLAYER_PAYMENTS_ENABLED
+    const mode = this.paymentsConfig.isOnlinePaymentsLive()
       ? booking.paymentModeSnapshot ?? booking.venue.paymentMode ?? 'at_venue'
       : 'at_venue';
     if (mode === 'at_venue') {
@@ -645,8 +749,14 @@ export class BookingsService {
           });
         }
 
+        const venueNow = await tx.venue.findUnique({ where: { id: booking.venueId } });
+        if (!venueNow) throw new NotFoundException('Venue not found');
+        assertVenueBookable(venueNow);
+
         const confirmed = await tx.booking.updateMany({
-          where: { id: bookingId, status: 'held' },
+          // Still held AND still inside the hold window: an expiry that lands between
+          // the read above and this write cannot be confirmed.
+          where: { id: bookingId, status: 'held', holdExpiresAt: { gt: new Date() } },
           data: {
             status: 'confirmed',
             holdExpiresAt: null,
@@ -657,7 +767,7 @@ export class BookingsService {
           },
         });
         if (confirmed.count !== 1) {
-          throw new ConflictException('PULSE_EXPIRED');
+          throw this.holdExpired();
         }
 
         if (mode === 'online') {
@@ -694,6 +804,7 @@ export class BookingsService {
     });
     await this.notifications
       .create({
+        dedupKey: `booking-confirmed-player:${bookingId}:${userId}`,
         userId,
         category: 'bookings',
         titleEn: `Booking confirmed — ${booking.venue.nameEn}`,
@@ -701,9 +812,14 @@ export class BookingsService {
         bodyEn: `Code ${confirmedBooking.code}`,
         bodyAr: `كود ${confirmedBooking.code}`,
         deepLink: '/app/bookings',
-        payload: { bookingId },
+        payload: { kind: 'booking_confirmed', bookingId, venueId: booking.venueId, code: confirmedBooking.code },
       })
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        this.logger.warn(`Player booking notice failed for ${bookingId}: ${String(error)}`),
+      );
+    // The venue side hears about it too: owner plus staff who can see this venue.
+    // Retried and monitored inside the notifier; never fails the booking.
+    await this.notifier.notifyVenueSide(bookingId, 'booking_confirmed');
     return confirmedBooking;
   }
 
@@ -1088,13 +1204,6 @@ export class BookingsService {
     const refundToWallet = booking.paymentMethod === 'wallet';
     if (wasPaid && refundPct > 0) {
       refundAmount = Math.round((booking.totalAmount * refundPct) / 100);
-      if (!refundToWallet) {
-        const refund = await this.paymentProvider.refund(
-          refundAmount,
-          booking.currency,
-        );
-        refundRef = refund.providerRef;
-      }
     }
 
     const settled = await this.prisma.$transaction(async (tx) => {
@@ -1111,6 +1220,13 @@ export class BookingsService {
         throw new ConflictException('Booking was already resolved');
       }
       if (refundAmount > 0) {
+        if (!refundToWallet) {
+          // Only after this request has won the cancellation: a concurrent cancel
+          // that lost the race above never reaches the provider, so a refund is
+          // issued at most once per booking. A provider failure rolls everything back.
+          const refund = await this.paymentProvider.refund(refundAmount, booking.currency);
+          refundRef = refund.providerRef;
+        }
         if (refundToWallet) {
           await this.wallet.credit(tx, {
             userId: booking.userId,
@@ -1171,9 +1287,12 @@ export class BookingsService {
         bodyEn: refundAmount > 0 ? `${moneyText(refundAmount, booking.currency, 'en')} refunded to your wallet` : 'No refund was due under the cancellation policy',
         bodyAr: refundAmount > 0 ? `تم رد ${moneyText(refundAmount, booking.currency, 'ar')} إلى محفظتك` : 'لا يوجد مبلغ مسترد حسب سياسة الإلغاء',
         deepLink: '/app/bookings',
-        payload: { bookingId: booking.id, refundAmount },
+        payload: { kind: 'booking_cancelled', bookingId: booking.id, venueId: booking.venueId, refundAmount },
       })
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        this.logger.warn(`Player cancel notice failed for ${booking.id}: ${String(error)}`),
+      );
+    if (booking.status === 'confirmed') await this.notifier.notifyVenueSide(booking.id, 'booking_cancelled');
     return settled;
   }
 
@@ -1186,8 +1305,10 @@ export class BookingsService {
     if (!booking) throw new NotFoundException('Booking not found');
     if (booking.userId !== user.id) {
       await assertVenueStaffAccess(this.prisma, booking.venueId, user);
+      return booking;
     }
-    return booking;
+    // The player sees their booking and the venue's public details, not its moderation columns.
+    return { ...booking, venue: withoutInternalVenueFields(booking.venue) };
   }
 
   listMine(userId: string, scope: 'upcoming' | 'past' | 'all' = 'all') {

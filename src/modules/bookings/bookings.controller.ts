@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -45,15 +46,17 @@ export class BookingsController {
 
   @Public()
   @Get('courts/:courtId/slots')
-  slotGrid(@Param('courtId') courtId: string, @Query() q: SlotGridQueryDto) {
+  slotGrid(@Param('courtId', ParseUUIDPipe) courtId: string, @Query() q: SlotGridQueryDto) {
     return this.bookings.getSlotGrid(courtId, q.date);
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Post('bookings/hold')
-  hold(@CurrentUser() user: AuthenticatedUser, @Body() dto: HoldSlotDto) {
-    return this.bookings.holdSlot(user.id, dto);
+  async hold(@CurrentUser() user: AuthenticatedUser, @Body() dto: HoldSlotDto) {
+    // `serverTime` lets the app count the hold down against the server's clock,
+    // not the device's, so a wrong phone clock cannot extend or cut a hold short.
+    return { ...(await this.bookings.holdSlot(user.id, dto)), serverTime: new Date().toISOString() };
   }
 
   @ApiBearerAuth()
@@ -61,7 +64,7 @@ export class BookingsController {
   @Post('bookings/:id/confirm')
   confirm(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmBookingDto,
   ) {
     return this.bookings.confirmBooking(user.id, id, dto);
@@ -72,7 +75,7 @@ export class BookingsController {
   @Post('bookings/:id/cancel')
   cancel(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CancelBookingDto,
   ) {
     return this.bookings.cancel(user.id, id, dto.reason);
@@ -113,8 +116,8 @@ export class BookingsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Get('bookings/:id')
-  getById(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.bookings.getById(id, user);
+  async getById(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return { ...(await this.bookings.getById(id, user)), serverTime: new Date().toISOString() };
   }
 
   @ApiBearerAuth()

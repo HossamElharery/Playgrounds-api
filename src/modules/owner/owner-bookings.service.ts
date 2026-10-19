@@ -230,6 +230,13 @@ export class OwnerBookingsService {
         'Set the venue opening hours before adding bookings',
       );
     }
+    if (venue.operationsEnabled === false) {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'VENUE_OPERATIONS_PAUSED',
+        'The owner operations system is paused for this venue. Turn it back on to add bookings.',
+      );
+    }
     const court = await this.prisma.court.findUnique({
       where: { id: dto.courtId },
       include: { sport: { select: { activityKind: true } } },

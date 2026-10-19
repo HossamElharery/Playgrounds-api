@@ -100,7 +100,7 @@ describe('PartnerLinksService', () => {
   };
 
   it('logs a visit for an active venue with lower-cased UTM values', async () => {
-    const { prisma, service } = build({ id: 'v1', status: 'active' });
+    const { prisma, service } = build({ id: 'v1', status: 'active', ownerListingEnabled: true, adminHidden: false, instantBook: true, operationsEnabled: true });
     await service.recordVisit({
       venueSlug: 'arena',
       event: 'contact_click',

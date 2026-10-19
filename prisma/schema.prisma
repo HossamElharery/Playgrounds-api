@@ -531,7 +531,21 @@ model Venue {
   lng                      Float
   geohash                  String
   surface                  String?
+  /// Booking acceptance: false = the venue stays listed but takes no new Matchena bookings.
   instantBook              Boolean          @default(true)
+  /// Owner listing preference. Independent of `status`: an admin suspension always wins over it.
+  ownerListingEnabled      Boolean          @default(true)
+  /// Platform-forced unlisting (soft hide). The owner can neither see it as a toggle nor lift it.
+  adminHidden              Boolean          @default(false)
+  /// Owner operations system switch (manual bookings, calendar writes). Never changes public visibility.
+  operationsEnabled        Boolean          @default(true)
+  /// Why / who / when the platform last suspended or hid this venue.
+  moderationReason         String?          @db.VarChar(500)
+  moderatedById            String?
+  moderatedAt              DateTime?
+  /// Last owner change of the listing / booking-acceptance / operations switches.
+  listingChangedById       String?
+  listingChangedAt         DateTime?
   cancellationPolicy       String?          @db.Text
   weeklyHours              Json?
   contactPhone             String?
@@ -609,6 +623,7 @@ model Venue {
   @@index([status, governorateId])
   @@index([status, geohash])
   @@index([status, ratingAvg])
+  @@index([status, ownerListingEnabled, adminHidden])
   @@index([nameEn(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([nameAr(ops: raw("gin_trgm_ops"))], type: Gin)
 }

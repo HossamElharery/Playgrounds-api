@@ -92,7 +92,18 @@ describe('finance integration (real Postgres)', () => {
     method?: 'cash' | 'instapay' | 'card';
   };
 
-  async function insert(venueId: string, userId: string, r: Row, i: number) {
+  /**
+   * `ownHolder` gives the booking its own player. A player cannot hold two overlapping
+   * bookings (Booking_user_slot_range_excl), and the random/time-zone fixtures spread
+   * hundreds of bookings over three courts, so they cannot all belong to one player.
+   */
+  async function insert(venueId: string, userId: string, r: Row, i: number, ownHolder = false) {
+    if (ownHolder) {
+      const holder = await prisma.user.create({
+        data: { name: `Holder ${i}`, phone: `+2013${String(++seq).padStart(8, '0')}`, roles: ['player'] },
+      });
+      userId = holder.id;
+    }
     const fee = r.source === 'platform' ? Math.round(r.base * 0.05) : 0;
     const total = r.base + fee - r.ownerDisc;
     const gross = r.base - r.ownerDisc;
@@ -175,7 +186,7 @@ describe('finance integration (real Postgres)', () => {
       ownerDisc: 0,
       bps: 1000,
     }));
-    for (let i = 0; i < rows.length; i += 1) await insert(venue.id, user.id, rows[i], i);
+    for (let i = 0; i < rows.length; i += 1) await insert(venue.id, user.id, rows[i], i, true);
     const out = await summary.getSummary(user, venue.id, 'custom', '2026-09-19', '2026-11-01');
     for (const r of rows) {
       const { date, hour } = localParts(r.slotStart);
@@ -221,7 +232,7 @@ describe('finance integration (real Postgres)', () => {
         method: pick(['cash', 'cash', 'instapay', 'card'] as const),
       } as Row;
     });
-    for (let i = 0; i < rows.length; i += 1) await insert(venue.id, user.id, rows[i], i);
+    for (let i = 0; i < rows.length; i += 1) await insert(venue.id, user.id, rows[i], i, true);
 
     const out = await summary.getSummary(user, venue.id, 'custom', '2026-09-01', '2026-09-10');
 

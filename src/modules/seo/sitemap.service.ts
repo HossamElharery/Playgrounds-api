@@ -1,4 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocalLandingService } from './local-landing.service';
@@ -57,7 +58,7 @@ export class SitemapService {
 
   async index(): Promise<string> {
     const [venue, blog, post, hashtag, hashtagCount, sport] = await Promise.all([
-      this.prisma.venue.aggregate({ where: { status: 'active' }, _max: { updatedAt: true } }),
+      this.prisma.venue.aggregate({ where: publicVenueWhere(), _max: { updatedAt: true } }),
       this.prisma.blogPost.aggregate({ where: { status: 'published' }, _max: { updatedAt: true } }),
       this.prisma.post.aggregate({ where: this.publicPostWhere, _max: { updatedAt: true } }),
       this.prisma.hashtag.aggregate({ where: { postCount: { gte: SitemapService.MIN_HASHTAG_POSTS } }, _max: { updatedAt: true } }),
@@ -86,7 +87,7 @@ ${items}
 
   async venues(): Promise<string> {
     const venues = await this.prisma.venue.findMany({
-      where: { status: 'active' },
+      where: publicVenueWhere(),
       select: {
         slug: true,
         updatedAt: true,

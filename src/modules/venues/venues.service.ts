@@ -1,4 +1,5 @@
 import { activateGamingDefaults } from '../owner/gaming/gaming-activation';
+import { computeVenueState, publicVenueWhere, withoutInternalVenueFields } from '../../common/utils/venue-visibility.util';
 import {
   BadRequestException,
   ConflictException,
@@ -280,6 +281,32 @@ export class VenuesService {
     });
   }
 
+  /** Admin suspension: states why, records who/when and writes the audit trail. */
+  async suspend(adminId: string, venueId: string, reason: string) {
+    const before = await this.getById(venueId);
+    return this.prisma.$transaction(async (tx) => {
+      const suspended = await tx.venue.update({
+        where: { id: venueId },
+        data: {
+          status: 'suspended',
+          moderationReason: reason.slice(0, 500),
+          moderatedById: adminId,
+          moderatedAt: new Date(),
+        },
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId: adminId,
+          action: 'admin.venue.suspend',
+          targetType: 'venue',
+          targetId: venueId,
+          metadata: { venueId, reason, before: { status: before.status }, after: { status: 'suspended' } },
+        },
+      });
+      return suspended;
+    });
+  }
+
   async getById(id: string) {
     const venue = await this.prisma.venue.findUnique({
       where: { id },
@@ -336,14 +363,16 @@ export class VenuesService {
         where: { id: slug },
         include,
       }));
-    if (!venue || venue.status !== 'active')
+    // Hidden, suspended and pending venues are indistinguishable from missing ones:
+    // the page 404s (and drops out of search engines) instead of leaking its state.
+    if (!venue || !computeVenueState(venue).publicVisible)
       throw new NotFoundException('Venue not found');
     const {
       legalBusinessName: _legalBusinessName,
       registrationNumber: _registrationNumber,
       approvedById: _approvedById,
       ...publicVenue
-    } = venue;
+    } = withoutInternalVenueFields(venue);
     const area = await this.areas?.areaFor(venue.districtId).catch(() => null);
     return {
       ...publicVenue,
@@ -509,7 +538,7 @@ export class VenuesService {
       : [];
 
     const where: Prisma.VenueWhereInput = {
-      status: 'active',
+      ...publicVenueWhere(),
       NOT: { weeklyHours: { equals: Prisma.DbNull } },
       ...(resolvedCountry ? { countryCode: resolvedCountry } : {}),
       ...(sport ? { sports: { some: { sportId: sport.id } } } : {}),
@@ -645,7 +674,7 @@ export class VenuesService {
         : [];
       const byId = new Map(items.map((v) => [v.id, v]));
       return {
-        items: pageIds.map((id) => byId.get(id)).filter(Boolean),
+        items: pageIds.map((id) => byId.get(id)).filter((v): v is NonNullable<typeof v> => !!v).map(withoutInternalVenueFields),
         pagination: buildPagination(page, perPage, total),
       };
     }
@@ -665,7 +694,7 @@ export class VenuesService {
       this.prisma.venue.count({ where }),
     ]);
     return {
-      items,
+      items: items.map(withoutInternalVenueFields),
       pagination: buildPagination(page, perPage, total),
     };
   }

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Runs the real-Postgres finance integration tests against a throwaway database.
-# Usage: npm run test:integration   (needs a local Postgres reachable by `psql`)
+# Runs the real-Postgres integration tests (finance, owner-offline, booking
+# concurrency, venue listing) against a throwaway database.
+# Usage: npm run test:integration
+#   TEST_PG_URL   server URL without a database, e.g. postgresql://user:pass@localhost:5432
+#                 (defaults to the current OS user over the local socket/localhost)
+#   TEST_DB_NAME  throwaway database name; must contain "test" or "tmp"
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DB_NAME="${TEST_DB_NAME:-matchena_integration_test}"
@@ -10,4 +14,5 @@ psql "$BASE_URL/postgres" -qc "DROP DATABASE IF EXISTS \"$DB_NAME\"" -c "CREATE 
 export TEST_DATABASE_URL="$BASE_URL/$DB_NAME?schema=public"
 trap 'psql "$BASE_URL/postgres" -qc "DROP DATABASE IF EXISTS \"$DB_NAME\"" >/dev/null' EXIT
 DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy >/dev/null
-DATABASE_URL="$TEST_DATABASE_URL" npx jest --config ./test/jest-e2e.json --runInBand --testRegex '(finance|owner-offline)\.e2e-spec\.ts$'
+DATABASE_URL="$TEST_DATABASE_URL" npx jest --config ./test/jest-e2e.json --runInBand \
+  --testRegex '(finance|owner-offline|booking-concurrency|venue-listing|booking-integrity)\.e2e-spec\.ts$'

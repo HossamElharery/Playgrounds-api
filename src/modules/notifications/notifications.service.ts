@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
 import { UpdateNotificationPrefsDto } from './dto/device-token.dto';
-import { sanitizeNotificationCtaUrl } from './cta-url';
+import { localizedPushUrl, sanitizeNotificationCtaUrl } from './cta-url';
 import { WebPushService } from './web-push.service';
 import { FcmService } from './fcm.service';
 
@@ -125,7 +125,7 @@ export class NotificationsService {
       input.userId,
       ar ? input.titleAr : input.titleEn,
       ar ? input.bodyAr : input.bodyEn,
-      input.deepLink,
+      localizedPushUrl(input.deepLink, ar ? 'ar' : 'en'),
     );
     return notification;
   }

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { sanitizeNotificationCtaUrl } from './cta-url';
+import { localizedPushUrl, sanitizeNotificationCtaUrl } from './cta-url';
 
 describe('sanitizeNotificationCtaUrl', () => {
   it('keeps in-app paths', () => {
@@ -20,5 +20,18 @@ describe('sanitizeNotificationCtaUrl', () => {
     expect(() => sanitizeNotificationCtaUrl('Facere cupidatat officia non aut aliquam')).toThrow(
       BadRequestException,
     );
+  });
+});
+
+describe('localizedPushUrl', () => {
+  it('prefixes an app path with the user language so Web Push opens a real route', () => {
+    expect(localizedPushUrl('/owner/bookings?venue=v1&booking=b1', 'ar')).toBe('/ar/owner/bookings?venue=v1&booking=b1');
+    expect(localizedPushUrl('/app/bookings', 'en')).toBe('/en/app/bookings');
+  });
+  it('leaves already-localized, external and empty links alone', () => {
+    expect(localizedPushUrl('/en/owner/today', 'ar')).toBe('/en/owner/today');
+    expect(localizedPushUrl('https://example.com/x', 'ar')).toBe('https://example.com/x');
+    expect(localizedPushUrl('//evil.example', 'ar')).toBe('//evil.example');
+    expect(localizedPushUrl(undefined, 'ar')).toBeUndefined();
   });
 });

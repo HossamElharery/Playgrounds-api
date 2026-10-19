@@ -19,6 +19,7 @@ function harness(
           id: 'v1',
           slug: 'pitch',
           status: 'active',
+          ownerListingEnabled: true, adminHidden: false, instantBook: true, operationsEnabled: true,
           nameAr: 'ملعب النصر',
           nameEn: 'Nasr Pitch',
           photos: [{ url: 'https://img/p.jpg' }],
@@ -228,10 +229,10 @@ describe('LobbyKioskService', () => {
   it('caps the shortlist at 5 and lets only the pinner or the leader remove one', async () => {
     const { service, prisma } = harness();
     for (let i = 1; i <= 5; i++) {
-      prisma.venue.findUnique.mockResolvedValueOnce({ id: `v${i}`, status: 'active' });
+      prisma.venue.findUnique.mockResolvedValueOnce({ id: `v${i}`, status: 'active', ownerListingEnabled: true, adminHidden: false, instantBook: true, operationsEnabled: true });
       expect(await service.addShortlist('s1', 'a', `v${i}`)).toBe(true);
     }
-    prisma.venue.findUnique.mockResolvedValueOnce({ id: 'v6', status: 'active' });
+    prisma.venue.findUnique.mockResolvedValueOnce({ id: 'v6', status: 'active', ownerListingEnabled: true, adminHidden: false, instantBook: true, operationsEnabled: true });
     expect(await service.addShortlist('s1', 'a', 'v6')).toBe(false);
     expect(service.state('s1', NOW).shortlist).toHaveLength(5);
     expect(await service.removeShortlist('s1', 'c', 'v1')).toBe(false);

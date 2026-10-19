@@ -81,11 +81,13 @@ export class FcmService {
     await Promise.all(
       tokens.map(async (device) => {
         try {
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: build(device.token) }),
-          });
+          const res = await sendWithRetry(() =>
+            fetch(url, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: build(device.token) }),
+            }),
+          );
           if (res.ok) return;
           const detail = await res.text();
           if (res.status === 404 || /UNREGISTERED|registration-token-not-registered/i.test(detail) ||
@@ -163,5 +165,28 @@ export function parseServiceAccount(raw?: string | null): ServiceAccount | null 
     return { project_id: json.project_id, client_email: json.client_email, private_key: json.private_key.replace(/\\n/g, '\n') };
   } catch {
     return null;
+  }
+}
+
+const RETRY_DELAYS_MS = [300, 1_200];
+
+/**
+ * FCM answers 429/5xx (and sometimes drops the connection) during incidents. A
+ * short bounded retry rescues most of those without holding the request open;
+ * 4xx answers are final and handled by the caller (dead tokens are deleted).
+ */
+export async function sendWithRetry(
+  send: () => Promise<Response>,
+  delays: readonly number[] = RETRY_DELAYS_MS,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const res = await send();
+      const transient = res.status === 429 || res.status >= 500;
+      if (!transient || attempt >= delays.length) return res;
+    } catch (error) {
+      if (attempt >= delays.length) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
   }
 }

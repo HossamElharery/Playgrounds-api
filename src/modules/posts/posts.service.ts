@@ -1,3 +1,4 @@
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -132,7 +133,7 @@ export class PostsService {
 
     if (dto.taggedVenueId) {
       const venue = await this.prisma.venue.findFirst({
-        where: { id: dto.taggedVenueId, status: 'active' },
+        where: { id: dto.taggedVenueId, ...publicVenueWhere() },
         select: { id: true },
       });
       if (!venue) throw new BadRequestException('Unknown venue');

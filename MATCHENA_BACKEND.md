@@ -163,6 +163,8 @@ CREATE UNIQUE INDEX "Booking_court_slot_live_unique"
   WHERE "status" IN ('held', 'confirmed');
 ```
 
+> **Current guarantee (2026-10):** besides the partial unique index below, `Booking_court_slot_range_excl` and `Booking_user_slot_range_excl` (GiST `EXCLUDE` on `"slotRange"` = `[slotStart, slotEnd)`, `WHERE status IN ('held','confirmed')`) stop any two overlapping live bookings of one court, and any two overlapping live bookings of one player. See §12.
+
 Two simultaneous `POST /bookings/hold` calls for the same court+slot race at the database, not in application code — the loser gets a Postgres unique-violation, which `AllExceptionsFilter` maps to a clean `409 { message: "SLOT_ALREADY_HELD" }`. This was verified live during development: two concurrent hold requests for the same slot, one succeeded, one got 409, before the fix was even trusted in code review. A `jobs`-module cron (`JobsService.expireBookingHolds`, every 10s) flips expired `held` rows to `cancelled`, which is what actually frees the slot — the index only prevents overlap, it doesn't expire anything by itself.
 
 ### 3.2 A Pulse opportunity can never be over-claimed
@@ -482,3 +484,49 @@ This exact sequence was run against a live local instance during development and
 6. `POST /bookings/:id/confirm` — price breakdown (base + service fee) computed server-side from `PricingRule`, payment mocked as `paid`, QR payload issued.
 7. `POST /bookings/checkin` as the owner with that QR payload — booking flips to `completed`, coins are awarded (spend-based + first-booking bonus), verified via `GET /users/me`.
 8. `POST /reviews` — only possible now that the booking is `completed`; venue `ratingAvg`/`ratingCount` recompute on the next `GET /venues/:id/reviews`.
+
+
+---
+
+## 12. Booking integrity & venue visibility (2026-10-20)
+
+### 12.1 Venue state is five separate things
+
+| Concept | Column | Who writes it | Endpoint |
+|---|---|---|---|
+| Admin approval / suspension | `Venue.status` (`pending`/`active`/`suspended`) | admin | `PATCH /admin/manage/venues/:id/status` (reason ≥ 5 chars) |
+| Platform hide (soft) | `Venue.adminHidden` | admin | `PATCH /admin/manage/venues/:id/listing` `{ hidden, reason }` |
+| Owner listing wish | `Venue.ownerListingEnabled` | owner | `PATCH /owner/venues/:id/listing` `{ enabled, acknowledgeFutureBookings? }` |
+| Accepting new bookings | `Venue.instantBook` | owner | `PATCH /owner/venues/:id/booking-availability` |
+| Owner operations system | `Venue.operationsEnabled` | owner | `PATCH /owner/venues/:id/operations` |
+| Payment mode | `Venue.paymentMode` | admin | existing admin-finance endpoint |
+
+`GET /owner/venues/:id/visibility` and `GET /admin/manage/venues/:id/visibility` return the raw switches, the **effective** state, the readiness checklist (`missing`), the number of upcoming bookings and the last moderation reason/actor/time.
+
+The one rule lives in `src/common/utils/venue-visibility.util.ts`:
+
+```
+publicVisible = status = active AND NOT adminHidden AND ownerListingEnabled AND ready
+bookable      = publicVisible AND instantBook
+```
+`operationsEnabled` is **not** part of either: it only blocks new manual/walk-in bookings (`VENUE_OPERATIONS_PAUSED`). Every public query (Explore, search, Captain, sitemap, llms.txt, landing pages, embed, kiosk shortlist, post tagging) uses `publicVenueWhere()`; the slot grid, `hold` and `confirm` use `assertVenueBookable()`; `GET /venues/:slug` returns 404 for anything not public.
+
+Rules: an admin suspension or hide always wins (the owner gets `403 VENUE_LOCKED_BY_ADMIN` when trying to show it, but may still hide more); the owner's own preference is never overwritten by the admin; lifting an admin hide does not publish a venue the owner hid; hiding with upcoming bookings needs `acknowledgeFutureBookings` (`409 FUTURE_BOOKINGS_EXIST` + count) and never cancels them; showing a venue that is not ready returns `409 VENUE_NOT_READY` with `missing: ['hours'|'courts'|'prices'|'location']`. Every change writes an `AuditLogEntry` (`owner.venue.listing|booking_availability|operations`, `admin.venue.hide|show|suspend|update`) with before/after/reason; repeated requests are no-ops; each write touches a single column conditionally, so concurrent changes are not lost.
+
+### 12.2 Booking flow guarantees
+* Hold: venue must be bookable, the account `active`, the slot future/aligned/in hours/priced; price is computed server-side only. An expired hold stops blocking at once (released inside `holdSlot`), and a repeated request by the same player for the same slot returns the same hold (double-click safe).
+* Confirm: re-checks the venue state, requires the hold to be unexpired **in the write itself** (`holdExpiresAt > now`), validates split shares (positive integers, no duplicates, sum = total). A venue hidden/suspended/paused between Hold and Confirm releases the hold and answers `409 VENUE_UNAVAILABLE` / `VENUE_BOOKING_DISABLED`.
+* Cancel: the provider refund is only issued after this request wins the cancellation claim, so concurrent cancels cannot refund twice.
+* `POST /bookings/hold` and `GET /bookings/:id` add `serverTime` so the app counts the hold down on the server's clock.
+
+New stable codes: `HOLD_EXPIRED`, `ACCOUNT_RESTRICTED`, `SLOT_IN_PAST`, `VENUE_LOCKED_BY_ADMIN`, `FUTURE_BOOKINGS_EXIST`, `REASON_REQUIRED`, `VENUE_OPERATIONS_PAUSED`, `SPLIT_AMOUNT_INVALID`, `SPLIT_DUPLICATE_PAYER`. The exception filter now passes `missing` and `futureBookings` through.
+
+### 12.3 Owner notification of a new booking
+`BookingNotifier` (called after the confirm transaction) notifies the venue owner and staff whose `StaffMember` row has `bookings.view` **and** this venue in `venueIds`. `dedupKey = booking-confirmed-owner:<bookingId>:<userId>` (unique), so retries, duplicate confirms, replayed jobs and several backend instances produce one notification. Money (`totalAmount`, `currency`) is included only for the owner and staff holding `account.view` or `reports.view`. Deep link: `/owner/bookings?venue=<id>&booking=<id>` (web, Android, iOS). Also emits `booking.confirmed`/`booking.cancelled` over Socket.IO to those users.
+Failure handling: 3 retries with back-off, then `logger.error` + Sentry; `BookingNoticeReconciler` (every minute, advisory-locked) re-sends any confirmed Matchena booking from the last 30 minutes that has no owner notification. FCM sends retry once or twice on 429/5xx. A push failure never fails a booking.
+
+### 12.4 Payments — what is real
+`PAYMENT_PROVIDER` is bound to `MockPaymentProvider` (`isLive = false`). There is **no live PSP integration** (no charge/intent API, no webhook endpoint, no signature verification) in this codebase. Online mode is derived from `PaymentsConfigService.isOnlinePaymentsLive()` (the provider's `isLive`) instead of a hard-coded constant, so it stays `at_venue` until a live provider exists; in `NODE_ENV=production` the mock refuses every electronic charge/refund (`503`). The player wallet is an internal ledger; its top-up needs a live provider.
+
+### 12.5 Tests
+`npm run test:integration` runs the real-Postgres suites: `booking-concurrency` (exclusion constraints, 10-way race, overlapping ranges, same-player overlap, double-click, expiry, confirm/cancel/expiry races, venue changes between Hold and Confirm, owner notifications, staff scope) and `venue-listing` (owner/admin controls, audit, readiness, admin precedence, public surfaces). It needs `TEST_PG_URL` (server URL) and creates a throwaway `*_test` database.

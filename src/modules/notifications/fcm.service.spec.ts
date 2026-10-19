@@ -114,3 +114,26 @@ describe('FcmService', () => {
     expect(sent.message.data.type).toBe('call');
   });
 });
+
+describe('sendWithRetry', () => {
+  const { sendWithRetry } = jest.requireActual('./fcm.service') as typeof import('./fcm.service');
+  const res = (status: number) => ({ ok: status < 400, status }) as Response;
+
+  it('retries transient FCM failures and returns the first good answer', async () => {
+    const send = jest.fn().mockResolvedValueOnce(res(503)).mockResolvedValueOnce(res(429)).mockResolvedValueOnce(res(200));
+    await expect(sendWithRetry(send, [1, 1])).resolves.toMatchObject({ status: 200 });
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a final client error such as an unregistered token', async () => {
+    const send = jest.fn().mockResolvedValue(res(404));
+    await expect(sendWithRetry(send, [1, 1])).resolves.toMatchObject({ status: 404 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after the bounded number of attempts and surfaces a network error', async () => {
+    const send = jest.fn().mockRejectedValue(new Error('socket hang up'));
+    await expect(sendWithRetry(send, [1, 1])).rejects.toThrow('socket hang up');
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+});

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { PrismaService } from '../prisma/prisma.service';
 import type { GlobalSearchDto } from './dto/global-search.dto';
 import type { GlobalSearchResult } from './global-search.types';
@@ -39,7 +40,7 @@ export class GlobalSearchService {
   ): Promise<GlobalSearchResult['venues']> {
     const rows = await this.prisma.venue.findMany({
       where: {
-        status: 'active',
+        ...publicVenueWhere(),
         isDemo: false,
         OR: [
           { nameEn: { contains: q, mode: 'insensitive' } },

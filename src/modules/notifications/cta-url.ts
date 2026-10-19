@@ -42,3 +42,15 @@ export function IsNotificationCtaUrl() {
     },
   });
 }
+
+/**
+ * Web Push opens its link as a plain URL, outside the app router, so it needs the
+ * language prefix the app routes under (`/ar/owner/...`). FCM and the in-app inbox
+ * add the prefix themselves and keep the raw link.
+ */
+export function localizedPushUrl(deepLink: string | null | undefined, lang: 'ar' | 'en'): string | undefined {
+  if (!deepLink) return undefined;
+  if (!deepLink.startsWith('/') || deepLink.startsWith('//')) return deepLink;
+  if (/^\/(?:ar|en)(?:[/?#]|$)/.test(deepLink)) return deepLink;
+  return `/${lang}${deepLink}`;
+}

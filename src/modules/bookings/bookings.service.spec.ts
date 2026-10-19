@@ -9,12 +9,22 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CommissionService } from '../finance/commission.service';
 import { LedgerService } from '../finance/ledger.service';
 import { ApiException } from '../../common/errors/api-exception';
+import { PaymentsConfigService } from '../payments/payments-config.service';
+import { BookingNotifier } from './booking-notifier.service';
+
+// A venue as the database stores a published, bookable one.
+const LISTED = {
+  instantBook: true,
+  ownerListingEnabled: true,
+  adminHidden: false,
+  operationsEnabled: true,
+} as const;
 
 describe('BookingsService', () => {
   let service: BookingsService;
   const prisma = {
-    booking: { findUnique: jest.fn(), updateMany: jest.fn() },
-    user: { update: jest.fn() },
+    booking: { findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
+    user: { update: jest.fn(), findUnique: jest.fn() },
     coinLedgerEntry: { create: jest.fn() },
     $transaction: jest.fn(),
   };
@@ -29,6 +39,8 @@ describe('BookingsService', () => {
     prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
       fn(prisma),
     );
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.user.findUnique.mockResolvedValue({ status: 'active' });
     const module = await Test.createTestingModule({
       providers: [
         BookingsService,
@@ -57,6 +69,8 @@ describe('BookingsService', () => {
           provide: CommissionService,
           useValue: { resolveBps: jest.fn().mockResolvedValue(1000) },
         },
+        { provide: PaymentsConfigService, useValue: { isOnlinePaymentsLive: () => false } },
+        { provide: BookingNotifier, useValue: { notifyVenueSide: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: LedgerService,
           useValue: { syncBookingLedger: jest.fn().mockResolvedValue({ wrote: false, delta: 0, desired: 0 }) },
@@ -105,7 +119,9 @@ describe('BookingsService', () => {
 
     await expect(
       service.confirmBooking('u1', 'b1', {}),
-    ).rejects.toThrow('PULSE_EXPIRED');
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'HOLD_EXPIRED' }),
+    });
 
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 'u1' },
@@ -128,7 +144,7 @@ describe('BookingsService', () => {
       ],
       venue: {
         id: 'v1',
-        status: 'active',
+        status: 'active', ...LISTED,
         paymentMode: 'at_venue',
         currency: 'EGP',
         weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:45' }])),
@@ -165,7 +181,7 @@ describe('BookingsService', () => {
         { daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 400, currency: 'EGP', priority: 0 },
       ],
       venue: {
-        id: 'v2', status: 'active', instantBook: true, paymentMode: 'at_venue', currency: 'EGP',
+        id: 'v2', status: 'active', ...LISTED, instantBook: true, paymentMode: 'at_venue', currency: 'EGP',
         weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:59' }])),
         country: { timezone: 'Africa/Cairo', currency: 'EGP', serviceFeePct: 5, coinToMajorRate: 20 },
       },
@@ -178,7 +194,8 @@ describe('BookingsService', () => {
       booking: {
         ...prisma.booking,
         findFirst: jest.fn()
-          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null) // no live hold of this player on this very slot
+          .mockResolvedValueOnce(null) // the court itself is free
           .mockResolvedValueOnce({ id: 'existing-on-other-court' }),
         create: jest.fn(),
       },
@@ -201,7 +218,7 @@ describe('BookingsService', () => {
           id: 'c1', venueId: 'v1', slotDurationMins: 60, gamingPublished: true,
           sport: { activityKind: 'field-sport' }, pricingRules: [],
           venue: {
-            id: 'v1', status: 'active', instantBook: true,
+            id: 'v1', status: 'active', ...LISTED, instantBook: true,
             weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:59' }])),
             country: { timezone: 'Africa/Cairo' },
           },
@@ -221,7 +238,7 @@ describe('BookingsService', () => {
       venueId: 'v1',
       slotDurationMins: 60,
       pricingRules: [{ daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 400, currency: 'EGP', priority: 0 }],
-      venue: { id: 'v1', status: 'active', paymentMode: 'at_venue', currency: 'EGP', weeklyHours: null, country: { timezone: 'Africa/Cairo', currency: 'EGP' } },
+      venue: { id: 'v1', status: 'active', ...LISTED, paymentMode: 'at_venue', currency: 'EGP', weeklyHours: null, country: { timezone: 'Africa/Cairo', currency: 'EGP' } },
     };
 
     it('offers no slots at all (it used to look open 24 hours)', async () => {
@@ -245,7 +262,7 @@ describe('BookingsService', () => {
       pricingRules: rules,
       venue: {
         id: 'v1',
-        status: 'active',
+        status: 'active', ...LISTED,
         paymentMode: 'at_venue',
         currency: 'AED',
         weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '20:00', close: '23:59' }])),
@@ -324,7 +341,7 @@ describe('BookingsService', () => {
       totalAmount: 420,
       currency: 'EGP',
       paymentModeSnapshot: 'at_venue',
-      venue: { paymentMode: 'at_venue', nameEn: 'X', nameAr: 'س' },
+      venue: { status: 'active', ...LISTED, paymentMode: 'at_venue', nameEn: 'X', nameAr: 'س' },
       promoCodeId: null,
     });
     await expect(service.confirmBooking('u1', 'b1', { paymentMethod: 'card' })).rejects.toBeInstanceOf(ApiException);
@@ -335,10 +352,11 @@ describe('BookingsService', () => {
       id: 'b1', code: 'MAT-TEST', userId: 'u1', status: 'held',
       holdExpiresAt: new Date(Date.now() + 60_000), totalAmount: 420,
       currency: 'EGP', paymentModeSnapshot: 'online', promoCodeId: null,
-      venue: { paymentMode: 'online', nameEn: 'QA Venue', nameAr: 'ملعب اختبار' },
+      venue: { status: 'active', ...LISTED, paymentMode: 'online', nameEn: 'QA Venue', nameAr: 'ملعب اختبار' },
     };
     const confirmed = { ...held, status: 'confirmed', paymentMethod: 'cash', paymentStatus: 'pending' };
     Object.assign(prisma, {
+      venue: { findUnique: jest.fn().mockResolvedValue(held.venue) },
       booking: {
         ...prisma.booking,
         findUnique: jest.fn().mockResolvedValue(held),
@@ -356,5 +374,71 @@ describe('BookingsService', () => {
         data: expect.objectContaining({ paymentMethod: 'cash', paymentStatus: 'pending' }),
       }),
     );
+  });
+
+  describe('venue state is enforced by the backend, not the screen', () => {
+    const court = (venue: Record<string, unknown>) => ({
+      id: 'c1', venueId: 'v1', slotDurationMins: 60, gamingPublished: true, pricingRules: [],
+      venue: { id: 'v1', status: 'active', ...LISTED, weeklyHours: null, country: { timezone: 'Africa/Cairo' }, ...venue },
+    });
+    it.each([
+      [{ ownerListingEnabled: false }, 'VENUE_UNAVAILABLE'],
+      [{ adminHidden: true }, 'VENUE_UNAVAILABLE'],
+      [{ instantBook: false }, 'VENUE_BOOKING_DISABLED'],
+    ])('refuses a hold when %j', async (patch, expected) => {
+      Object.assign(prisma, { court: { findUnique: jest.fn().mockResolvedValue(court(patch)) } });
+      await expect(
+        service.holdSlot('u1', { courtId: 'c1', slotStart: alignedFutureSlot() }),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: expected }) });
+    });
+
+    it('offers no slots for a hidden venue', async () => {
+      Object.assign(prisma, { court: { findUnique: jest.fn().mockResolvedValue({ ...court({ adminHidden: true }), sport: null }) } });
+      await expect(service.getSlotGrid('c1', '2026-12-07')).resolves.toEqual([]);
+    });
+
+    it('refuses a restricted account before doing anything else', async () => {
+      prisma.user.findUnique.mockResolvedValue({ status: 'suspended' });
+      Object.assign(prisma, { court: { findUnique: jest.fn().mockResolvedValue(court({ weeklyHours: { '0': { closed: false, open: '00:00', close: '23:59' } } })) } });
+      await expect(
+        service.holdSlot('u1', { courtId: 'c1', slotStart: alignedFutureSlot() }),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'ACCOUNT_RESTRICTED' }) });
+    });
+
+    it('releases the hold and reports the venue state when it is hidden before confirm', async () => {
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'b1', userId: 'u1', status: 'held', coinsRedeemed: 0, holdExpiresAt: new Date(Date.now() + 60_000),
+        venue: { id: 'v1', status: 'active', ...LISTED, adminHidden: true },
+      });
+      prisma.booking.updateMany.mockResolvedValue({ count: 1 });
+      await expect(service.confirmBooking('u1', 'b1', { paymentMethod: 'cash' })).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'VENUE_UNAVAILABLE' }),
+      });
+      expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'cancelled', holdExpiresAt: null } }),
+      );
+    });
+  });
+
+  describe('split payment input', () => {
+    const held = () => ({
+      id: 'b1', userId: 'u1', status: 'held', totalAmount: 1000, coinsRedeemed: 0, holdExpiresAt: new Date(Date.now() + 60_000),
+      venue: { id: 'v1', status: 'active', ...LISTED },
+    });
+    it.each([
+      ['a zero share', [{ userId: 'u1', amount: 1000 }, { phone: '+201000000001', amount: 0 }], 'SPLIT_AMOUNT_INVALID'],
+      ['a negative share', [{ userId: 'u1', amount: 1500 }, { phone: '+201000000001', amount: -500 }], 'SPLIT_AMOUNT_INVALID'],
+      ['the same payer twice', [{ userId: 'u1', amount: 500 }, { userId: 'u1', amount: 500 }], 'SPLIT_DUPLICATE_PAYER'],
+      ['shares that do not add up to the total', [{ userId: 'u1', amount: 400 }, { phone: '+201000000001', amount: 400 }], 'SPLIT_AMOUNT_MISMATCH'],
+      ['no share for the organizer', [{ phone: '+201000000001', amount: 500 }, { phone: '+201000000002', amount: 500 }], 'SPLIT_ORGANIZER_SHARE_REQUIRED'],
+    ])('rejects %s', async (_label, splitShares, expected) => {
+      prisma.booking.findUnique.mockResolvedValue(held());
+      await expect(service.confirmBooking('u1', 'b1', { splitShares } as never)).rejects.toThrow(expected);
+    });
+  });
+
+  it('only offers online payment when the active provider is live', async () => {
+    const payments = (service as unknown as { paymentsConfig: { isOnlinePaymentsLive(): boolean } }).paymentsConfig;
+    expect(payments.isOnlinePaymentsLive()).toBe(false);
   });
 });

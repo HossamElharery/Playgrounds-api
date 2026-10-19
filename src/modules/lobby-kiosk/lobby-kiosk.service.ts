@@ -1,4 +1,5 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { computeVenueState } from '../../common/utils/venue-visibility.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   PROPOSAL_DAY_SPAN,
@@ -126,13 +127,17 @@ export class LobbyKioskService implements OnModuleDestroy {
           id: true,
           slug: true,
           status: true,
+          ownerListingEnabled: true,
+          adminHidden: true,
+          instantBook: true,
+          operationsEnabled: true,
           nameAr: true,
           nameEn: true,
           photos: { take: 1, orderBy: { position: 'asc' }, select: { url: true } },
         },
       })
       .catch(() => null);
-    if (!venue || venue.status !== 'active') return null;
+    if (!venue || !computeVenueState(venue).publicVisible) return null;
 
     let courtId: string | null = null;
     if (typeof input.courtId === 'string' && input.courtId) {
@@ -282,8 +287,8 @@ export class LobbyKioskService implements OnModuleDestroy {
 
   async addShortlist(squadId: string, userId: string, venueId: string): Promise<boolean> {
     if (!validId(venueId)) return false;
-    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true, status: true } }).catch(() => null);
-    if (!venue || venue.status !== 'active') return false;
+    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true, status: true, ownerListingEnabled: true, adminHidden: true, instantBook: true, operationsEnabled: true } }).catch(() => null);
+    if (!venue || !computeVenueState(venue).publicVisible) return false;
     const s = this.runtime(squadId);
     if (s.shortlist.some((item) => item.venueId === venueId)) return true;
     if (s.shortlist.length >= 5) return false;

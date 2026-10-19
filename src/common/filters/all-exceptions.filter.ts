@@ -59,6 +59,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : {}),
         ...(obj.error ? { error: obj.error } : {}),
         ...(obj.result !== undefined ? { result: obj.result } : {}),
+        // Structured hints the clients render: the set-up checklist of a venue that is
+        // not ready, and how many upcoming bookings a hide would leave behind.
+        ...(Array.isArray(obj.missing) ? { missing: obj.missing } : {}),
+        ...(typeof obj.futureBookings === 'number' ? { futureBookings: obj.futureBookings } : {}),
       });
       return;
     }

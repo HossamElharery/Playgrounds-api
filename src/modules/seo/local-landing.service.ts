@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AreaCatalogService, type AreaCatalog } from '../geo/area-catalog.service';
@@ -112,7 +113,7 @@ export class LocalLandingService {
       this.prisma.venue.findMany({
         where: {
           countryCode,
-          status: 'active',
+          ...publicVenueWhere(),
           isDemo: false,
           // Same rule as public search: a venue without opening hours is not listed.
           NOT: { weeklyHours: { equals: Prisma.DbNull } },

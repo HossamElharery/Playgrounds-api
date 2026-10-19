@@ -39,6 +39,9 @@ import {
 import { loadStaffScope } from '../../common/access/staff-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReorderPhotosDto } from './dto/reorder-photos.dto';
+import { VenueSwitchDto } from './dto/venue-switch.dto';
+import { AdminReasonDto } from './dto/venue-switch.dto';
+import { VenueListingService } from './venue-listing.service';
 
 @ApiTags('venues')
 @Controller()
@@ -47,6 +50,7 @@ export class VenuesController {
     private readonly venues: VenuesService,
     private readonly storage: StorageService,
     private readonly prisma: PrismaService,
+    private readonly listing: VenueListingService,
   ) {}
 
   @Public()
@@ -143,6 +147,54 @@ export class VenuesController {
     @Body() dto: OwnerVenueDto,
   ) {
     return this.venues.update(id, await actingOwnerId(this.prisma, user), await venueActorPrivilege(this.prisma, user, id), dto);
+  }
+
+  /** Where the venue stands on Matchena and why (owner, or admin in edit mode). */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('owner', 'admin')
+  @Get('owner/venues/:id/visibility')
+  visibility(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.listing.ownerState(user, id);
+  }
+
+  /** Show / hide the venue on Matchena. Writes `Venue.ownerListingEnabled`. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('owner', 'admin')
+  @Patch('owner/venues/:id/listing')
+  setListing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: VenueSwitchDto,
+  ) {
+    return this.listing.ownerSet(user, id, 'listing', dto.enabled, dto);
+  }
+
+  /** Accept / pause new Matchena bookings. Writes `Venue.instantBook`. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('owner', 'admin')
+  @Patch('owner/venues/:id/booking-availability')
+  setBookingAvailability(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: VenueSwitchDto,
+  ) {
+    return this.listing.ownerSet(user, id, 'booking', dto.enabled, dto);
+  }
+
+  /** Turn the owner operations system on / off. Writes `Venue.operationsEnabled`. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('owner', 'admin')
+  @Patch('owner/venues/:id/operations')
+  setOperations(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: VenueSwitchDto,
+  ) {
+    return this.listing.ownerSet(user, id, 'operations', dto.enabled, dto);
   }
 
   @ApiBearerAuth()
@@ -321,7 +373,11 @@ export class VenuesController {
   @UseGuards(AuthGuard)
   @Roles('admin')
   @Post('admin/venues/:id/suspend')
-  suspend(@Param('id') id: string) {
-    return this.venues.setStatus(id, 'suspended');
+  suspend(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: AdminReasonDto,
+  ) {
+    return this.venues.suspend(user.id, id, dto.reason);
   }
 }

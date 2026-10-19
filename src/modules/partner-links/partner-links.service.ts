@@ -1,3 +1,4 @@
+import { computeVenueState } from '../../common/utils/venue-visibility.util';
 import {
   ForbiddenException,
   Injectable,
@@ -28,6 +29,10 @@ export class PartnerLinksService {
       select: {
         slug: true,
         status: true,
+        ownerListingEnabled: true,
+        adminHidden: true,
+        instantBook: true,
+        operationsEnabled: true,
         nameAr: true,
         nameEn: true,
         currency: true,
@@ -44,7 +49,7 @@ export class PartnerLinksService {
         governorate: { select: { nameAr: true, nameEn: true } },
       },
     });
-    if (!venue || venue.status !== 'active')
+    if (!venue || !computeVenueState(venue).publicVisible)
       throw new NotFoundException('Venue not found');
     const area = await this.areas.areaFor(venue.districtId).catch(() => null);
     return toEmbedCard(venue, area);
@@ -56,9 +61,9 @@ export class PartnerLinksService {
   ): Promise<{ ok: true }> {
     const venue = await this.prisma.venue.findUnique({
       where: { slug: dto.venueSlug },
-      select: { id: true, status: true },
+      select: { id: true, status: true, ownerListingEnabled: true, adminHidden: true, instantBook: true, operationsEnabled: true },
     });
-    if (!venue || venue.status !== 'active') return { ok: true };
+    if (!venue || !computeVenueState(venue).publicVisible) return { ok: true };
     await this.prisma.analyticsEvent
       .create({
         data: {

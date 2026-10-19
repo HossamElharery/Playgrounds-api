@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -52,6 +53,7 @@ const userSelect = {
 } as const;
 @Injectable()
 export class ManagementService {
+  private readonly logger = new Logger(ManagementService.name);
   constructor(
     private readonly db: PrismaService,
     @Optional() private readonly transcript?: AssistantTranscriptService,
@@ -328,6 +330,16 @@ export class ManagementService {
   async updateVenue(actor: string, id: string, dto: AdminVenueDto) {
     const { reason: rawReason, sportIds, amenityKeys, weeklyHours, force, ...data } = dto;
     const reason = rawReason?.trim() || 'Admin edit';
+    // Suspending, sending back to review and force-publishing are sensitive
+    // decisions: the platform has to say why, and the owner is shown the reason.
+    if ((data.status && data.status !== 'active') || force) {
+      if (reason.length < 5 || reason === 'Admin edit') {
+        throw new BadRequestException({
+          code: 'REASON_REQUIRED',
+          message: 'A reason of at least 5 characters is required for this decision',
+        });
+      }
+    }
     if (weeklyHours) {
       const errors = validateWeeklyHours(weeklyHours);
       if (errors.length) throw new BadRequestException(errors.join('; '));
@@ -448,6 +460,19 @@ export class ManagementService {
           ...(data.status === 'active'
             ? { approvedById: actor, approvedAt: new Date() }
             : {}),
+          ...(data.status && data.status !== before.status
+            ? {
+                // Approving clears the suspension reason, but a platform hide that is
+                // still in force keeps its own reason.
+                ...(data.status === 'active'
+                  ? before.adminHidden
+                    ? {}
+                    : { moderationReason: null }
+                  : { moderationReason: reason.slice(0, 500) }),
+                moderatedById: actor,
+                moderatedAt: new Date(),
+              }
+            : {}),
         },
       });
       if (sportIds) {
@@ -502,7 +527,7 @@ export class ManagementService {
           }
         }
       }
-      await this.audit(tx, actor, 'venue', id, reason, before, dto);
+      await this.audit(tx, actor, 'venue', id, reason, before, { ...dto, force: force === true });
       return updated;
     });
     if (statusChange) await this.notifyVenueStatus(id, statusChange, reason, result.updatedAt);
@@ -545,7 +570,9 @@ export class ManagementService {
         deepLink: '/owner/today',
         payload: { kind: 'venue_status', venueId, status: change.to, reason: change.to === 'active' ? undefined : reason },
       })
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        this.logger.warn(`Venue status notice failed for ${venueId}: ${String(error)}`),
+      );
   }
   async updateReview(actor: string, id: string, dto: AdminReviewDto) {
     const { reason, ...data } = dto;

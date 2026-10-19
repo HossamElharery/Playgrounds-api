@@ -16,6 +16,7 @@ import { DemoController } from './demo/demo.controller';
 import { DemoService } from './demo/demo.service';
 import { FinanceModule } from '../finance/finance.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { VenuesModule } from '../venues/venues.module';
 import { IdempotencyInterceptor } from '../../common/interceptors/idempotency.interceptor';
 
 @Module({
@@ -27,6 +28,7 @@ import { IdempotencyInterceptor } from '../../common/interceptors/idempotency.in
     AiModule,
     FinanceModule,
     PaymentsModule,
+    VenuesModule,
   ],
   providers: [
     AdminService,
