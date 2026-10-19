@@ -48,10 +48,10 @@ const PAYMENT_METHODS = [
 
 export class ConfirmBookingDto {
   @ApiPropertyOptional({
-    example: 'wallet',
+    example: 'cash',
     enum: PAYMENT_METHODS,
     description:
-      'Player confirm always debits the EGP wallet. This field is ignored for player checkout (kept optional for older clients). Owner walk-in still uses calendar cash/card.',
+      'Player checkout currently confirms payment at the venue. Online methods stay unavailable until the production gateway is enabled.',
   })
   @IsOptional()
   @IsIn([...PAYMENT_METHODS])

@@ -21,13 +21,17 @@ import { signQrPayload, verifyQrPayload } from '../../common/utils/qr.util';
 import {
   zonedDayBounds,
   zonedHhmm,
+  zonedYmd,
   zonedWeekday,
 } from '../../common/utils/timezone.util';
 import {
   isTimeWithinDayHours,
   WeeklyHours,
 } from '../../common/utils/weekly-hours.util';
-import { isBookingSlotConflict } from '../../common/utils/booking-slot-conflict.util';
+import {
+  isBookingSlotConflict,
+  isUserBookingTimeConflict,
+} from '../../common/utils/booking-slot-conflict.util';
 import { coveringPricingRule, hasPricingCoverage } from '../../common/utils/pricing-rule.util';
 import { moneyText } from '../../common/money/money-text';
 import { assertVenueStaffAccess } from '../../common/access/venue-access';
@@ -53,9 +57,14 @@ const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 secon
 const FIRST_BOOKING_BONUS_COINS = 200;
 const FIRST_BOOKING_MIN_TOTAL = 5000;
 const MAX_COIN_DISCOUNT_PCT = 30;
+const MAX_ADVANCE_DAYS = 90;
+// Keep player checkout strictly pay-at-venue until a production payment
+// gateway is configured, verified and enabled deliberately.
+const ONLINE_PLAYER_PAYMENTS_ENABLED = false;
 
 const ONLINE_ONLY_METHODS = new Set([
   'card',
+  'wallet',
   'apple_pay',
   'google_pay',
   'paypal',
@@ -103,7 +112,7 @@ export class BookingsService {
       },
     });
     if (!court) throw new NotFoundException('Court not found');
-    if (court.gamingPublished === false) return [];
+    if (court.gamingPublished === false || court.venue.status !== 'active' || court.venue.instantBook === false) return [];
 
     // No opening hours means "not set up yet", never "open all day".
     if (!hasOpeningHours(court.venue.weeklyHours)) return [];
@@ -196,6 +205,12 @@ export class BookingsService {
         message: 'This venue is not accepting bookings right now',
       });
     }
+    if (court.venue.instantBook === false || court.gamingPublished === false) {
+      throw new ConflictException({
+        code: 'VENUE_BOOKING_DISABLED',
+        message: 'This venue is not accepting online bookings right now',
+      });
+    }
     if (!hasOpeningHours(court.venue.weeklyHours)) {
       throw new ConflictException({
         code: 'VENUE_NOT_READY',
@@ -204,10 +219,30 @@ export class BookingsService {
     }
 
     const slotStart = new Date(dto.slotStart);
-    if (slotStart < new Date())
+    const now = new Date();
+    if (slotStart <= now)
       throw new BadRequestException('Cannot book a past slot');
 
+    if (slotStart.getTime() > now.getTime() + MAX_ADVANCE_DAYS * 86_400_000) {
+      throw new BadRequestException({
+        code: 'BOOKING_TOO_FAR_AHEAD',
+        message: `Bookings can be made up to ${MAX_ADVANCE_DAYS} days ahead`,
+      });
+    }
+
     const timeZone = court.venue.country.timezone;
+    const dayStart = zonedDayBounds(zonedYmd(slotStart, timeZone), timeZone).start;
+    const stepMs = court.slotDurationMins * 60_000;
+    if (
+      !Number.isSafeInteger(court.slotDurationMins) ||
+      court.slotDurationMins < 1 ||
+      (slotStart.getTime() - dayStart.getTime()) % stepMs !== 0
+    ) {
+      throw new BadRequestException({
+        code: 'INVALID_SLOT_START',
+        message: 'The selected time must match an available slot',
+      });
+    }
     const rule = coveringPricingRule(
       court.pricingRules,
       zonedWeekday(slotStart, timeZone),
@@ -251,7 +286,17 @@ export class BookingsService {
     let promoCodeId: string | undefined;
     let ownerFundedDiscount = 0;
     if (dto.promoCode) {
-      const promo = await this.validatePromo(dto.promoCode, userId, baseAmount);
+      const promo = await this.validatePromo(dto.promoCode, userId, baseAmount, {
+        venueId: court.venueId,
+        sportId: court.sportId,
+        currency: court.venue.currency,
+      });
+      if (dto.coinsToRedeem && !promo.stackableWithCoins) {
+        throw new BadRequestException({
+          code: 'PROMO_NOT_STACKABLE_WITH_COINS',
+          message: 'This promo code cannot be combined with coins',
+        });
+      }
       discountAmount = promo.discountAmount;
       promoCodeId = promo.id;
       if (promo.venueId) ownerFundedDiscount = promo.discountAmount;
@@ -309,6 +354,40 @@ export class BookingsService {
           });
           if (overlap) throw new ConflictException('SLOT_ALREADY_HELD');
 
+          const userOverlap = await tx.booking.findFirst({
+            where: {
+              userId,
+              status: { in: ['held', 'confirmed'] },
+              slotStart: { lt: slotEnd },
+              slotEnd: { gt: slotStart },
+            },
+          });
+          if (userOverlap) {
+            throw new ConflictException({
+              code: 'USER_TIME_CONFLICT',
+              message: 'You already have another booking at this time',
+            });
+          }
+
+          const occupiedResource = await tx.resourceOccupancy.findFirst({
+            where: {
+              OR: [
+                { resourceId: court.id },
+                {
+                  resource: {
+                    gamingRoom: {
+                      bookableCourtId: court.id,
+                      occupancy: 'exclusive',
+                    },
+                  },
+                },
+              ],
+              startsAt: { lt: slotEnd },
+              AND: [{ OR: [{ endsAt: null }, { endsAt: { gt: slotStart } }] }],
+            },
+          });
+          if (occupiedResource) throw new ConflictException('SLOT_ALREADY_HELD');
+
           if (coinsRedeemed > 0) {
             const spent = await tx.user.updateMany({
               where: { id: userId, coinsBalance: { gte: coinsRedeemed } },
@@ -351,7 +430,12 @@ export class BookingsService {
               coinsRedeemed,
               status: 'held',
               holdExpiresAt: new Date(Date.now() + HOLD_DURATION_MS),
-              ...bookingSnapshotFields(money, court.venue.paymentMode),
+              ...bookingSnapshotFields(
+                money,
+                ONLINE_PLAYER_PAYMENTS_ENABLED
+                  ? court.venue.paymentMode
+                  : 'at_venue',
+              ),
             },
           });
 
@@ -372,6 +456,12 @@ export class BookingsService {
       );
     } catch (error) {
       if (error instanceof ConflictException) throw error;
+      if (isUserBookingTimeConflict(error)) {
+        throw new ConflictException({
+          code: 'USER_TIME_CONFLICT',
+          message: 'You already have another booking at this time',
+        });
+      }
       if (isBookingSlotConflict(error)) {
         throw new ConflictException('SLOT_ALREADY_HELD');
       }
@@ -383,13 +473,27 @@ export class BookingsService {
     code: string,
     userId: string,
     baseAmount: number,
+    context?: { venueId: string; sportId: string; currency: string },
   ) {
-    const promo = await this.prisma.promoCode.findUnique({ where: { code } });
+    const promo = await this.prisma.promoCode.findFirst({
+      where: { code: { equals: code.trim(), mode: 'insensitive' } },
+    });
     if (!promo || !promo.active)
       throw new BadRequestException('Invalid promo code');
     const now = new Date();
     if (now < promo.validFrom || now > promo.validUntil)
       throw new BadRequestException('Promo code expired');
+    if (context) {
+      if (promo.venueId && promo.venueId !== context.venueId) {
+        throw new BadRequestException('Promo code is not valid for this venue');
+      }
+      if (promo.sportId && promo.sportId !== context.sportId) {
+        throw new BadRequestException('Promo code is not valid for this activity');
+      }
+      if (promo.type !== 'percentage' && promo.currency !== context.currency) {
+        throw new BadRequestException('Promo code currency does not match this venue');
+      }
+    }
     if (promo.minBookingAmount && baseAmount < promo.minBookingAmount) {
       throw new BadRequestException(
         'Booking amount is below this promo code minimum',
@@ -430,6 +534,7 @@ export class BookingsService {
       value: promo.value,
       discountAmount: Math.min(discountAmount, baseAmount),
       venueId: promo.venueId,
+      stackableWithCoins: promo.stackableWithCoins,
     };
   }
 
@@ -501,8 +606,9 @@ export class BookingsService {
       chargeAmount = organizerShare.amount;
     }
 
-    const mode =
-      booking.paymentModeSnapshot ?? booking.venue.paymentMode ?? 'at_venue';
+    const mode = ONLINE_PLAYER_PAYMENTS_ENABLED
+      ? booking.paymentModeSnapshot ?? booking.venue.paymentMode ?? 'at_venue'
+      : 'at_venue';
     if (mode === 'at_venue') {
       if (dto.paymentMethod && ONLINE_ONLY_METHODS.has(dto.paymentMethod)) {
         throw new ApiException(

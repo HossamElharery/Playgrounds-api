@@ -57,6 +57,8 @@ export class AdminUserDto extends ReasonDto {
   @IsOptional() @IsString() @MaxLength(2048) avatarUrl?: string;
   @IsOptional() @IsString() governorateId?: string;
   @IsOptional() @IsString() districtId?: string;
+  /** Daily cap on new people this player may message. null = automatic, 0 = off. */
+  @IsOptional() @IsInt() @Min(0) @Max(100) strangerContactLimit?: number | null;
 }
 export class CoinAdjustmentDto extends ReasonDto {
   @IsInt() @Min(-1000000) @Max(1000000) amount!: number;

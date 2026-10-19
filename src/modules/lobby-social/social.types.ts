@@ -77,9 +77,12 @@ export interface SocialState {
   lastTags: string[];
   reaction: { userId: string; text: string; at: number } | null;
   reactions?: { userId: string; text: string; at: number }[];
+  /** Typed answers for players who cannot talk right now; reset every round. */
+  written?: SocialWritten[];
   nudgeAt: number | null;
   exposedUsers?: string[];
 }
+export interface SocialWritten { userId: string; text: string; at: number }
 export interface SocialCardRound {
   order: string[];
   responses: Record<string, 'answered' | 'passed'>;
@@ -98,7 +101,7 @@ export interface SocialSnapshot {
     revealAt: number | null; voteDeadline: number | null; phaseAt: number;
     voterIds: string[]; submittedIds: string[]; outcome: SocialOutcome | null;
     completed: number; message: string | null; proposedGame: SocialGame | null; confirmedIds: string[];
-    reaction: SocialState['reaction']; reactions?: NonNullable<SocialState['reactions']>; nudgeAt: number | null; cycleComplete: boolean;
+    reaction: SocialState['reaction']; reactions?: NonNullable<SocialState['reactions']>; written?: SocialWritten[]; nudgeAt: number | null; cycleComplete: boolean;
   };
   personal: { choice: SocialChoice | null; vote: SocialVote | null; allowed: string[]; targetIds: string[] };
 }

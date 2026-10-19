@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { ResolveReportDto } from './dto/resolve-report.dto';
@@ -65,7 +70,36 @@ export class AdminService {
     };
   }
 
-  createReport(reporterId: string, dto: CreateReportDto) {
+  async createReport(reporterId: string, dto: CreateReportDto) {
+    if (dto.reportedUserId === reporterId || (dto.entityType === 'player' && dto.entityId === reporterId)) {
+      throw new BadRequestException('You cannot report yourself');
+    }
+    if (dto.entityType === 'player' && dto.reportedUserId !== dto.entityId) {
+      throw new BadRequestException('Player reports must identify the reported player');
+    }
+    if (dto.reportedUserId) {
+      const reported = await this.prisma.user.findFirst({
+        where: { id: dto.reportedUserId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!reported) throw new NotFoundException('Reported user not found');
+    }
+    const since = new Date(Date.now() - 24 * 60 * 60_000);
+    const recentCount = await this.prisma.moderationReport.count({
+      where: { reporterId, createdAt: { gte: since } },
+    });
+    if (recentCount >= 20) throw new ForbiddenException('Report rate limit reached');
+
+    const existing = await this.prisma.moderationReport.findFirst({
+      where: {
+        reporterId,
+        entityType: dto.entityType,
+        entityId: dto.entityId,
+        status: 'open',
+      },
+    });
+    if (existing) return existing;
+
     return this.prisma.moderationReport.create({
       data: {
         entityType: dto.entityType,

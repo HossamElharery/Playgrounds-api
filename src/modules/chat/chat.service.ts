@@ -9,7 +9,20 @@ import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { MessageTrustService } from './message-trust.service';
+import {
+  fingerprintMessage,
+  validateRequestMessage,
+} from './message-request.rules';
+import { Prisma } from '@prisma/client';
 import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto';
+import {
+  RESTRICTION_MESSAGE,
+  REQUEST_VIOLATION_MESSAGE,
+  normalizeMessagePolicy,
+  type MessageAccess,
+  type MessageRestriction,
+} from './message-policy';
 
 const PUBLIC_SENDER = { id: true, name: true, avatarUrl: true } as const;
 
@@ -20,13 +33,14 @@ export class ChatService {
     private readonly presence: PresenceService,
     private readonly emitter: RealtimeGatewayEmitter,
     private readonly notifications: NotificationsService,
+    private readonly trust: MessageTrustService,
   ) {}
 
   private pairKey(a: string, b: string): string {
     return [a, b].sort().join(':');
   }
 
-  private async assertNotBlocked(a: string, b: string) {
+  private async isBlocked(a: string, b: string): Promise<boolean> {
     const block = await this.prisma.userBlock.findFirst({
       where: {
         OR: [
@@ -35,45 +49,122 @@ export class ChatService {
         ],
       },
     });
-    if (block) throw new ForbiddenException('Cannot message this user');
+    return !!block;
   }
 
-  private async canMessage(fromId: string, toId: string) {
+  private async assertNotBlocked(a: string, b: string) {
+    if (await this.isBlocked(a, b))
+      throw new ForbiddenException({
+        code: 'MESSAGES_BLOCKED',
+        message: RESTRICTION_MESSAGE.MESSAGES_BLOCKED,
+      });
+  }
+
+  /**
+   * Single source of truth for "may `fromId` write to `toId`": honours the
+   * recipient's privacy setting. Used when opening a conversation, on every
+   * send (so a policy change takes effect on existing threads immediately) and
+   * by the read-only access probe the UI uses to pre-render the composer.
+   */
+  async messageAccess(fromId: string, toId: string): Promise<MessageAccess> {
     const to = await this.prisma.user.findUnique({
       where: { id: toId },
       select: { messagePolicy: true, status: true, isGuest: true },
     });
     if (!to || to.status !== 'active' || to.isGuest)
       throw new NotFoundException('Player not found');
-    const policy = to?.messagePolicy ?? 'everyone';
-    if (policy === 'nobody')
-      throw new ForbiddenException('This user is not accepting messages');
-    if (policy === 'everyone') return;
-    const friends = await this.prisma.friendship.findFirst({
+    const policy = normalizeMessagePolicy(to.messagePolicy);
+    const result = (
+      allowed: boolean,
+      restriction: MessageRestriction | null,
+      isFriend = false,
+      isFollowing = false,
+    ): MessageAccess => ({
+      allowed,
+      policy,
+      restriction,
+      isFriend,
+      isFollowing,
+    });
+
+    if (await this.isBlocked(fromId, toId))
+      return result(false, 'MESSAGES_BLOCKED');
+    if (policy === 'everyone') return result(true, null);
+    if (policy === 'nobody') return result(false, 'MESSAGES_CLOSED');
+
+    const [friendship, follow] = await Promise.all([
+      this.prisma.friendship.findFirst({
+        where: {
+          status: 'accepted',
+          OR: [
+            { requesterId: fromId, addresseeId: toId },
+            { requesterId: toId, addresseeId: fromId },
+          ],
+        },
+      }),
+      policy === 'followers'
+        ? this.prisma.follow.findUnique({
+            where: {
+              followerId_followingId: { followerId: fromId, followingId: toId },
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+    const isFriend = !!friendship;
+    const isFollowing = !!follow;
+    if (isFriend) return result(true, null, true, isFollowing);
+
+    if (policy === 'friends') return result(false, 'MESSAGES_FRIENDS_ONLY');
+    if (policy === 'followers') {
+      return isFollowing
+        ? result(true, null, false, true)
+        : result(false, 'MESSAGES_FOLLOWERS_ONLY');
+    }
+    const teammates = await this.prisma.teamMember.findFirst({
       where: {
-        status: 'accepted',
-        OR: [
-          { requesterId: fromId, addresseeId: toId },
-          { requesterId: toId, addresseeId: fromId },
-        ],
+        userId: fromId,
+        team: { members: { some: { userId: toId } } },
       },
     });
-    if (policy === 'friends' && !friends) {
-      throw new ForbiddenException('Only friends can message this user');
-    }
-    if (policy === 'teammates') {
-      const teammates = await this.prisma.teamMember.findFirst({
-        where: {
-          userId: fromId,
-          team: { members: { some: { userId: toId } } },
-        },
+    return teammates
+      ? result(true, null)
+      : result(false, 'MESSAGES_TEAMMATES_ONLY');
+  }
+
+  private async canMessage(fromId: string, toId: string) {
+    const access = await this.messageAccess(fromId, toId);
+    if (!access.allowed && access.restriction)
+      throw new ForbiddenException({
+        code: access.restriction,
+        message: RESTRICTION_MESSAGE[access.restriction],
       });
-      if (!friends && !teammates) {
-        throw new ForbiddenException(
-          'Only teammates or friends can message this user',
-        );
-      }
-    }
+  }
+
+  async getMessageAccess(userId: string, targetId: string) {
+    if (userId === targetId)
+      throw new BadRequestException('Cannot message yourself');
+    const access = await this.messageAccess(userId, targetId);
+    // A blocked viewer must not learn who blocked whom.
+    const known = access.allowed
+      ? await this.trust.isKnown(userId, targetId)
+      : true;
+    const quota =
+      access.allowed && !known ? await this.getContactQuota(userId) : null;
+    const existing = await this.prisma.chatThread.findUnique({
+      where: { pairKey: this.pairKey(userId, targetId) },
+      select: { id: true },
+    });
+    return {
+      isKnown: known,
+      hasThread: !!existing,
+      quota,
+      canMessage: access.allowed,
+      policy:
+        access.restriction === 'MESSAGES_BLOCKED' ? 'everyone' : access.policy,
+      restriction: access.restriction,
+      isFriend: access.isFriend,
+      isFollowing: access.isFollowing,
+    };
   }
 
   async findOrCreateDirectThread(
@@ -83,30 +174,61 @@ export class ChatService {
     if (userId === participantId)
       throw new BadRequestException('Cannot message yourself');
     await this.assertNotBlocked(userId, participantId);
-    await this.canMessage(userId, participantId);
 
     const key = this.pairKey(userId, participantId);
     const existing = await this.prisma.chatThread.findUnique({
       where: { pairKey: key },
     });
+    // History stays readable after a privacy change; sending is re-checked.
     if (existing)
       return {
-        thread: await this.summarize(existing.id, userId),
+        thread: await this.summarize(existing.id, userId, true),
         created: false,
       };
+    await this.canMessage(userId, participantId);
 
-    const thread = await this.prisma.chatThread.create({
-      data: {
-        type: 'direct',
-        pairKey: key,
-        participants: { create: [{ userId }, { userId: participantId }] },
-      },
-    });
-    const summary = await this.summarize(thread.id, userId);
-    this.emitter.emitToUser(participantId, {
-      type: 'chat.thread.created',
-      thread: await this.summarize(thread.id, participantId),
-    });
+    // Strangers go through the message-request flow and a daily cap; people who
+    // already share a friendship, team or match chat normally.
+    const known = await this.trust.isKnown(userId, participantId);
+    if (!known) {
+      const quota = await this.trust.quota(userId);
+      if (quota.remaining <= 0) throw this.trust.limitReached(quota);
+    }
+    let thread;
+    try {
+      thread = await this.prisma.chatThread.create({
+        data: {
+          type: 'direct',
+          pairKey: key,
+          requestState: known ? 'none' : 'pending',
+          requestedById: known ? null : userId,
+          participants: { create: [{ userId }, { userId: participantId }] },
+        },
+      });
+    } catch (error) {
+      // Two taps / two devices racing to open the same chat.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await this.prisma.chatThread.findUniqueOrThrow({
+          where: { pairKey: key },
+        });
+        return {
+          thread: await this.summarize(raced.id, userId, true),
+          created: false,
+        };
+      }
+      throw error;
+    }
+    const summary = await this.summarize(thread.id, userId, true);
+    // A cold request stays invisible to the recipient until a message is sent.
+    if (known) {
+      this.emitter.emitToUser(participantId, {
+        type: 'chat.thread.created',
+        thread: await this.summarize(thread.id, participantId),
+      });
+    }
     return { thread: summary, created: true };
   }
 
@@ -198,17 +320,29 @@ export class ChatService {
       include: { thread: true },
       orderBy: { thread: { updatedAt: 'desc' } },
     });
-    return Promise.all(
-      participations.map((p) => this.summarize(p.threadId, userId)),
-    );
+    const visible = participations.filter(({ thread }) => {
+      if (thread.type !== 'direct' || thread.requestState === 'none')
+        return true;
+      if (thread.requestedById === userId) return true;
+      // Recipient: hide dismissed requests and ones that have no message yet.
+      return (
+        thread.requestState === 'accepted' ||
+        (thread.requestState === 'pending' && !!thread.requestedAt)
+      );
+    });
+    return Promise.all(visible.map((p) => this.summarize(p.threadId, userId)));
   }
 
   async getThread(userId: string, threadId: string) {
     await this.assertParticipant(threadId, userId);
-    return this.summarize(threadId, userId);
+    return this.summarize(threadId, userId, true);
   }
 
-  private async summarize(threadId: string, viewerId: string) {
+  private async summarize(
+    threadId: string,
+    viewerId: string,
+    withAccess = false,
+  ) {
     const thread = await this.prisma.chatThread.findUniqueOrThrow({
       where: { id: threadId },
       include: {
@@ -254,10 +388,55 @@ export class ChatService {
       },
     });
 
+    let canReply = true;
+    let restriction: MessageRestriction | null = null;
+    if (withAccess && thread.type === 'direct' && other) {
+      const access = await this.messageAccess(viewerId, other.userId).catch(
+        () => null,
+      );
+      if (access) {
+        canReply = access.allowed;
+        restriction = access.restriction;
+        if (
+          canReply &&
+          thread.requestedById === viewerId &&
+          (thread.requestState === 'pending' ||
+            thread.requestState === 'declined')
+        ) {
+          const sent = await this.prisma.chatMessage.count({
+            where: { threadId, senderId: viewerId, deletedAt: null },
+          });
+          if (
+            sent >= 1 &&
+            !(await this.trust.isKnown(viewerId, other.userId))
+          ) {
+            canReply = false;
+            restriction = 'MESSAGES_REQUEST_PENDING';
+          }
+        }
+      } else {
+        canReply = false;
+        restriction = 'MESSAGES_CLOSED';
+      }
+    }
+
     return {
       id: thread.id,
       type: thread.type,
       title: thread.title,
+      canReply,
+      restriction,
+      requestState: thread.requestState,
+      isOutgoingRequest:
+        thread.type === 'direct' &&
+        (thread.requestState === 'pending' ||
+          thread.requestState === 'declined') &&
+        thread.requestedById === viewerId,
+      isIncomingRequest:
+        thread.type === 'direct' &&
+        thread.requestState === 'pending' &&
+        !!thread.requestedById &&
+        thread.requestedById !== viewerId,
       matchPostId: thread.matchPost?.id ?? null,
       teamId: thread.team?.id ?? null,
       participant: other
@@ -376,11 +555,13 @@ export class ChatService {
       where: { id: threadId },
       include: { participants: { select: { userId: true } } },
     });
+    let recipientId: string | undefined;
     if (thread.type === 'direct') {
       const recipient = thread.participants.find(
         (participant) => participant.userId !== userId,
       );
       if (!recipient) throw new NotFoundException('Player not found');
+      recipientId = recipient.userId;
       await this.assertNotBlocked(userId, recipient.userId);
       await this.canMessage(userId, recipient.userId);
     }
@@ -403,23 +584,50 @@ export class ChatService {
     if (dto.type === 'text' && !dto.text?.trim()) {
       throw new BadRequestException('text is required');
     }
+    if (dto.type === 'text') {
+      // A text message never carries a file.
+      dto = {
+        ...dto,
+        text: dto.text!.trim(),
+        attachmentUrl: undefined,
+        attachmentMime: undefined,
+        attachmentSize: undefined,
+        attachmentDurationMs: undefined,
+      };
+    } else if (!dto.attachmentUrl) {
+      throw new BadRequestException('Invalid attachment');
+    }
 
-    const message = await this.prisma.chatMessage.create({
-      data: {
-        threadId,
-        clientMessageId: dto.clientMessageId,
-        senderId: userId,
-        type: dto.type,
-        text: dto.text,
-        attachmentUrl: dto.attachmentUrl,
-        attachmentMime: dto.attachmentMime,
-        attachmentSize: dto.attachmentSize,
-        attachmentDurationMs: dto.attachmentDurationMs,
-      },
-      include: {
-        sender: { select: PUBLIC_SENDER },
-      },
-    });
+    await this.trust.assertNotBursting(userId);
+    const request =
+      thread.type === 'direct' && recipientId && thread.requestState !== 'none'
+        ? await this.applyRequestRules(userId, recipientId, thread, dto)
+        : { claimedSlot: false, isRequest: false };
+
+    let message;
+    try {
+      message = await this.prisma.chatMessage.create({
+        data: {
+          threadId,
+          clientMessageId: dto.clientMessageId,
+          senderId: userId,
+          type: dto.type,
+          text: dto.text,
+          attachmentUrl: dto.attachmentUrl,
+          attachmentMime: dto.attachmentMime,
+          attachmentSize: dto.attachmentSize,
+          attachmentDurationMs: dto.attachmentDurationMs,
+        },
+        include: {
+          sender: { select: PUBLIC_SENDER },
+        },
+      });
+    } catch (error) {
+      // The message never landed, so the player keeps their daily slot.
+      if (request.claimedSlot)
+        await this.trust.releaseSlot(threadId).catch(() => undefined);
+      throw error;
+    }
 
     await this.prisma.chatThread.update({
       where: { id: threadId },
@@ -448,16 +656,133 @@ export class ChatService {
       await this.notifications.create({
         userId: p.userId,
         category: 'chat',
-        titleEn: message.sender.name,
-        titleAr: message.sender.name,
-        bodyEn: preview,
-        bodyAr: preview,
+        titleEn: request.isRequest
+          ? 'New message request'
+          : message.sender.name,
+        titleAr: request.isRequest ? 'طلب رسالة جديد' : message.sender.name,
+        bodyEn: request.isRequest
+          ? `${message.sender.name}: ${preview}`
+          : preview,
+        bodyAr: request.isRequest
+          ? `${message.sender.name}: ${preview}`
+          : preview,
+        // A stranger's first message must never buzz the recipient's phone.
+        noPush: request.isRequest,
         deepLink: `/app/chat/${threadId}`,
         payload: { threadId, messageId: message.id },
       });
     }
 
     return dtoMessage;
+  }
+
+  /**
+   * Message-request rules for a direct thread that started as a cold contact.
+   * - People who became connected, or the recipient replying, accept it.
+   * - Otherwise the requester gets exactly one plain-text, link-free message.
+   */
+  private async applyRequestRules(
+    userId: string,
+    recipientId: string,
+    thread: { id: string; requestState: string; requestedById: string | null },
+    dto: SendMessageDto,
+  ): Promise<{ claimedSlot: boolean; isRequest: boolean }> {
+    const accept = async () => {
+      if (thread.requestState !== 'accepted')
+        await this.prisma.chatThread.update({
+          where: { id: thread.id },
+          data: { requestState: 'accepted' },
+        });
+      return { claimedSlot: false, isRequest: false };
+    };
+    if (thread.requestState === 'accepted') return accept();
+    if (thread.requestedById !== userId) return accept();
+    if (await this.trust.isKnown(userId, recipientId)) return accept();
+
+    const pendingError = () =>
+      new ForbiddenException({
+        code: 'MESSAGES_REQUEST_PENDING',
+        message: 'You can send more once they reply',
+      });
+    const alreadySent = await this.prisma.chatMessage.count({
+      where: { threadId: thread.id, senderId: userId, deletedAt: null },
+    });
+    if (alreadySent >= 1) throw pendingError();
+
+    const violation = validateRequestMessage(dto);
+    if (violation)
+      throw new ForbiddenException({
+        code: violation,
+        message: REQUEST_VIOLATION_MESSAGE[violation],
+      });
+    await this.trust.assertNotMassMessaging(
+      userId,
+      thread.id,
+      fingerprintMessage(dto.text ?? ''),
+    );
+    // false = a parallel request already spent this thread's slot.
+    if (!(await this.trust.claimSlot(userId, thread.id))) throw pendingError();
+    return { claimedSlot: true, isRequest: true };
+  }
+
+  /** The recipient accepts or dismisses a stranger's message request. */
+  async respondToRequest(
+    userId: string,
+    threadId: string,
+    action: 'accept' | 'decline',
+  ) {
+    await this.assertParticipant(threadId, userId);
+    const thread = await this.prisma.chatThread.findUniqueOrThrow({
+      where: { id: threadId },
+    });
+    if (
+      thread.type !== 'direct' ||
+      thread.requestState !== 'pending' ||
+      !thread.requestedById ||
+      thread.requestedById === userId
+    )
+      throw new BadRequestException('There is no pending request here');
+    await this.prisma.chatThread.update({
+      where: { id: threadId },
+      data: { requestState: action === 'accept' ? 'accepted' : 'declined' },
+    });
+    return this.summarize(threadId, userId, true);
+  }
+
+  async getContactQuota(userId: string) {
+    const q = await this.trust.quota(userId);
+    return {
+      tier: q.tier,
+      limit: q.limit,
+      used: q.used,
+      remaining: q.remaining,
+      resetAt: q.resetAt,
+      restricted: q.restricted,
+    };
+  }
+
+  /** Fail before uploading a file the request rules would reject anyway. */
+  async assertCanAttach(userId: string, threadId: string) {
+    await this.assertParticipant(threadId, userId);
+    const thread = await this.prisma.chatThread.findUniqueOrThrow({
+      where: { id: threadId },
+    });
+    if (
+      thread.type === 'direct' &&
+      (thread.requestState === 'pending' ||
+        thread.requestState === 'declined') &&
+      thread.requestedById === userId
+    ) {
+      const other = await this.prisma.chatThreadParticipant.findFirst({
+        where: { threadId, userId: { not: userId } },
+        select: { userId: true },
+      });
+      if (!other || !(await this.trust.isKnown(userId, other.userId)))
+        throw new ForbiddenException({
+          code: 'MESSAGE_REQUEST_TEXT_ONLY',
+          message: REQUEST_VIOLATION_MESSAGE.MESSAGE_REQUEST_TEXT_ONLY,
+        });
+    }
   }
 
   async attachFile(
@@ -493,6 +818,24 @@ export class ChatService {
     if (message.senderId !== userId)
       throw new ForbiddenException('Not your message');
     if (message.deletedAt) throw new BadRequestException('Message deleted');
+    if (message.type !== 'text')
+      throw new BadRequestException('Only text messages can be edited');
+    // The one message a stranger may send must not gain a link after the fact.
+    const thread = await this.prisma.chatThread.findUniqueOrThrow({
+      where: { id: threadId },
+    });
+    if (
+      thread.type === 'direct' &&
+      thread.requestedById === userId &&
+      (thread.requestState === 'pending' || thread.requestState === 'declined')
+    ) {
+      const violation = validateRequestMessage({ type: 'text', text });
+      if (violation)
+        throw new ForbiddenException({
+          code: violation,
+          message: REQUEST_VIOLATION_MESSAGE[violation],
+        });
+    }
     const updated = await this.prisma.chatMessage.update({
       where: { id: messageId },
       data: { text, editedAt: new Date() },

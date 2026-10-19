@@ -19,6 +19,34 @@ describe('Social games authoritative rules', () => {
   const voting = () => { setup('truth'); act('a', 'start'); act('a', 'commit', { choice: 'fabrication' }); act('a', 'finishStory'); act('a', 'openVoting'); };
   beforeEach(() => setup());
 
+  it('lets only the speaker type an answer, cleans it, and clears it next round', () => {
+    revealCard();
+    expect(s.phase).toBe('answering');
+    expect(socialSnapshot(s, 'room', 'b', now).personal.allowed).toContain('write');
+    expect(socialSnapshot(s, 'room', 'a', now).personal.allowed).not.toContain('write');
+    expect(() => act('a', 'write', { text: 'مش دوري' })).toThrow('not_allowed');
+    expect(() => act('b', 'write', { text: '   ' })).toThrow('invalid_text');
+    act('b', 'write', { text: '  أول\u202e مرة   سافرت\nلوحدي  ' + 'ا'.repeat(400) });
+    const written = socialSnapshot(s, 'room', 'c', now).session!.written!;
+    expect(written).toHaveLength(1);
+    expect(written[0].text.startsWith('أول مرة سافرت لوحدي ')).toBe(true);
+    expect(written[0].text.length).toBe(200);
+    expect(() => act('b', 'write', { text: 'تاني' })).toThrow('cooldown');
+    now += 2000; act('b', 'write', { text: 'تعديل' });
+    expect(s.written!.map(w => w.text)).toEqual(['تعديل']);
+    act('b', 'finish');
+    act('a', 'advance');
+    expect(s.written).toEqual([]);
+  });
+
+  it('lets the storyteller type the story in truth or tale', () => {
+    setup('truth'); act('a', 'start'); act('a', 'commit', { choice: 'truth' });
+    expect(s.phase).toBe('storytelling');
+    act('a', 'write', { text: 'مرة اتقفلت في الأسانسير ساعتين' });
+    expect(socialSnapshot(s, 'room', 'b', now).session!.written![0]).toMatchObject({ userId: "a" });
+    expect(() => act('b', 'write', { text: 'لأ' })).toThrow('not_allowed');
+  });
+
   it('keeps overlapping room reactions bounded and expires them without losing earlier senders',()=>{
     revealCard();
     act('a','react',{text:'حصل!'});act('b','react',{text:'ضحكتني'});

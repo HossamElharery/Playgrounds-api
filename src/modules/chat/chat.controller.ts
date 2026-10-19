@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -31,6 +32,7 @@ import {
   CreateTeamThreadDto,
 } from './dto/create-match-thread.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { RespondRequestDto } from './dto/respond-request.dto';
 import { ReadStateDto } from './dto/read-state.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { clampLimit } from '../../common/utils/page-limit.util';
@@ -79,6 +81,28 @@ export class ChatController {
     return this.chat.findOrCreateTeamThread(user.id, dto.teamId, dto.title);
   }
 
+  @Get('message-access/:userId')
+  messageAccess(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('userId') userId: string,
+  ) {
+    return this.chat.getMessageAccess(user.id, userId);
+  }
+
+  @Get('contact-quota')
+  contactQuota(@CurrentUser() user: AuthenticatedUser) {
+    return this.chat.getContactQuota(user.id);
+  }
+
+  @Post('threads/:threadId/request')
+  respondToRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('threadId') threadId: string,
+    @Body() dto: RespondRequestDto,
+  ) {
+    return this.chat.respondToRequest(user.id, threadId, dto.action);
+  }
+
   @Get('threads')
   listThreads(@CurrentUser() user: AuthenticatedUser) {
     return this.chat.listMyThreads(user.id);
@@ -119,6 +143,11 @@ export class ChatController {
     @Param('threadId') threadId: string,
     @Body() dto: SendMessageDto,
   ) {
+    if (dto.type !== 'text') {
+      // Attachments must be files this app uploaded, never arbitrary URLs.
+      if (!dto.attachmentUrl || !this.storage.keyFromUrl(dto.attachmentUrl))
+        throw new BadRequestException('Invalid attachment');
+    }
     return this.chat.sendMessage(user.id, threadId, dto);
   }
 
@@ -132,6 +161,23 @@ export class ChatController {
     @Body('type') type: 'image' | 'voice' = 'image',
     @Body('durationMs') durationMs?: string,
   ) {
+    const kind = type === 'voice' ? 'voice' : 'image';
+    if (!file?.buffer?.length)
+      throw new BadRequestException('File is required');
+    if (!file.mimetype.startsWith(kind === 'voice' ? 'audio/' : 'image/'))
+      throw new BadRequestException('Unsupported file type');
+    if (file.size > (kind === 'voice' ? 5 : 10) * 1024 * 1024)
+      throw new BadRequestException('File is too large');
+    if (
+      durationMs !== undefined &&
+      !(
+        Number.isFinite(Number(durationMs)) &&
+        Number(durationMs) >= 0 &&
+        Number(durationMs) <= 10 * 60 * 1000
+      )
+    )
+      throw new BadRequestException('Invalid duration');
+    await this.chat.assertCanAttach(user.id, threadId);
     const uploaded = await this.storage.uploadBuffer(
       file.buffer,
       file.originalname,

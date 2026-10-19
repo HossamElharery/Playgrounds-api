@@ -1,9 +1,23 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class SendMessageDto {
-  @ApiProperty({ example: 'client-msg-001', description: 'Idempotency id from the client' })
+  @ApiProperty({
+    example: 'client-msg-001',
+    description: 'Idempotency id from the client',
+  })
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
   clientMessageId!: string;
 
   @ApiProperty({ example: 'text', enum: ['text', 'image', 'voice'] })
@@ -19,22 +33,26 @@ export class SendMessageDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(2048)
   attachmentUrl?: string;
 
   @ApiPropertyOptional({ example: 'image/jpeg' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   attachmentMime?: string;
 
   @ApiPropertyOptional({ example: 120000 })
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(10 * 1024 * 1024)
   attachmentSize?: number;
 
   @ApiPropertyOptional({ example: 15000, description: 'Voice duration in ms' })
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(10 * 60 * 1000)
   attachmentDurationMs?: number;
 }

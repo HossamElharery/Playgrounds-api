@@ -24,6 +24,7 @@ import { validateWeeklyHours } from '../../common/utils/weekly-hours.util';
 
 const userSelect = {
   id: true,
+  strangerContactLimit: true,
   name: true,
   phone: true,
   email: true,

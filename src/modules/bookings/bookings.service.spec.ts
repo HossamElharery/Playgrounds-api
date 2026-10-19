@@ -18,6 +18,11 @@ describe('BookingsService', () => {
     coinLedgerEntry: { create: jest.fn() },
     $transaction: jest.fn(),
   };
+  const alignedFutureSlot = () => {
+    const slot = new Date(Date.now() + 2 * 3_600_000);
+    slot.setUTCMinutes(0, 0, 0);
+    return slot.toISOString();
+  };
 
   beforeEach(async () => {
     jest.resetAllMocks();
@@ -137,7 +142,7 @@ describe('BookingsService', () => {
     calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
       booking: { ...prisma.booking, findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'b-new' }) },
     });
-    const created = await service.holdSlot('u1', { courtId: 'c1', slotStart: new Date(Date.now() + 3_600_000).toISOString() });
+    const created = await service.holdSlot('u1', { courtId: 'c1', slotStart: alignedFutureSlot() });
     expect(created.id).toBe('b-new');
     const data = (prisma as unknown as { booking: { create: jest.Mock } }).booking.create.mock.calls[0][0].data;
     expect(data.source).toBe('platform');
@@ -147,6 +152,67 @@ describe('BookingsService', () => {
     expect(data.ownerNetAmount).toBe(360);
     expect(data.totalAmount).toBe(data.baseAmount + data.feeAmount - data.discountAmount);
     expect(data.totalAmount).toBe(420);
+  });
+
+  it('rejects a second overlapping booking for the same player on another court', async () => {
+    const court = {
+      id: 'c2',
+      venueId: 'v2',
+      slotDurationMins: 60,
+      gamingPublished: true,
+      sport: { activityKind: 'field-sport' },
+      pricingRules: [
+        { daysOfWeek: [], startTime: '00:00', endTime: '24:00', priceAmount: 400, currency: 'EGP', priority: 0 },
+      ],
+      venue: {
+        id: 'v2', status: 'active', instantBook: true, paymentMode: 'at_venue', currency: 'EGP',
+        weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:59' }])),
+        country: { timezone: 'Africa/Cairo', currency: 'EGP', serviceFeePct: 5, coinToMajorRate: 20 },
+      },
+    };
+    Object.assign(prisma, {
+      court: { findUnique: jest.fn().mockResolvedValue(court) },
+      platformSetting: { findUnique: jest.fn().mockResolvedValue({ serviceFeePct: 5, coinToEgpRate: 20 }) },
+      calendarBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      resourceOccupancy: { findFirst: jest.fn().mockResolvedValue(null) },
+      booking: {
+        ...prisma.booking,
+        findFirst: jest.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'existing-on-other-court' }),
+        create: jest.fn(),
+      },
+    });
+
+    await expect(
+      service.holdSlot('u1', { courtId: 'c2', slotStart: alignedFutureSlot() }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'USER_TIME_CONFLICT' }),
+    });
+    expect((prisma as any).booking.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a hand-crafted start time that is not in the published slot grid', async () => {
+    const slot = new Date(alignedFutureSlot());
+    slot.setUTCMinutes(17);
+    Object.assign(prisma, {
+      court: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'c1', venueId: 'v1', slotDurationMins: 60, gamingPublished: true,
+          sport: { activityKind: 'field-sport' }, pricingRules: [],
+          venue: {
+            id: 'v1', status: 'active', instantBook: true,
+            weeklyHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [String(d), { closed: false, open: '00:00', close: '23:59' }])),
+            country: { timezone: 'Africa/Cairo' },
+          },
+        }),
+      },
+    });
+    await expect(
+      service.holdSlot('u1', { courtId: 'c1', slotStart: slot.toISOString() }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'INVALID_SLOT_START' }),
+    });
   });
 
   describe('a venue that has not set its opening hours', () => {
@@ -216,7 +282,7 @@ describe('BookingsService', () => {
 
     it('rejects a booking whose start is priced but its remaining time is not', async () => {
       wire(court([{ daysOfWeek: [], startTime: '20:00', endTime: '23:00', priceAmount: 12000, currency: 'AED', priority: 0 }]));
-      await expect(service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T20:30:00.000Z' })).rejects.toThrow('entire booking');
+      await expect(service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T20:00:00.000Z', units: 3 })).rejects.toThrow('entire booking');
     });
 
     it('refuses a player hold on an uncovered hour', async () => {
@@ -225,9 +291,9 @@ describe('BookingsService', () => {
           findUnique: jest.fn().mockResolvedValue(court([{ daysOfWeek: [], startTime: '08:00', endTime: '23:00', priceAmount: 12000, currency: 'AED', priority: 0 }])),
         },
       });
-      // 23:30 Cairo on a December Monday = 21:30 UTC
+      // 23:00 Cairo on a December Monday = 21:00 UTC
       await expect(
-        service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T21:30:00.000Z' }),
+        service.holdSlot('u1', { courtId: 'c1', slotStart: '2026-12-07T21:00:00.000Z' }),
       ).rejects.toThrow('no pricing configured');
     });
   });
@@ -262,5 +328,33 @@ describe('BookingsService', () => {
       promoCodeId: null,
     });
     await expect(service.confirmBooking('u1', 'b1', { paymentMethod: 'card' })).rejects.toBeInstanceOf(ApiException);
+  });
+
+  it('confirms as cash at the venue without touching the wallet while online payments are disabled', async () => {
+    const held = {
+      id: 'b1', code: 'MAT-TEST', userId: 'u1', status: 'held',
+      holdExpiresAt: new Date(Date.now() + 60_000), totalAmount: 420,
+      currency: 'EGP', paymentModeSnapshot: 'online', promoCodeId: null,
+      venue: { paymentMode: 'online', nameEn: 'QA Venue', nameAr: 'ملعب اختبار' },
+    };
+    const confirmed = { ...held, status: 'confirmed', paymentMethod: 'cash', paymentStatus: 'pending' };
+    Object.assign(prisma, {
+      booking: {
+        ...prisma.booking,
+        findUnique: jest.fn().mockResolvedValue(held),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(confirmed),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    });
+
+    await expect(service.confirmBooking('u1', 'b1', { paymentMethod: 'cash' }))
+      .resolves.toMatchObject({ paymentMethod: 'cash', paymentStatus: 'pending' });
+    const wallet = (service as any).wallet as { debit: jest.Mock };
+    expect(wallet.debit).not.toHaveBeenCalled();
+    expect((prisma as any).booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentMethod: 'cash', paymentStatus: 'pending' }),
+      }),
+    );
   });
 });

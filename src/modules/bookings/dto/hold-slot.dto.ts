@@ -1,9 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 
 export class HoldSlotDto {
   @ApiProperty({ example: '6ca20f0c-d7a9-4f97-989d-c2f5ac0f8a8f', description: 'Court id from GET /venues/{slug}' })
-  @IsString()
+  @IsUUID()
   courtId!: string;
 
   @ApiProperty({
@@ -29,6 +29,7 @@ export class HoldSlotDto {
   @ApiPropertyOptional({ example: 'WELCOME25' })
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   promoCode?: string;
 
   @ApiPropertyOptional({ example: 0, description: 'Coins to redeem (optional)' })

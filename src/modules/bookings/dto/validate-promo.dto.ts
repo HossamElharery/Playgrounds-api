@@ -1,9 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class ValidatePromoDto {
   @ApiProperty({ example: 'WELCOME25' })
   @IsString()
+  @MaxLength(50)
   code!: string;
 
   @ApiPropertyOptional({

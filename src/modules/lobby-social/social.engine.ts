@@ -13,6 +13,15 @@ const requireRule = (condition: unknown, code = 'not_allowed'): void => {
   if (!condition) throw new SocialRuleError(code);
 };
 
+export const WRITTEN_MAX = 200;
+/** The speaker can type instead of talking: the card holder while answering, the storyteller while telling. */
+const canWrite = (s: SocialState, userId: string): boolean =>
+  s.members.some(m => m.userId === userId && m.role === 'player') &&
+  ((s.phase === 'answering' && s.targetId === userId) || (s.phase === 'storytelling' && s.actorId === userId));
+export function cleanWritten(text: unknown): string {
+  if (typeof text !== 'string') return '';
+  return text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, WRITTEN_MAX);
+}
 const reactionsAvailable = (s: SocialState, now: number) => !['preparing', 'paused_insufficient_players', 'ended', 'no_eligible_content'].includes(s.phase) && s.members.filter(m => connected(m, now)).length >= 2;
 
 export function createSocialState(squadId: string, userId: string, cmd: SocialCommand, now: number): SocialState {
@@ -53,7 +62,7 @@ function nextRound(s: SocialState, now: number): void {
   s.actorId = eligible[0].userId;
   s.targetId = null; s.question = null; s.revealAt = null;
   s.secret = null; s.votes = {}; s.outcome = null; s.voterIds = [];
-  s.voteDeadline = null; s.originalVoteDeadline = null;
+  s.voteDeadline = null; s.originalVoteDeadline = null; s.written = [];
   s.storyPlayerIds = eligible.map(m => m.userId);
   if (s.cardRound) { s.cardRound = { order: eligible.map(m => m.userId), responses: {} }; s.targetId = s.cardRound.order[0]; }
   s.proposedGame = null; s.confirmedIds = []; s.nudgeAt = null; s.message = null;
@@ -151,6 +160,15 @@ export function applySocialCommand(s: SocialState, userId: string, cmd: SocialCo
     return;
   }
   requireRule(m && connected(m, now), 'not_joined');
+  if (cmd.action === 'write') {
+    requireRule(canWrite(s, userId), 'not_allowed');
+    const text = cleanWritten(cmd.text);
+    requireRule(text.length > 0, 'invalid_text');
+    requireRule(now - (s.cooldowns[`write:${userId}`] ?? 0) >= 2000, 'cooldown');
+    s.cooldowns[`write:${userId}`] = now;
+    s.written = [...(s.written ?? []).filter(w => w.userId !== userId), { userId, text, at: now }].slice(-8);
+    return;
+  }
   const host = s.hostId === userId;
   const actor = s.actorId === userId;
   const target = s.targetId === userId;
@@ -338,6 +356,7 @@ export function socialSnapshot(s: SocialState | null, squadId: string, userId: s
     if (!waiting) {
       if (actor && s.phase === 'choosing_target') allowed.push('target');
       if (target && s.phase === 'answering') allowed.push('skip', 'finish');
+      if (canWrite(s, userId)) allowed.push('write');
       if (actor && s.phase === 'answering' && now - s.phaseAt >= 45_000) allowed.push('nudge');
       if (host && !managing && s.phase !== 'discussion') allowed.push('override');
       if (actor && s.phase === 'secret_choice') allowed.push('commit');
@@ -358,6 +377,7 @@ export function socialSnapshot(s: SocialState | null, squadId: string, userId: s
       outcome: outcomeVisible ? s.outcome : null, completed: s.completed, message: s.message,
       proposedGame: s.proposedGame, confirmedIds: [...s.confirmedIds],
       reaction: s.reaction && now - s.reaction.at < 1400 ? s.reaction : null, nudgeAt: s.nudgeAt,
+      written: (s.written ?? []).map(w => ({ ...w })),
       reactions:(s.reactions??(s.reaction?[s.reaction]:[])).filter(r=>now-r.at<3000).slice(-6).map(r=>({...r})),
       cycleComplete: s.members.some(m => m.role === 'player') && s.members.filter(m => m.role === 'player').every(m => (m.cycleTurns ?? 0) > 0),
     },

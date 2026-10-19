@@ -88,8 +88,11 @@ model User {
   matchesPlayed     Int           @default(0)
   mvps              Int           @default(0)
   lastSeenAt        DateTime?
-  /// friends | teammates | everyone | nobody
+  /// everyone | followers | friends | teammates | nobody
   messagePolicy     String        @default("everyone")
+  /// Admin override of the daily cap on new people this user may cold-message.
+  /// null = automatic (trust tier), 0 = cold messaging disabled.
+  strangerContactLimit Int?
   lastSeenVisible   Boolean       @default(true)
   notificationPrefs Json?
   referralCode      String        @unique @default(uuid())
@@ -850,8 +853,8 @@ model Booking {
   walletLedgerEntries WalletLedgerEntry[]
   pulseOpportunity    PulseOpportunity?
   pulseClaims         PulseClaim[]
-  // Live-slot uniqueness is a partial unique index (courtId, slotStart) plus a
-  // GiST EXCLUDE on trigger-maintained slotRange. Prisma cannot declare either;
+  // Live-slot uniqueness is a partial unique index (courtId, slotStart) plus
+  // GiST EXCLUDE constraints on court and user overlapping slotRange. Prisma cannot declare these;
   // see prisma/migrations/20260904031300_booking_slot_uniqueness and
   // prisma/migrations/20260905090000_booking_slot_range_exclude.
   platformRequests    PlatformBookingRequest[]
@@ -1305,6 +1308,15 @@ model ChatThread {
   type      ChatThreadType
   title     String?
   pairKey   String?        @unique // canonical "userIdA:userIdB" for direct find-or-create
+  /// Cold-contact ("message request") state of a direct thread:
+  /// none = between people who know each other, pending = awaiting the
+  /// recipient, accepted = recipient replied or they became connected,
+  /// declined = recipient dismissed it (requester is never told).
+  requestState String         @default("none")
+  requestedById String?
+  /// Set when the requester's first message is sent; this is what the daily
+  /// cap counts, so merely opening a chat never spends a slot.
+  requestedAt DateTime?
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
@@ -1314,6 +1326,7 @@ model ChatThread {
   team         Team?
 
   @@index([type])
+  @@index([requestedById, requestedAt])
 }
 
 model ChatThreadParticipant {

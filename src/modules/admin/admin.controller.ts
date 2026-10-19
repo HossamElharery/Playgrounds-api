@@ -22,6 +22,7 @@ import { UpsertFeatureFlagDto } from './dto/feature-flag.dto';
 import { PageQueryDto } from '../../common/dto/page-query.dto';
 import { ListReportsQueryDto } from './dto/list-reports-query.dto';
 import { AdminFinanceService } from './admin-finance.service';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -35,6 +36,7 @@ export class AdminController {
   ) {}
 
   // Any authenticated user can file a report.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('reports')
   createReport(
     @CurrentUser() user: AuthenticatedUser,

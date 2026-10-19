@@ -1,13 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import { MESSAGE_POLICIES } from '../../chat/message-policy';
 
 export class UpdatePrivacyDto {
   @ApiPropertyOptional({
     example: 'everyone',
-    enum: ['everyone', 'friends', 'teammates', 'nobody'],
+    enum: [...MESSAGE_POLICIES],
   })
   @IsOptional()
-  @IsIn(['everyone', 'friends', 'teammates', 'nobody'])
+  @IsIn([...MESSAGE_POLICIES])
   messagePolicy?: string;
 
   @ApiPropertyOptional({ example: true })

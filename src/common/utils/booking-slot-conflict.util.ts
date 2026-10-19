@@ -10,3 +10,8 @@ export function isBookingSlotConflict(error: unknown): boolean {
     msg.includes('Booking_court_slot_range_excl') || msg.includes('ResourceOccupancy_')
   );
 }
+
+export function isUserBookingTimeConflict(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('Booking_user_slot_range_excl');
+}

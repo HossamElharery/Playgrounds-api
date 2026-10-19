@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateReportDto {
   @ApiProperty({
@@ -11,14 +11,18 @@ export class CreateReportDto {
 
   @ApiProperty({ example: 'entity-uuid' })
   @IsString()
+  @MaxLength(100)
   entityId!: string;
 
   @ApiPropertyOptional({ example: 'reported-user-uuid' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   reportedUserId?: string;
 
   @ApiProperty({ example: 'Harassment in chat' })
   @IsString()
+  @MinLength(2)
+  @MaxLength(500)
   reason!: string;
 }
