@@ -9,6 +9,8 @@ export const envValidationSchema = Joi.object({
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgresql', 'postgres'] })
     .required(),
+  PRISMA_CONNECTION_LIMIT: Joi.number().integer().min(1).max(20).default(10),
+  PRISMA_POOL_TIMEOUT_SECONDS: Joi.number().integer().min(1).max(60).default(15),
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
