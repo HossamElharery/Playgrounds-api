@@ -38,6 +38,8 @@ import {
   type PenaltyState,
   type PenaltyView,
 } from './penalty-rules';
+import { DakhlaHost } from './dakhla-host';
+import type { DakhlaChantId, DakhlaLevel, DakhlaReport, DakhlaView } from './dakhla-rules';
 import {
   LOBBY_MAX_CREDIT_S,
   LOBBY_MAX_SPEED,
@@ -105,6 +107,7 @@ export interface LobbySnapshot {
     vz: number;
   }>;
   pen?: PenaltyView;
+  dak?: DakhlaView;
   ball?: {
     x: number;
     y: number;
@@ -185,6 +188,11 @@ export class LobbyWorldService implements OnModuleDestroy {
   private readonly penalties = new Map<string, PenaltyState>();
   private readonly penShot = new Map<string, { keeperTouched: boolean }>();
   private penTimer: NodeJS.Timeout | null = null;
+  private readonly dakhla = new DakhlaHost({
+    members: (squadId) => [...(this.squads.get(squadId)?.keys() ?? [])],
+    emit: (squadId, event, payload) => this.sink?.toRoom(squadId, event, payload, false),
+    busy: (squadId) => this.penaltyLive(squadId),
+  });
 
   acceptMove(
     move: LobbyMove,
@@ -308,6 +316,8 @@ export class LobbyWorldService implements OnModuleDestroy {
       st: now,
       members,
     };
+    const dak = this.dakhla.view(squadId, now);
+    if (dak) snap.dak = dak;
     if (withBall) {
       const ball = this.ensureBall(squadId);
       ball.at = now;
@@ -604,6 +614,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   }
 
   memberLeft(squadId: string, userId: string): void {
+    this.dakhla.memberLeft(squadId, userId, Date.now());
     this.morphOf.delete(userId);
     this.kickAt.delete(userId);
     const pen = this.penalties.get(squadId);
@@ -630,6 +641,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   }
 
   squadEmptied(squadId: string): void {
+    this.dakhla.drop(squadId);
     this.penalties.delete(squadId);
     this.penShot.delete(squadId);
     this.squads.delete(squadId);
@@ -666,8 +678,49 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.sweepTimer = null;
     this.stopBallTimer();
     this.stopPenTimer();
+    this.dakhla.dispose();
     for (const ball of this.balls.values())
       if (ball.resetTimer) clearTimeout(ball.resetTimer);
+  }
+
+  // ── «الدخلة» ──
+  startDakhla(
+    squadId: string,
+    userId: string,
+    chant: DakhlaChantId,
+    level: DakhlaLevel,
+    now: number,
+  ): DakhlaView | null {
+    return this.dakhla.start(squadId, userId, chant, level, now);
+  }
+
+  joinDakhla(squadId: string, userId: string, level: DakhlaLevel, now: number): boolean {
+    return this.dakhla.join(squadId, userId, level, now);
+  }
+
+  goDakhla(squadId: string, userId: string, now: number): boolean {
+    return this.dakhla.go(squadId, userId, now);
+  }
+
+  leaveDakhla(squadId: string, userId: string, now: number): boolean {
+    return this.dakhla.leave(squadId, userId, now);
+  }
+
+  cancelDakhla(squadId: string, userId: string, now: number): boolean {
+    return this.dakhla.cancel(squadId, userId, now);
+  }
+
+  reportDakhla(squadId: string, userId: string, report: DakhlaReport, now: number): boolean {
+    return this.dakhla.report(squadId, userId, report, now);
+  }
+
+  tickDakhla(now: number): void {
+    this.dakhla.tick(now);
+  }
+
+  private penaltyLive(squadId: string): boolean {
+    const pen = this.penalties.get(squadId);
+    return !!pen && pen.phase !== 'ended';
   }
 
   penalty(squadId: string): PenaltyState | null {
@@ -681,6 +734,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   ): PenaltyView | null {
     const existing = this.penalties.get(squadId);
     if (existing && existing.phase !== 'ended') return null;
+    if (this.dakhla.active(squadId)) return null;
     const members = this.squads.get(squadId);
     if (!members?.has(userId)) return null;
     const ball = this.ensureBall(squadId);
