@@ -207,6 +207,48 @@ export class LobbyWorldGateway
     if (target && report) this.world.reportDakhla(target.squadId, target.userId, report, Date.now());
   }
 
+  @SubscribeMessage('lobby.thief.start')
+  thiefStart(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.startThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.join')
+  thiefJoin(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.joinThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.go')
+  thiefGo(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.goThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.leave')
+  thiefLeave(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.leaveThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.cancel')
+  thiefCancel(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.cancelThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.tackle')
+  thiefTackle(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.tackleThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.dodge')
+  thiefDodge(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.dodgeThief(target.squadId, target.userId, Date.now());
+  }
+
   /** The lobby games without the ball only need the lobby world (movement). */
   private gameTarget(client: Socket, data: unknown): { squadId: string; userId: string } | null {
     if (!lobbyMovementEnabled(this.config)) return null;

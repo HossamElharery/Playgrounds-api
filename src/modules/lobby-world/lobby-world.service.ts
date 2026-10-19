@@ -40,6 +40,8 @@ import {
 } from './penalty-rules';
 import { DakhlaHost } from './dakhla-host';
 import type { DakhlaChantId, DakhlaLevel, DakhlaReport, DakhlaView } from './dakhla-rules';
+import { ThiefHost } from './thief-host';
+import type { TackleOutcome, ThiefPos, ThiefView } from './thief-rules';
 import {
   LOBBY_MAX_CREDIT_S,
   LOBBY_MAX_SPEED,
@@ -108,6 +110,7 @@ export interface LobbySnapshot {
   }>;
   pen?: PenaltyView;
   dak?: DakhlaView;
+  thief?: ThiefView;
   ball?: {
     x: number;
     y: number;
@@ -191,7 +194,14 @@ export class LobbyWorldService implements OnModuleDestroy {
   private readonly dakhla = new DakhlaHost({
     members: (squadId) => [...(this.squads.get(squadId)?.keys() ?? [])],
     emit: (squadId, event, payload) => this.sink?.toRoom(squadId, event, payload, false),
-    busy: (squadId) => this.penaltyLive(squadId),
+    busy: (squadId) => this.penaltyLive(squadId) || this.thief.active(squadId),
+  });
+  private readonly thief = new ThiefHost({
+    members: (squadId) => [...(this.squads.get(squadId)?.keys() ?? [])],
+    emit: (squadId, event, payload) => this.sink?.toRoom(squadId, event, payload, false),
+    busy: (squadId) => this.penaltyLive(squadId) || this.dakhla.active(squadId),
+    pos: (squadId, userId, now) => this.posOf(squadId, userId, now),
+    ballHeld: (squadId, _held, at) => this.placeBallAt(squadId, at, Date.now()),
   });
 
   acceptMove(
@@ -334,6 +344,8 @@ export class LobbyWorldService implements OnModuleDestroy {
       snap.score = scoreOf(ball);
       const pen = this.penalties.get(squadId);
       if (pen) snap.pen = penaltyView(pen, now);
+      const thief = this.thief.view(squadId, now);
+      if (thief) snap.thief = thief;
     }
     return snap;
   }
@@ -382,6 +394,8 @@ export class LobbyWorldService implements OnModuleDestroy {
   kick(k: KickInput, userId: string, now: number): boolean {
     const ball = this.balls.get(k.squadId);
     if (!ball || now < ball.frozenUntil || ball.resetTimer) return false;
+    // «حرامي الكورة» carries the ball: no kicking until the final whistle.
+    if (this.thief.ownsBall(k.squadId)) return false;
     // Shootout: only the shooter, only once, only in the kick phase.
     const pen = this.penalties.get(k.squadId);
     if (pen && pen.phase !== 'gathering' && (pen.phase !== 'aim' || userId !== pen.shooterId)) return false;
@@ -475,6 +489,7 @@ export class LobbyWorldService implements OnModuleDestroy {
     z: number,
     m: LobbyMoveMode,
   ): void {
+    if (this.thief.ownsBall(squadId)) return;
     const ball = this.balls.get(squadId);
     if (!ball || ball.moving || ball.resetTimer || m === 0) return;
     if (this.penalties.get(squadId)?.phase !== 'gathering' && this.penalties.has(squadId)) return; // the ball waits on the spot for the kick
@@ -615,6 +630,7 @@ export class LobbyWorldService implements OnModuleDestroy {
 
   memberLeft(squadId: string, userId: string): void {
     this.dakhla.memberLeft(squadId, userId, Date.now());
+    this.thief.memberLeft(squadId, userId, Date.now());
     this.morphOf.delete(userId);
     this.kickAt.delete(userId);
     const pen = this.penalties.get(squadId);
@@ -642,6 +658,7 @@ export class LobbyWorldService implements OnModuleDestroy {
 
   squadEmptied(squadId: string): void {
     this.dakhla.drop(squadId);
+    this.thief.drop(squadId);
     this.penalties.delete(squadId);
     this.penShot.delete(squadId);
     this.squads.delete(squadId);
@@ -679,6 +696,7 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.stopBallTimer();
     this.stopPenTimer();
     this.dakhla.dispose();
+    this.thief.dispose();
     for (const ball of this.balls.values())
       if (ball.resetTimer) clearTimeout(ball.resetTimer);
   }
@@ -718,6 +736,70 @@ export class LobbyWorldService implements OnModuleDestroy {
     this.dakhla.tick(now);
   }
 
+  // ── «حرامي الكورة» ──
+  startThief(squadId: string, userId: string, now: number): ThiefView | null {
+    if (!this.hasBall(squadId)) this.ensureBall(squadId);
+    return this.thief.start(squadId, userId, now);
+  }
+
+  joinThief(squadId: string, userId: string, now: number): boolean {
+    return this.thief.join(squadId, userId, now);
+  }
+
+  goThief(squadId: string, userId: string, now: number): boolean {
+    return this.thief.go(squadId, userId, now);
+  }
+
+  leaveThief(squadId: string, userId: string, now: number): boolean {
+    return this.thief.leave(squadId, userId, now);
+  }
+
+  cancelThief(squadId: string, userId: string, now: number): boolean {
+    return this.thief.cancel(squadId, userId, now);
+  }
+
+  tackleThief(squadId: string, userId: string, now: number): TackleOutcome {
+    return this.thief.tackle(squadId, userId, now);
+  }
+
+  dodgeThief(squadId: string, userId: string, now: number): boolean {
+    return this.thief.dodge(squadId, userId, now);
+  }
+
+  tickThief(now: number): void {
+    this.thief.tick(now);
+  }
+
+  /** Where the server last saw a player, moved on by their velocity for at most a quarter second. */
+  private posOf(squadId: string, userId: string, now: number): ThiefPos | null {
+    const me = this.squads.get(squadId)?.get(userId);
+    if (!me) return null;
+    const lead = me.m === 0 ? 0 : Math.min(EXTRAPOLATE_S, Math.max(0, now - me.at) / 1000);
+    return { x: me.x + me.vx * lead, z: me.z + me.vz * lead };
+  }
+
+  /** Puts the ball at rest on a spot and tells the room (a carried ball, or the drop after the whistle). */
+  private placeBallAt(squadId: string, at: ThiefPos, now: number): void {
+    const ball = this.ensureBall(squadId);
+    if (ball.resetTimer) clearTimeout(ball.resetTimer);
+    ball.resetTimer = null;
+    ball.frozenUntil = 0;
+    ball.moving = false;
+    ball.lastTouchBy = null;
+    resetBall(ball.state, 0);
+    const r = Math.hypot(at.x, at.z);
+    const k = r > 7.6 ? 7.6 / r : 1;
+    ball.state.x = at.x * k;
+    ball.state.z = at.z * k;
+    ball.at = now;
+    this.sink?.toRoom(
+      squadId,
+      'lobby.ball.reset',
+      { type: 'lobby.ball.reset', squadId, st: now, b: [r2(ball.state.x), r2(ball.state.y), r2(ball.state.z), 0, 0, 0] },
+      false,
+    );
+  }
+
   private penaltyLive(squadId: string): boolean {
     const pen = this.penalties.get(squadId);
     return !!pen && pen.phase !== 'ended';
@@ -734,7 +816,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   ): PenaltyView | null {
     const existing = this.penalties.get(squadId);
     if (existing && existing.phase !== 'ended') return null;
-    if (this.dakhla.active(squadId)) return null;
+    if (this.dakhla.active(squadId) || this.thief.active(squadId)) return null;
     const members = this.squads.get(squadId);
     if (!members?.has(userId)) return null;
     const ball = this.ensureBall(squadId);
