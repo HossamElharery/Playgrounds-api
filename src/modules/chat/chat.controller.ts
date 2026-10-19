@@ -35,6 +35,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { RespondRequestDto } from './dto/respond-request.dto';
 import { ReadStateDto } from './dto/read-state.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
+import { UploadAttachmentDto } from './dto/upload-attachment.dto';
 import { clampLimit } from '../../common/utils/page-limit.util';
 
 @ApiTags('chat')
@@ -152,15 +153,19 @@ export class ChatController {
   }
 
   @Post('threads/:threadId/attachments')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    // Cap the stream at the largest permitted attachment so multer aborts a
+    // flood early instead of buffering an arbitrarily large body into memory
+    // (the per-kind size check below still runs, but only after this guard).
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }),
+  )
   async uploadAttachment(
     @CurrentUser() user: AuthenticatedUser,
     @Param('threadId') threadId: string,
     @UploadedFile() file: MulterFile,
-    @Body('clientMessageId') clientMessageId: string,
-    @Body('type') type: 'image' | 'voice' = 'image',
-    @Body('durationMs') durationMs?: string,
+    @Body() dto: UploadAttachmentDto,
   ) {
+    const { clientMessageId, type = 'image', durationMs } = dto;
     const kind = type === 'voice' ? 'voice' : 'image';
     if (!file?.buffer?.length)
       throw new BadRequestException('File is required');

@@ -38,6 +38,7 @@ import {
 } from '../../common/access/actor-access';
 import { loadStaffScope } from '../../common/access/staff-scope';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReorderPhotosDto } from './dto/reorder-photos.dto';
 
 @ApiTags('venues')
 @Controller()
@@ -174,13 +175,13 @@ export class VenuesController {
   async reorderPhotos(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Body('orderedIds') orderedIds: string[],
+    @Body() dto: ReorderPhotosDto,
   ) {
     return this.venues.reorderPhotos(
       id,
       await actingOwnerId(this.prisma, user),
       await venueActorPrivilege(this.prisma, user, id),
-      orderedIds,
+      dto.orderedIds,
     );
   }
 

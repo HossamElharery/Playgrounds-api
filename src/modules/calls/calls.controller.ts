@@ -20,6 +20,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { CallsService } from './calls.service';
 import { CreateCallDto, DoNotDisturbDto, MuteCallsDto } from './dto/calls.dto';
+import { RingingDto } from './dto/ringing.dto';
 
 @ApiTags('calls')
 @ApiBearerAuth()
@@ -114,9 +115,9 @@ export class CallsController {
   async ringing(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Body('native') native?: boolean,
+    @Body() dto: RingingDto,
   ) {
-    await this.calls.markRinging(user.id, id, native === true);
+    await this.calls.markRinging(user.id, id, dto.native === true);
     return { ok: true };
   }
 

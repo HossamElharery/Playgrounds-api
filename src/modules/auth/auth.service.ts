@@ -71,6 +71,43 @@ export class AuthService {
     return bcrypt.hash(password, this.config.get<number>('SALT_ROUNDS', 10));
   }
 
+  /**
+   * Atomically spend one verification attempt against a code. The attempt
+   * ceiling must hold under concurrency: reading `attempts` then incrementing
+   * in a separate step lets many parallel requests all pass the check and
+   * brute-force a short numeric code. A single conditional `updateMany` makes
+   * the check-and-increment indivisible, so at most OTP_MAX_ATTEMPTS requests
+   * ever reach the comparison. Returns false when the code is spent, expired,
+   * or already over budget.
+   */
+  private async spendOtpAttempt(
+    db: Prisma.TransactionClient | PrismaService,
+    otpId: string,
+  ): Promise<boolean> {
+    const res = await db.otpCode.updateMany({
+      where: {
+        id: otpId,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+        attempts: { lt: OTP_MAX_ATTEMPTS },
+      },
+      data: { attempts: { increment: 1 } },
+    });
+    return res.count === 1;
+  }
+
+  /** Atomically mark a code consumed; false if another request already did. */
+  private async consumeOtp(
+    db: Prisma.TransactionClient | PrismaService,
+    otpId: string,
+  ): Promise<boolean> {
+    const res = await db.otpCode.updateMany({
+      where: { id: otpId, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+    return res.count === 1;
+  }
+
   private sha256(value: string): string {
     return createHash('sha256').update(value).digest('hex');
   }
@@ -226,7 +263,7 @@ export class AuthService {
       throw new UnauthorizedException(
         'Code expired or not found, request a new one',
       );
-    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+    if (!(await this.spendOtpAttempt(this.prisma, otp.id))) {
       throw new UnauthorizedException('Too many attempts, request a new code');
     }
 
@@ -234,17 +271,12 @@ export class AuthService {
       ? await this.otpDelivery.verify(dto.phone, dto.code)
       : await bcrypt.compare(dto.code, otp.codeHash);
     if (!isValid) {
-      await this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
       throw new UnauthorizedException('Invalid code');
     }
 
-    await this.prisma.otpCode.update({
-      where: { id: otp.id },
-      data: { consumedAt: new Date() },
-    });
+    if (!(await this.consumeOtp(this.prisma, otp.id))) {
+      throw new UnauthorizedException('Code expired or not found, request a new one');
+    }
 
     let user = await this.prisma.user.findUnique({
       where: { phone: dto.phone },
@@ -462,14 +494,10 @@ export class AuthService {
       orderBy: { createdAt: 'desc' },
     });
     if (!otp) throw new UnauthorizedException('Code expired or not found');
-    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+    if (!(await this.spendOtpAttempt(this.prisma, otp.id))) {
       throw new UnauthorizedException('Too many attempts, request a new code');
     }
     if (!(await bcrypt.compare(dto.code, otp.codeHash))) {
-      await this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
       throw new UnauthorizedException('Invalid code');
     }
 
@@ -489,8 +517,8 @@ export class AuthService {
           countryCode,
         },
       }),
-      this.prisma.otpCode.update({
-        where: { id: otp.id },
+      this.prisma.otpCode.updateMany({
+        where: { id: otp.id, consumedAt: null },
         data: { consumedAt: new Date() },
       }),
     ]);
@@ -686,7 +714,7 @@ export class AuthService {
       orderBy: { createdAt: 'desc' },
     });
     if (!otp) throw new UnauthorizedException('Code expired or not found');
-    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+    if (!(await this.spendOtpAttempt(this.prisma, otp.id))) {
       throw new UnauthorizedException('Too many attempts, request a new code');
     }
 
@@ -695,10 +723,6 @@ export class AuthService {
         ? await this.otpDelivery.verify(identifier.phone, code)
         : await bcrypt.compare(code, otp.codeHash);
     if (!isValid) {
-      await this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
       throw new UnauthorizedException('Invalid code');
     }
 
@@ -709,8 +733,8 @@ export class AuthService {
 
     const passwordHash = await this.hashPassword(newPassword);
     await this.prisma.$transaction([
-      this.prisma.otpCode.update({
-        where: { id: otp.id },
+      this.prisma.otpCode.updateMany({
+        where: { id: otp.id, consumedAt: null },
         data: { consumedAt: new Date() },
       }),
       this.prisma.user.update({

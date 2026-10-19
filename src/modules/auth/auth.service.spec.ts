@@ -26,6 +26,7 @@ describe('AuthService', () => {
         create: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       refreshToken: { create: jest.fn() },
       $transaction: jest.fn((operations: Promise<unknown>[]) =>
@@ -83,7 +84,7 @@ describe('AuthService', () => {
     const result = await service.requestOtp('+201001234567');
 
     expect(result).toEqual({ purpose: 'register' });
-    expect(JSON.stringify(result)).not.toMatch(/\d{4}/); // no 4-digit code leaked anywhere in the response
+    expect(JSON.stringify(result)).not.toMatch(/\d{6}/); // no OTP code leaked anywhere in the response
   });
 
   it('delivers the OTP out-of-band via the OtpDelivery provider, not the response', async () => {
@@ -94,7 +95,7 @@ describe('AuthService', () => {
     expect(otpDelivery.send).toHaveBeenCalledTimes(1);
     const [target, code] = otpDelivery.send.mock.calls[0];
     expect(target).toBe('+201001234567');
-    expect(code).toMatch(/^\d{4}$/);
+    expect(code).toMatch(/^\d{6}$/);
   });
 
   it('rate-limits repeated OTP requests for the same phone within a minute', async () => {
@@ -124,7 +125,7 @@ describe('AuthService', () => {
     );
     expect(email.sendPasswordResetCode).toHaveBeenCalledWith(
       'owner@matchena.com',
-      expect.stringMatching(/^\d{4}$/),
+      expect.stringMatching(/^\d{6}$/),
       5,
     );
     expect(otpDelivery.send).not.toHaveBeenCalled();
@@ -210,7 +211,7 @@ describe('AuthService', () => {
     );
     expect(email.sendVerificationCode).toHaveBeenCalledWith(
       'new@example.com',
-      expect.stringMatching(/^\d{4}$/),
+      expect.stringMatching(/^\d{6}$/),
       5,
     );
   });
@@ -231,10 +232,17 @@ describe('AuthService', () => {
         code: '9999',
       }),
     ).rejects.toThrow(/invalid code/i);
-    expect(prisma.otpCode.update).toHaveBeenCalledWith({
-      where: { id: 'otp2' },
-      data: { attempts: { increment: 1 } },
-    });
+    // The attempt is spent atomically (conditional increment) before the code
+    // is compared, so concurrent guesses cannot bypass the attempt ceiling.
+    expect(prisma.otpCode.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'otp2',
+          attempts: { lt: 5 },
+        }),
+        data: { attempts: { increment: 1 } },
+      }),
+    );
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 

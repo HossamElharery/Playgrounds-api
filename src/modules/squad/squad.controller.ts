@@ -18,6 +18,7 @@ import type { AuthenticatedUser } from '../../common/types/authenticated-user.in
 import { SquadService } from './squad.service';
 import { InviteToSquadDto } from './dto/invite.dto';
 import { DeclineSquadInviteDto } from './dto/decline-invite.dto';
+import { SetMutedDto } from './dto/set-muted.dto';
 
 @ApiTags('squad')
 @ApiBearerAuth()
@@ -145,18 +146,18 @@ export class SquadController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('squadId') squadId: string,
     @Param('userId') userId: string,
-    @Body('muted') muted: boolean,
+    @Body() dto: SetMutedDto,
   ) {
-    return this.squad.setMemberMuted(user.id, squadId, userId, muted);
+    return this.squad.setMemberMuted(user.id, squadId, userId, dto.muted);
   }
 
   @Patch(':squadId/mic')
   toggleMic(
     @CurrentUser() user: AuthenticatedUser,
     @Param('squadId') squadId: string,
-    @Body('muted') muted: boolean,
+    @Body() dto: SetMutedDto,
   ) {
-    return this.squad.toggleOwnMic(user.id, squadId, muted);
+    return this.squad.toggleOwnMic(user.id, squadId, dto.muted);
   }
 
   @Post(':squadId/leave')

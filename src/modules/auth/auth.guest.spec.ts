@@ -91,7 +91,7 @@ describe('Guest account completion', () => {
   it('binds new codes to the guest and delivers them out of band', async () => {
     expect(await service.requestGuestEmailCode(guest.id, dto.email)).toBeUndefined();
     expect(tx.otpCode.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ userId: guest.id, target: 'player@example.com', purpose: 'register' }) }));
-    expect(email.sendVerificationCode).toHaveBeenCalledWith('player@example.com', expect.stringMatching(/^\d{4}$/), 5);
+    expect(email.sendVerificationCode).toHaveBeenCalledWith('player@example.com', expect.stringMatching(/^\d{6}$/), 5);
   });
 
   it('blocks repeat requests before sending email', async () => {

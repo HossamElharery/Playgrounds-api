@@ -91,6 +91,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
   async register(@Body() dto: RegisterOwnerDto) {
     const result = await this.authService.registerOwner(dto);
@@ -279,6 +280,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('password/reset')
   resetPassword(@Body() dto: ResetPasswordDto) {
