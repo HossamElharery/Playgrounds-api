@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 const sharp: typeof import('sharp').default = require('sharp');
 
-const PHOTO_WIDTHS = [640, 960, 1280, 1920] as const;
+// 320 and 480 serve phone thumbnails (cards about 150-200 CSS px wide), which otherwise download the 640w file.
+const PHOTO_WIDTHS = [320, 480, 640, 960, 1280, 1920] as const;
 const AVATAR_WIDTHS = [128, 256, 512] as const;
 
 export const IMAGE_VARIANT_WIDTHS: Readonly<Record<string, readonly number[]>> =
