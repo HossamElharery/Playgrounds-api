@@ -45,6 +45,10 @@ export class FcmService {
           scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
         })
       : null;
+    if (!config.get<string>('FIREBASE_SERVICE_ACCOUNT') && config.get<string>('NODE_ENV') === 'production') {
+      // Without it no phone push is ever sent: calls and booking notices only reach people with the app open.
+      this.logger.error('FIREBASE_SERVICE_ACCOUNT is not set: mobile push notifications and call rings are disabled');
+    }
     if (config.get<string>('FIREBASE_SERVICE_ACCOUNT') && !this.account) {
       this.logger.error('FIREBASE_SERVICE_ACCOUNT is set but is not a valid service-account JSON');
     }
