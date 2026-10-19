@@ -25,6 +25,8 @@ import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 export class ManagementQuery extends PageQueryDto {
   @IsOptional() @IsString() @MaxLength(150) search?: string;
   @IsOptional() @IsString() status?: string;
+  /** Venues only: where the venue stands on Matchena (see venue-visibility.util). */
+  @IsOptional() @IsIn(['visible', 'hidden_by_owner', 'hidden_by_admin', 'suspended_by_admin', 'pending_approval']) listing?: string;
   @IsOptional() @IsIn(['player', 'owner', 'staff', 'admin']) role?: UserRole;
   @IsOptional() @IsString() userId?: string;
   @IsOptional() @IsString() venueId?: string;

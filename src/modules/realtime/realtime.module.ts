@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RealtimeGateway } from './realtime.gateway';
 import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
+import { SlotChangeRelay } from './slot-change-relay.service';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
   ],
   providers: [
     RealtimeGateway,
+    SlotChangeRelay,
     { provide: RealtimeGatewayEmitter, useExisting: RealtimeGateway },
   ],
   exports: [RealtimeGatewayEmitter],

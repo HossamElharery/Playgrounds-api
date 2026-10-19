@@ -46,6 +46,7 @@ import {
 import { WalletService } from '../payments/wallet.service';
 import { PaymentsConfigService } from '../payments/payments-config.service';
 import { BookingNotifier } from './booking-notifier.service';
+import { lockVenueSlots } from '../../common/utils/slot-lock.util';
 import { assertVenueBookable, computeVenueState, withoutInternalVenueFields } from '../../common/utils/venue-visibility.util';
 import { RewardsService } from '../rewards/rewards.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -132,13 +133,16 @@ export class BookingsService {
       dayOfWeek,
     } = zonedDayBounds(dateStr, timeZone);
 
-    const existing = await this.prisma.booking.findMany({
-      where: {
-        courtId,
-        slotStart: { gte: dayStart, lt: dayEnd },
-        status: { in: ['held', 'confirmed'] },
-      },
-    });
+    const asOf = new Date();
+    const existing = (
+      await this.prisma.booking.findMany({
+        where: {
+          courtId,
+          slotStart: { gte: dayStart, lt: dayEnd },
+          status: { in: ['held', 'confirmed'] },
+        },
+      })
+    ).filter((b) => !(b.status === 'held' && b.holdExpiresAt && b.holdExpiresAt <= asOf)); // a lapsed hold is free again, as `holdSlot` treats it
     const blocks = await this.prisma.calendarBlock.findMany({
       where: {
         venueId: court.venueId,
@@ -363,6 +367,8 @@ export class BookingsService {
     try {
       return await this.prisma.$transaction(
         async (tx) => {
+          // One venue's decisions about its time are taken one at a time (see lockVenueSlots).
+          await lockVenueSlots(tx, court.venueId);
           // Double-click / network retry: the same player asking for the same slot
           // again gets their live hold back instead of a confusing conflict.
           const sameHold = await tx.booking.findFirst({
@@ -495,7 +501,6 @@ export class BookingsService {
 
           return created;
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
       // Two identical requests from one player (double-click, flaky-network retry) race

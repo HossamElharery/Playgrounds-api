@@ -1,6 +1,7 @@
 import {
   bookings, disconnect, futureSlot, makeUser, makeVenue, notifications, notifier, prisma, pushes, seedWorld,
 } from './helpers/booking-harness';
+import { OwnerService } from '../src/modules/owner/owner.service';
 import { BookingNoticeReconciler } from '../src/modules/bookings/booking-notice-reconciler.service';
 
 jest.setTimeout(180_000);
@@ -93,6 +94,35 @@ describe('booking integrity under concurrency (real Postgres)', () => {
       }
       const live = await prisma.booking.count({ where: { courtId: courts[0].id, slotStart: slot, status: { in: ['held', 'confirmed'] } } });
       expect(live).toBe(1);
+    });
+
+    it('lets many players hold DIFFERENT free slots at the very same moment (no false "taken")', async () => {
+      const { courts } = await world(1);
+      const players = await Promise.all(Array.from({ length: 8 }, () => makeUser('p')));
+      const results = await settle(players.map((p, i) => hold(p.row.id, courts[0].id, futureSlot(60 + i))));
+      expect(failed(results).map((r) => code(r.reason))).toEqual([]);
+      expect(ok(results)).toHaveLength(8);
+    });
+
+    it('never lets a calendar block and a player hold take the same time (block vs hold race)', async () => {
+      const owners = new OwnerService(prisma, bookings, {} as never);
+      for (let i = 0; i < 6; i += 1) {
+        const { owner, venue, courts } = await world(1);
+        const p = await makeUser('p');
+        const slot = futureSlot(80 + i);
+        const results = await settle<unknown>([
+          hold(p.row.id, courts[0].id, slot),
+          owners.createCalendarBlock(owner.auth, {
+            venueId: venue.id, courtId: courts[0].id, kind: 'maintenance',
+            startsAt: slot.toISOString(), endsAt: new Date(slot.getTime() + 3_600_000).toISOString(),
+          } as never),
+        ]);
+        expect(ok(results)).toHaveLength(1); // exactly one of them gets the time
+        expect(['SLOT_BLOCKED', 'BLOCK_OVERLAPS_BOOKING']).toContain(code(failed(results)[0].reason));
+        const live = await prisma.booking.count({ where: { courtId: courts[0].id, status: { in: ['held', 'confirmed'] } } });
+        const blocks = await prisma.calendarBlock.count({ where: { courtId: courts[0].id } });
+        expect(live + blocks).toBe(1);
+      }
     });
 
     it('blocks overlapping ranges that start at different times (a 2-hour hold vs a booking at +1h)', async () => {

@@ -23,9 +23,10 @@ import type { AuthenticatedUser } from '../../src/common/types/authenticated-use
 export const prisma = new PrismaService();
 
 export const emitted: Array<{ userId: string; event: { type: string; [k: string]: unknown } }> = [];
-const emitter = {
+export const roomEvents: Array<{ room: string; event: { type: string; [k: string]: unknown } }> = [];
+export const emitter = {
   emitToUser: (userId: string, event: { type: string }) => emitted.push({ userId, event }),
-  emitToRoom: () => undefined,
+  emitToRoom: (room: string, event: { type: string }) => roomEvents.push({ room, event }),
   disconnectUser: () => undefined,
   revokeRoomAccess: () => undefined,
 };

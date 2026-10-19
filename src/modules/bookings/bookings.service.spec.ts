@@ -27,6 +27,7 @@ describe('BookingsService', () => {
     user: { update: jest.fn(), findUnique: jest.fn() },
     coinLedgerEntry: { create: jest.fn() },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   };
   const alignedFutureSlot = () => {
     const slot = new Date(Date.now() + 2 * 3_600_000);
@@ -39,6 +40,7 @@ describe('BookingsService', () => {
     prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
       fn(prisma),
     );
+    prisma.$queryRaw.mockResolvedValue([]);
     prisma.booking.findMany.mockResolvedValue([]);
     prisma.user.findUnique.mockResolvedValue({ status: 'active' });
     const module = await Test.createTestingModule({

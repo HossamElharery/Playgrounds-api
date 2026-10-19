@@ -3,6 +3,7 @@ import {
 } from './helpers/booking-harness';
 import { VenuesService } from '../src/modules/venues/venues.service';
 import { ManagementService } from '../src/modules/admin/management.service';
+import { OwnerService } from '../src/modules/owner/owner.service';
 import { SitemapService } from '../src/modules/seo/sitemap.service';
 
 jest.setTimeout(120_000);
@@ -183,6 +184,78 @@ describe('venue visibility controls (real Postgres)', () => {
         response: expect.objectContaining({ code: 'REASON_REQUIRED' }),
       });
       expect((await prisma.venue.findUniqueOrThrow({ where: { id: venue.id } })).status).toBe('active');
+    });
+  });
+
+  describe('the admin venue list shows the real state', () => {
+    it('labels each venue and filters by where it stands on Matchena', async () => {
+      const owner = await makeUser('owner', ['owner']);
+      const admin = await makeUser('admin', ['admin']);
+      const tag = `list-${Date.now()}`;
+      const mk = (patch: Record<string, unknown>) => makeVenue(owner.row.id, sportId, 1, { nameEn: `${tag}`, ...patch }).then((w) => w.venue);
+      const visible = await mk({});
+      const byOwner = await mk({ ownerListingEnabled: false });
+      const byAdmin = await mk({ adminHidden: true });
+      const suspended = await mk({ status: 'suspended' });
+      const pending = await mk({ status: 'pending' });
+      const paused = await mk({ instantBook: false });
+      const q = (listing?: string) => management.venues({ page: 1, perPage: 50, search: tag, ...(listing ? { listing } : {}) } as never);
+
+      const all = await q();
+      const stateOf = (id: string) => all.items.find((v) => v.id === id)!;
+      expect(stateOf(visible.id)).toMatchObject({ listing: 'visible', bookable: true });
+      expect(stateOf(byOwner.id)).toMatchObject({ listing: 'hidden_by_owner', bookable: false });
+      expect(stateOf(byAdmin.id)).toMatchObject({ listing: 'hidden_by_admin', bookable: false });
+      expect(stateOf(suspended.id)).toMatchObject({ listing: 'suspended_by_admin' });
+      expect(stateOf(pending.id)).toMatchObject({ listing: 'pending_approval' });
+      expect(stateOf(paused.id)).toMatchObject({ listing: 'visible', bookable: false }); // listed, but takes no new bookings
+
+      const ids = async (listing: string) => (await q(listing)).items.map((v) => v.id).sort();
+      expect(await ids('visible')).toEqual([visible.id, paused.id].sort());
+      expect(await ids('hidden_by_owner')).toEqual([byOwner.id]);
+      expect(await ids('hidden_by_admin')).toEqual([byAdmin.id]);
+      expect(await ids('suspended_by_admin')).toEqual([suspended.id]);
+      expect(await ids('pending_approval')).toEqual([pending.id]);
+      void admin;
+    });
+  });
+
+  describe('hiding a venue never stops the owner running it', () => {
+    it('keeps the owner’s calendar, bookings, check-in and cancellation working while hidden by the owner, hidden by an admin or paused', async () => {
+      const { owner, admin, venue, courts } = await setup();
+      const p = await makeUser('p');
+      const held = await bookings.holdSlot(p.row.id, { courtId: courts[0].id, slotStart: futureSlot(2).toISOString() });
+      const confirmed = await bookings.confirmBooking(p.row.id, held.id, { paymentMethod: 'cash' });
+
+      await listing.ownerSet(owner.auth, venue.id, 'listing', false, { acknowledgeFutureBookings: true });
+      await listing.adminSetListing(admin.row.id, venue.id, true, 'Policy review in progress');
+      await listing.ownerSet(owner.auth, venue.id, 'booking', false, { acknowledgeFutureBookings: true });
+      expect((await listing.stateOf(venue.id)).effective).toMatchObject({ publicVisible: false, bookable: false, operationsPaused: false });
+
+      // the owner still sees and works the booking…
+      const mine = await bookings.listForVenue(venue.id, owner.auth);
+      expect(mine.map((b) => b.id)).toContain(confirmed.id);
+      // …can add a walk-in booking from the calendar…
+      const owners = new OwnerService(prisma, bookings, {} as never);
+      await expect(
+        owners.createCalendarBlock(owner.auth, {
+          venueId: venue.id, courtId: courts[0].id, kind: 'private',
+          startsAt: futureSlot(10).toISOString(), endsAt: futureSlot(11).toISOString(),
+        } as never),
+      ).resolves.toBeDefined();
+      // …and checks the customer in.
+      const checked = await bookings.checkInById(owner.auth, confirmed.id, 'cash');
+      expect(checked.status).toBe('completed');
+      // The venue stays out of every public surface the whole time.
+      await expect(venues.getBySlug(venue.slug)).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('lets an owner pause only the management system without touching what players see', async () => {
+      const { owner, venue } = await setup();
+      await listing.ownerSet(owner.auth, venue.id, 'operations', false);
+      const s = await listing.stateOf(venue.id);
+      expect(s.effective).toMatchObject({ publicVisible: true, bookable: true, operationsPaused: true });
+      await expect(venues.getBySlug(venue.slug)).resolves.toBeDefined();
     });
   });
 

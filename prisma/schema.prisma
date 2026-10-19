@@ -3411,3 +3411,17 @@ model CallSettings {
   dndUntil  DateTime?
   updatedAt DateTime  @updatedAt
 }
+
+/// Outbox of availability changes, written by database triggers
+/// (see migrations/20261020120000_slot_change_outbox) and pushed to watching players.
+model SlotChange {
+  id        BigInt    @id @default(autoincrement())
+  venueId   String
+  courtId   String?
+  startsAt  DateTime?
+  endsAt    DateTime?
+  kind      String
+  createdAt DateTime  @default(now())
+
+  @@index([createdAt])
+}

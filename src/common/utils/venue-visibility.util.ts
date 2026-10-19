@@ -139,3 +139,21 @@ export function withoutInternalVenueFields<T extends object>(venue: T): Omit<T, 
   return copy as Omit<T, (typeof INTERNAL_VENUE_FIELDS)[number]>;
 }
 
+
+/** Prisma filter for "venues whose listing state is X" (readiness is not part of a list filter). */
+export function venueListingWhere(
+  listing: 'visible' | 'hidden_by_owner' | 'hidden_by_admin' | 'suspended_by_admin' | 'pending_approval',
+): Prisma.VenueWhereInput {
+  switch (listing) {
+    case 'visible':
+      return publicVenueWhere();
+    case 'hidden_by_owner':
+      return { status: 'active', adminHidden: false, ownerListingEnabled: false };
+    case 'hidden_by_admin':
+      return { status: 'active', adminHidden: true };
+    case 'suspended_by_admin':
+      return { status: 'suspended' };
+    case 'pending_approval':
+      return { status: 'pending' };
+  }
+}

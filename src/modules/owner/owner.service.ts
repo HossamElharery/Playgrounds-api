@@ -1,3 +1,4 @@
+import { lockVenueSlots } from '../../common/utils/slot-lock.util';
 import {
   BadRequestException,
   ConflictException,
@@ -636,26 +637,31 @@ export class OwnerService {
         throw new BadRequestException('Court does not belong to this venue');
       }
     }
-    const overlap = await this.prisma.booking.findFirst({
-      where: {
-        venueId: dto.venueId,
-        ...(dto.courtId ? { courtId: dto.courtId } : {}),
-        status: { in: ['held', 'confirmed'] },
-        slotStart: { lt: endsAt },
-        slotEnd: { gt: startsAt },
-      },
-    });
-    if (overlap) throw new ConflictException('BLOCK_OVERLAPS_BOOKING');
-    return this.prisma.calendarBlock.create({
-      data: {
-        venueId: dto.venueId,
-        courtId: dto.courtId,
-        kind: dto.kind,
-        startsAt,
-        endsAt,
-        note: dto.note,
-        createdById: user.id,
-      },
+    // Check and create under the venue's slot lock, so a player cannot take a slot inside
+    // the block between the two.
+    return this.prisma.$transaction(async (tx) => {
+      await lockVenueSlots(tx, dto.venueId);
+      const overlap = await tx.booking.findFirst({
+        where: {
+          venueId: dto.venueId,
+          ...(dto.courtId ? { courtId: dto.courtId } : {}),
+          status: { in: ['held', 'confirmed'] },
+          slotStart: { lt: endsAt },
+          slotEnd: { gt: startsAt },
+        },
+      });
+      if (overlap) throw new ConflictException('BLOCK_OVERLAPS_BOOKING');
+      return tx.calendarBlock.create({
+        data: {
+          venueId: dto.venueId,
+          courtId: dto.courtId,
+          kind: dto.kind,
+          startsAt,
+          endsAt,
+          note: dto.note,
+          createdById: user.id,
+        },
+      });
     });
   }
 

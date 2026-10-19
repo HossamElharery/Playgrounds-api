@@ -16,6 +16,8 @@ import { PresenceService } from '../presence/presence.service';
 import { RealtimeGatewayEmitter } from './realtime-emitter.interface';
 import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
 import { lobbyMovementEnabled } from '../lobby-world/lobby-world-flags';
+import { slotsRoom } from './slot-change-relay.service';
+import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 
 export const SQUAD_EMOTE_COOLDOWN_MS = 3000;
 export const SQUAD_WHEEL_EMOTE_COOLDOWN_MS = 1200;
@@ -199,6 +201,44 @@ export class RealtimeGateway
       threadId: data.threadId,
       userId,
       typing: data.typing,
+    });
+  }
+
+  /**
+   * A player looking at a venue's slots asks to hear about changes to them. The room is
+   * only joined for a venue that is publicly bookable (or by its own owner / staff), and a
+   * socket may watch a handful of venues at a time.
+   */
+  @SubscribeMessage('venue.slots.watch')
+  watchVenueSlots(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { venueId?: unknown },
+  ) {
+    return this.inOrder(client, async () => {
+      const userId = this.authedUserId(client);
+      const venueId = typeof data?.venueId === 'string' ? data.venueId : '';
+      if (!userId || !/^[0-9a-f-]{36}$/i.test(venueId)) return;
+      const watched = [...client.rooms].filter((r) => r.startsWith('venue-slots:'));
+      if (watched.includes(slotsRoom(venueId))) return;
+      if (watched.length >= 5) return;
+      const venue = await this.prisma.venue.findFirst({
+        where: {
+          id: venueId,
+          OR: [publicVenueWhere(), { ownerId: userId }],
+        },
+        select: { id: true },
+      });
+      if (venue) await client.join(slotsRoom(venueId));
+    });
+  }
+
+  @SubscribeMessage('venue.slots.unwatch')
+  unwatchVenueSlots(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { venueId?: unknown },
+  ) {
+    return this.inOrder(client, async () => {
+      if (typeof data?.venueId === 'string') await client.leave(slotsRoom(data.venueId));
     });
   }
 

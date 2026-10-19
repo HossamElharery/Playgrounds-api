@@ -8,6 +8,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { loadBookingBlockers } from '../../common/utils/venue-readiness.util';
+import { computeVenueState, venueListingWhere } from '../../common/utils/venue-visibility.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
@@ -277,6 +278,7 @@ export class ManagementService {
       throw new BadRequestException('Invalid status');
     const where: Prisma.VenueWhereInput = {
       ...(q.status ? { status: q.status as never } : {}),
+      ...(q.listing ? venueListingWhere(q.listing as Parameters<typeof venueListingWhere>[0]) : {}),
       ...(q.search
         ? {
             OR: [
@@ -300,7 +302,11 @@ export class ManagementService {
       this.db.venue.count({ where }),
     ]);
     return {
-      items,
+      // `listing` / `bookable` are the effective state, so the list never has to repeat the rule.
+      items: items.map((v) => {
+        const state = computeVenueState(v);
+        return { ...v, listing: state.listing, bookable: state.bookable, operationsPaused: state.operationsPaused };
+      }),
       total,
       page: q.page,
       totalPages: Math.max(1, Math.ceil(total / q.perPage)),
