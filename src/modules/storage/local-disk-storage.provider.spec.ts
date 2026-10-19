@@ -46,10 +46,10 @@ describe('LocalDiskStorageProvider image variants', () => {
     );
     expect(url).toBe(`/uploads/${key}`);
     const name = key.slice('venues/'.length, -'.JPG'.length);
-    const variants = [640, 960, 1280, 1920].map((w) =>
+    const variants = [320, 480, 640, 960, 1280, 1920].map((w) =>
       join(cwd, 'uploads', `venues/w${w}/${name}.webp`),
     );
-    await waitFor(variants[3]);
+    await waitFor(variants[variants.length - 1]);
     for (const file of variants) expect(await exists(file)).toBe(true);
 
     await provider.deleteObject(key);

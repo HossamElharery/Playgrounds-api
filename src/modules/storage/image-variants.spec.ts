@@ -58,7 +58,7 @@ describe('image variants', () => {
       imageVariantKey(`posts/thumbnails/${ID}-192.webp`, 640),
     ).toBeUndefined();
     expect(imageVariantWidths(`avatars/${ID}.png`)).toEqual([128, 256, 512]);
-    expect(imageVariantWidths(`chat/${ID}.webp`)).toEqual([640, 960, 1280, 1920]);
+    expect(imageVariantWidths(`chat/${ID}.webp`)).toEqual([320, 480, 640, 960, 1280, 1920]);
     expect(imageVariantWidths(`misc/${ID}.png`)).toEqual([]);
   });
 
@@ -123,7 +123,7 @@ describe('image variants', () => {
 
   it('warms every width for an upload and ignores documents', async () => {
     await warmImageVariants(root, `partner-photos/${ID}.png`);
-    for (const width of [640, 960, 1280, 1920]) {
+    for (const width of [320, 480, 640, 960, 1280, 1920]) {
       expect(
         (await stat(join(root, `partner-photos/w${width}/${ID}.webp`))).size,
       ).toBeGreaterThan(0);
