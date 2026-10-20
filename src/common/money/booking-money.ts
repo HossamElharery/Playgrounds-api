@@ -1,5 +1,10 @@
 
 export const DEFAULT_COMMISSION_BPS = 1000;
+/**
+ * Default commission by venue currency, for markets launched cheaper than the global rate.
+ * A venue override still wins; venues in other currencies use the global rate.
+ */
+export const MARKET_COMMISSION_BPS: Partial<Record<string, number>> = { SAR: 500, AED: 500 };
 export const MIN_COMMISSION_BPS = 0;
 export const MAX_COMMISSION_BPS = 5000;
 

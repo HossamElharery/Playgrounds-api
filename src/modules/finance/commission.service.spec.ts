@@ -36,6 +36,20 @@ describe('CommissionService', () => {
     await expect(service.resolveBps('v1')).resolves.toBe(1000);
   });
 
+  it('uses 5% for Saudi and UAE venues without an override, the global rate elsewhere', async () => {
+    prisma.commissionSetting.findUnique.mockResolvedValue(null);
+    prisma.commissionSetting.findFirst.mockResolvedValue({ percentageBps: 1000 });
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'SAR' });
+    await expect(service.resolveBps('v1')).resolves.toBe(500);
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'AED' });
+    await expect(service.resolveSource('v1')).resolves.toEqual({ bps: 500, source: 'global' });
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'EGP' });
+    await expect(service.resolveBps('v1')).resolves.toBe(1000);
+    prisma.commissionSetting.findUnique.mockResolvedValue({ percentageBps: 300 });
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'SAR' });
+    await expect(service.resolveBps('v1')).resolves.toBe(300);
+  });
+
   it('rejects bps outside 0..5000', async () => {
     prisma.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'o1' });
     await expect(service.setVenueBps('v1', 5001, 'admin', 'too high')).rejects.toBeInstanceOf(

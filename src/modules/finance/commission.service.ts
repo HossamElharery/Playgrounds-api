@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   DEFAULT_COMMISSION_BPS,
+  MARKET_COMMISSION_BPS,
   MAX_COMMISSION_BPS,
   MIN_COMMISSION_BPS,
 } from '../../common/money/booking-money';
@@ -22,15 +23,7 @@ export class CommissionService {
   ) {}
 
   async resolveBps(venueId: string, tx?: DbClient): Promise<number> {
-    const db = tx ?? this.prisma;
-    const venueRow = await db.commissionSetting.findUnique({
-      where: { venueId },
-    });
-    if (venueRow) return venueRow.percentageBps;
-    const global = await db.commissionSetting.findFirst({
-      where: { venueId: null },
-    });
-    return global?.percentageBps ?? DEFAULT_COMMISSION_BPS;
+    return (await this.resolveSource(venueId, tx)).bps;
   }
 
   async resolveSource(
@@ -42,13 +35,13 @@ export class CommissionService {
       where: { venueId },
     });
     if (venueRow) return { bps: venueRow.percentageBps, source: 'venue' };
-    const global = await db.commissionSetting.findFirst({
-      where: { venueId: null },
+    const venue = await db.venue.findUnique({
+      where: { id: venueId },
+      select: { currency: true },
     });
-    return {
-      bps: global?.percentageBps ?? DEFAULT_COMMISSION_BPS,
-      source: 'global',
-    };
+    const market = MARKET_COMMISSION_BPS[venue?.currency ?? ''];
+    if (market !== undefined) return { bps: market, source: 'global' };
+    return { bps: await this.globalBps(db), source: 'global' };
   }
 
   async globalBps(tx?: DbClient): Promise<number> {
