@@ -8,7 +8,11 @@ import { CreateBlogCategoryDto } from './dto/blog-category.dto';
 import { UpsertBannerDto } from './dto/banner.dto';
 import { UpsertFaqDto } from './dto/faq.dto';
 import { CreateSupportInquiryDto } from './dto/support-inquiry.dto';
+import { CreateVenueLeadDto } from './dto/venue-lead.dto';
 import { buildPagination } from '../../common/dto/page-query.dto';
+
+export const VENUE_LEAD_MARKER = '[VENUE_LEAD]';
+const VENUE_LEAD_NO_EMAIL = 'venue-lead@no-email.matchena.com';
 
 function slugify(input: string): string {
   const slug = input
@@ -296,6 +300,35 @@ export class ContentService {
       );
     }
     return inquiry;
+  }
+
+  /**
+   * Sales lead from the /partners landing pages. It lands in the same admin support inbox and
+   * support email as the contact form, marked so the team can filter it, with no schema change.
+   */
+  async createVenueLead(dto: CreateVenueLeadDto, userId?: string): Promise<{ received: true }> {
+    if (dto.website?.trim()) return { received: true };
+    const lines = [
+      VENUE_LEAD_MARKER,
+      `Venue: ${dto.venueName ?? '—'}`,
+      `Area: ${dto.city ?? '—'}`,
+      `Sports: ${dto.sports?.length ? dto.sports.join(', ') : '—'}`,
+      `Courts / devices: ${dto.units ?? '—'}`,
+      `Language: ${dto.lang ?? '—'}`,
+      `Page: ${dto.source ?? '—'}`,
+      `Campaign: ${dto.campaign ?? '—'}`,
+      dto.message ? `\n${dto.message}` : null,
+    ].filter((line): line is string => line != null);
+    await this.createSupportInquiry(
+      {
+        fullName: dto.fullName,
+        email: dto.email ?? VENUE_LEAD_NO_EMAIL,
+        phone: dto.phone,
+        message: lines.join('\n'),
+      },
+      userId,
+    );
+    return { received: true };
   }
 
   async requestAccountDeletion(userId: string): Promise<{ requestedAt: Date }> {

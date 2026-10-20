@@ -89,6 +89,46 @@ describe('ContentService support inbox', () => {
     );
     warn.mockRestore();
   });
+
+  it('files a venue lead in the support inbox with a marker and the venue details', async () => {
+    await expect(
+      service.createVenueLead({
+        fullName: 'Karim Adel',
+        phone: '+201001234567',
+        venueName: 'Golden Goal',
+        city: 'Nasr City',
+        sports: ['football', 'padel'],
+        units: 4,
+        source: '/ar/partners/padel',
+        campaign: 'facebook / cpc',
+        lang: 'ar',
+      }),
+    ).resolves.toEqual({ received: true });
+
+    const data = prisma.supportInquiry.create.mock.calls[0][0].data;
+    expect(data.fullName).toBe('Karim Adel');
+    expect(data.phone).toBe('+201001234567');
+    expect(data.email).toBe('venue-lead@no-email.matchena.com');
+    expect(data.message.startsWith('[VENUE_LEAD]')).toBe(true);
+    expect(data.message).toContain('Venue: Golden Goal');
+    expect(data.message).toContain('Sports: football, padel');
+    expect(data.message).toContain('Courts / devices: 4');
+    expect(data.message).toContain('Page: /ar/partners/padel');
+    expect(email.sendSupportInquiry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the owner email when one is given', async () => {
+    await service.createVenueLead({ fullName: 'Karim Adel', phone: '+201001234567', email: 'k@mail.com' });
+    expect(prisma.supportInquiry.create.mock.calls[0][0].data.email).toBe('k@mail.com');
+  });
+
+  it('drops honeypot submissions without storing or emailing anything', async () => {
+    await expect(
+      service.createVenueLead({ fullName: 'Bot', phone: '+201001234567', website: 'http://spam.example' }),
+    ).resolves.toEqual({ received: true });
+    expect(prisma.supportInquiry.create).not.toHaveBeenCalled();
+    expect(email.sendSupportInquiry).not.toHaveBeenCalled();
+  });
 });
 
 describe('ContentService account deletion requests', () => {

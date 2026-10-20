@@ -15,8 +15,9 @@ import {
   subscriptionStanding,
   type SubscriptionState,
 } from './subscription-state.util';
+import { DEFAULT_PLAN_KEY, SUBSCRIPTION_PLANS, planListPrice } from './subscription-plans';
 
-export const DEFAULT_LIST_PRICE = 100_000; // 1,000 EGP in piasters
+export const DEFAULT_LIST_PRICE = SUBSCRIPTION_PLANS[DEFAULT_PLAN_KEY].listPrice; // 2,000 EGP in piasters
 export const DEFAULT_TRIAL_DAYS = 30;
 
 function localDate(now: Date, timeZone: string): string {
@@ -49,7 +50,12 @@ export class SubscriptionsService {
     const existing = await db.venueSubscription.findUnique({ where: { venueId } });
     if (existing) return existing;
     return db.venueSubscription.create({
-      data: { venueId, currentPeriodEnd: new Date(Date.now() + days * DAY_MS) },
+      data: {
+        venueId,
+        planKey: DEFAULT_PLAN_KEY,
+        listPriceAmount: DEFAULT_LIST_PRICE,
+        currentPeriodEnd: new Date(Date.now() + days * DAY_MS),
+      },
     });
   }
 
@@ -65,6 +71,8 @@ export class SubscriptionsService {
       const created = await tx.venueSubscription.create({
         data: {
           venueId,
+          planKey: DEFAULT_PLAN_KEY,
+          listPriceAmount: DEFAULT_LIST_PRICE,
           currentPeriodEnd: new Date(Date.now() + days * DAY_MS),
           agreedPriceAmount: agreedPriceAmount ?? null,
         },
@@ -154,6 +162,15 @@ export class SubscriptionsService {
     const sub = await this.ensure(venueId);
     const data: Prisma.VenueSubscriptionUpdateInput = {};
     const changed: string[] = [];
+    if (dto.planKey !== undefined && dto.planKey !== sub.planKey) {
+      data.planKey = dto.planKey;
+      changed.push('plan');
+      // Switching plan moves the struck-through list price with it, unless the admin set one too.
+      if (dto.listPriceAmount === undefined) {
+        data.listPriceAmount = planListPrice(dto.planKey) ?? sub.listPriceAmount;
+        changed.push('listPrice');
+      }
+    }
     if (dto.listPriceAmount !== undefined) (data.listPriceAmount = dto.listPriceAmount), changed.push('listPrice');
     if (dto.agreedPriceAmount !== undefined) (data.agreedPriceAmount = dto.agreedPriceAmount), changed.push('agreedPrice');
     if (dto.graceDays !== undefined) (data.graceDays = dto.graceDays), changed.push('graceDays');

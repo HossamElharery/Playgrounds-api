@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsDateString, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { PLAN_KEYS, type PlanKey } from '../subscription-plans';
 
 export class ExtendSubscriptionDto {
   @ApiPropertyOptional({ description: 'Days to add, 1–3650' })
@@ -37,6 +38,11 @@ export class ExtendSubscriptionDto {
 }
 
 export class UpdateSubscriptionTermsDto {
+  @ApiPropertyOptional({ enum: PLAN_KEYS, description: 'Changing the plan also sets its list price unless listPriceAmount is sent.' })
+  @IsOptional()
+  @IsIn(PLAN_KEYS)
+  planKey?: PlanKey;
+
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

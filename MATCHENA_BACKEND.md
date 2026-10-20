@@ -209,8 +209,8 @@ Full request/response DTOs are in Swagger (`/api/docs`) and `src/modules/<name>/
 ### geo (`/geo`)
 `GET geo/countries` · `GET geo/countries/:code` · `GET geo/governorates?country=EG` · `GET geo/districts?gov=cairo` (or `governorateId=`) — districts include a GeoJSON `polygon`.
 
-### content (`/blog`, `/banners`, `/faq`, `/support`, `/admin/*`)
-- Public: `GET sports` · `GET amenities` · `GET blog?page=&perPage=` (**published only — do not send `status`**) · `GET blog/:slugOrId` (bilingual `titleEn`/`titleAr` + `contentEn`/`contentAr`) · `GET banners?placement=` · `GET faq` · `POST support { fullName, email, phone?, message }` (public contact form; optional phone; throttled; emails `MAIL_REPLY_TO` / `support@matchena.com` and stores a `SupportInquiry`. A valid JWT links `userId`; clients must not send `userId`.)
+### content (`/blog`, `/banners`, `/faq`, `/support`, `/venue-leads`, `/admin/*`)
+- Public: `GET sports` · `GET amenities` · `GET blog?page=&perPage=` (**published only — do not send `status`**) · `GET blog/:slugOrId` (bilingual `titleEn`/`titleAr` + `contentEn`/`contentAr`) · `GET banners?placement=` · `GET faq` · `POST support { fullName, email, phone?, message }` (public contact form; optional phone; throttled; emails `MAIL_REPLY_TO` / `support@matchena.com` and stores a `SupportInquiry`. A valid JWT links `userId`; clients must not send `userId`.) · `POST venue-leads { fullName, phone, venueName?, city?, sports?, units?, email?, message?, source?, campaign?, lang?, website? }` (venue-owner sales lead from the web `/partners` pages; phone required, email optional; throttled 5/min; stored as a `SupportInquiry` whose message starts with `[VENUE_LEAD]` and emailed to support; `website` is a honeypot and a filled value is dropped silently; returns `{ received: true }`)
 - Admin: `GET/POST admin/blog` (`GET` accepts `status=draft|published|archived`) · `PATCH/DELETE admin/blog/:id` · banners/faq CRUD · `GET admin/support?status=new|read` · `PATCH admin/support/:id/read`
 
 ### users extras
@@ -260,6 +260,8 @@ Full request/response DTOs are in Swagger (`/api/docs`) and `src/modules/<name>/
 
 ### admin (`/admin`, `/reports`)
 `POST reports` (any authenticated user — files a report against post/review/chat/player/venue) · `GET admin/overview` (KPI wall) · `GET admin/moderation/reports?status=open|resolved|dismissed` · `PATCH admin/moderation/reports/:id` · `GET admin/audit-log` · `GET/POST admin/feature-flags` · `GET admin/analytics/funnel|cohorts`
+
+**Venue plans.** `src/modules/subscriptions/subscription-plans.ts` is the public plan catalog per venue per month (`starter` 1,000 · `pro` 2,000 · `business` from 3,500 · `gaming-lite` 300 · `gaming-pro` 600 EGP; yearly = 10 months for 12). New venues trial `pro`. `PATCH admin/venues/:id/subscription` accepts `planKey`; changing it moves `listPriceAmount` to the plan price unless one is sent. Plans are commercial terms, never feature locks. The web `/partners/pricing` page shows the same numbers (`src/app/core/config/venue-plans.ts` in the web repo).
 
 ---
 
