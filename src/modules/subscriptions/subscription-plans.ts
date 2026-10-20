@@ -30,6 +30,8 @@ export const PLAN_PRICES: Partial<Record<string, Record<PlanKey, number>>> = {
     'gaming-lite': 30_000,
     'gaming-pro': 60_000,
   },
+  SAR: { starter: 7_900, pro: 19_900, business: 39_900, 'gaming-lite': 3_900, 'gaming-pro': 7_900 },
+  AED: { starter: 14_900, pro: 29_900, business: 59_900, 'gaming-lite': 5_900, 'gaming-pro': 11_900 },
 };
 
 /** New venues trial the Pro plan, so the owner sees the full product and its real list price. */
