@@ -2062,6 +2062,15 @@ model FeatureFlag {
   updatedAt   DateTime @updatedAt
 }
 
+/// Short-lived distributed leases for scheduled jobs. Unlike an advisory
+/// transaction lock, this does not hold a database connection while a job runs.
+model JobLease {
+  name      String   @id @db.VarChar(120)
+  ownerId   String   @db.VarChar(64)
+  expiresAt DateTime @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
 model PlatformSetting {
   id                      Int      @id @default(1)
   serviceFeePct           Float    @default(5)
