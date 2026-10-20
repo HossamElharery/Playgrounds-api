@@ -91,7 +91,7 @@ export class LlmsService {
       ['/leaderboards', 'Leaderboards', 'Top players and teams.'],
       ['/blog', 'Blog', 'Guides and news about playing and booking in Egypt.'],
       ['/how-it-works', 'How it works', 'How booking, payment and confirmation work.'],
-      ['/partners', 'Venue management system (for owners)', 'Booking, calendar, cash shifts, staff and profit reports for football, padel and gaming venues. Free trial, plans from 1,000 EGP a month.'],
+      ['/partners', 'AI venue management system (for owners)', 'An AI assistant that books, records deposits and answers money questions by voice in Arabic or English; per-court occupancy analysis; works offline; calendar, cash shifts, staff and profit reports for football, padel and gaming venues. Priced in EGP, SAR and AED, free trial.'],
       ['/partners/pricing', 'Plans and pricing for venues', 'Starter, Pro and Business plans per venue, plus gaming-lounge plans. Annual billing pays 10 months for 12.'],
       ['/partners/football', 'Football pitch management', 'Five- and seven-a-side bookings, fixed weekly slots, deposits and tournaments.'],
       ['/partners/padel', 'Padel court management', 'Per-court prices, peak hours, 90-minute slots and prepaid app bookings.'],
