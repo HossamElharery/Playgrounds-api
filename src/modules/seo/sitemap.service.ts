@@ -4,6 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocalLandingService } from './local-landing.service';
 
+/** Venue-owner landing pages under /partners. Keep in sync with PARTNER_TOPIC_SLUGS in the web app. */
+export const PARTNER_TOPIC_PATHS = [
+  '/partners/pricing',
+  '/partners/football',
+  '/partners/padel',
+  '/partners/gaming',
+  '/partners/vs-whatsapp',
+];
+
 export function isIndexablePost(text: string, mediaCount: number): boolean {
   if (mediaCount > 0) return true;
   const letters = text.replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[#@]\S+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
@@ -166,6 +175,7 @@ ${items}
   staticPages(): string {
     const paths = [
       '', '/explore', '/community', '/leaderboards', '/blog', '/about', '/partners', '/how-it-works',
+      ...PARTNER_TOPIC_PATHS,
       '/contact', '/help', '/terms', '/privacy', '/refund-policy',
     ];
     return this.urlset(paths.map((path) => this.localizedEntry(path)).join(''));

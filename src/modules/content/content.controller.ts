@@ -24,6 +24,7 @@ import { CreateBlogCategoryDto } from './dto/blog-category.dto';
 import { UpsertBannerDto } from './dto/banner.dto';
 import { UpsertFaqDto } from './dto/faq.dto';
 import { CreateSupportInquiryDto } from './dto/support-inquiry.dto';
+import { CreateVenueLeadDto } from './dto/venue-lead.dto';
 import {
   ListBannersQueryDto,
   ListBlogQueryDto,
@@ -248,6 +249,21 @@ export class ContentController {
     @CurrentUser() user?: AuthenticatedUser,
   ) {
     return this.content.createSupportInquiry(dto, user?.id);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('venue-leads')
+  @ApiOperation({
+    summary: 'Ask to try the Matchena venue system',
+    description:
+      'Sent from the /partners landing pages. Phone is required, email is optional. The lead lands in the admin support inbox marked [VENUE_LEAD] and is emailed to support. Returns { received: true } only.',
+  })
+  createVenueLead(
+    @Body() dto: CreateVenueLeadDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.content.createVenueLead(dto, user?.id);
   }
 
   @ApiBearerAuth()

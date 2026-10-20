@@ -66,6 +66,20 @@ describe('SubscriptionsService', () => {
     expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', deepLink: '/owner/settings' }));
   });
 
+  it('switching plan moves the list price to the catalog price and audits both', async () => {
+    const { svc, prisma } = build([sub()]);
+    await svc.updateTerms(admin, 'v1', { planKey: 'starter' });
+    const update = prisma.venueSubscription.update.mock.calls[0][0].data;
+    expect(update).toMatchObject({ planKey: 'starter', listPriceAmount: 100000 });
+    expect(prisma.auditLogEntry.create.mock.calls[0][0].data.metadata.changed).toEqual(['plan', 'listPrice']);
+  });
+
+  it('an explicit list price wins over the catalog price when the plan changes', async () => {
+    const { svc, prisma } = build([sub()]);
+    await svc.updateTerms(admin, 'v1', { planKey: 'business', listPriceAmount: 500000 });
+    expect(prisma.venueSubscription.update.mock.calls[0][0].data).toMatchObject({ planKey: 'business', listPriceAmount: 500000 });
+  });
+
   it('the owner view shows the struck-through list price and never the agreed one', async () => {
     const { svc, prisma } = build([sub()]);
     prisma.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'owner-1' });

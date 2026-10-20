@@ -26,6 +26,7 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node src/seeds/seedAdmin.ts",
+    "content:owner-guides": "ts-node src/scripts/seed-owner-guides.ts",
     "test:integration": "bash scripts/test-integration.sh"
   },
   "dependencies": {

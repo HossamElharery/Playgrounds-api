@@ -85,6 +85,14 @@ describe('SitemapService', () => {
     expect(xml).toContain('<image:loc>https://matchena.com/p.jpg</image:loc>');
     expect(xml).not.toContain('explore?');
   });
+
+  it('static sitemap lists the venue-owner landing pages in both languages', () => {
+    const xml = svc.staticPages();
+    for (const path of ['/partners', '/partners/pricing', '/partners/football', '/partners/padel', '/partners/gaming', '/partners/vs-whatsapp']) {
+      expect(xml).toContain(`https://matchena.com/ar${path}</loc>`);
+      expect(xml).toContain(`https://matchena.com/en${path}</loc>`);
+    }
+  });
 });
 
 describe('LlmsService', () => {
@@ -95,6 +103,7 @@ describe('LlmsService', () => {
     expect(summary).toContain('/en/blog/how-to');
     expect(summary).toContain('/en/venues/court-1');
     expect(summary).toContain('/en/sports/padel');
+    expect(summary).toContain('/en/partners/pricing');
     const full = await svc.full();
     expect(full).toContain('### Q?');
     expect(full).toContain('Body');
