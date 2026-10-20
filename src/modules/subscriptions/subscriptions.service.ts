@@ -15,9 +15,9 @@ import {
   subscriptionStanding,
   type SubscriptionState,
 } from './subscription-state.util';
-import { DEFAULT_PLAN_KEY, SUBSCRIPTION_PLANS, planListPrice } from './subscription-plans';
+import { DEFAULT_PLAN_KEY, planListPrice } from './subscription-plans';
 
-export const DEFAULT_LIST_PRICE = SUBSCRIPTION_PLANS[DEFAULT_PLAN_KEY].listPrice; // 2,000 EGP in piasters
+export const DEFAULT_LIST_PRICE = planListPrice(DEFAULT_PLAN_KEY, 'EGP') ?? 0; // 2,000 EGP in piasters
 export const DEFAULT_TRIAL_DAYS = 30;
 
 function localDate(now: Date, timeZone: string): string {
@@ -52,11 +52,24 @@ export class SubscriptionsService {
     return db.venueSubscription.create({
       data: {
         venueId,
-        planKey: DEFAULT_PLAN_KEY,
-        listPriceAmount: DEFAULT_LIST_PRICE,
+        ...(await this.startingTerms(db, venueId)),
         currentPeriodEnd: new Date(Date.now() + days * DAY_MS),
       },
     });
+  }
+
+  /**
+   * A new subscription is billed in the venue's own currency (from its country) at that
+   * currency's list price. A currency without a public price list starts at 0, to be agreed.
+   */
+  private async startingTerms(db: Prisma.TransactionClient | PrismaService, venueId: string) {
+    const venue = await db.venue.findUnique({ where: { id: venueId }, select: { currency: true } });
+    const currency = (venue?.currency || 'EGP').toUpperCase();
+    return {
+      planKey: DEFAULT_PLAN_KEY,
+      currency,
+      listPriceAmount: planListPrice(DEFAULT_PLAN_KEY, currency) ?? 0,
+    };
   }
 
   async startOrExtendOnApproval(
@@ -71,8 +84,7 @@ export class SubscriptionsService {
       const created = await tx.venueSubscription.create({
         data: {
           venueId,
-          planKey: DEFAULT_PLAN_KEY,
-          listPriceAmount: DEFAULT_LIST_PRICE,
+          ...(await this.startingTerms(tx, venueId)),
           currentPeriodEnd: new Date(Date.now() + days * DAY_MS),
           agreedPriceAmount: agreedPriceAmount ?? null,
         },
@@ -167,7 +179,7 @@ export class SubscriptionsService {
       changed.push('plan');
       // Switching plan moves the struck-through list price with it, unless the admin set one too.
       if (dto.listPriceAmount === undefined) {
-        data.listPriceAmount = planListPrice(dto.planKey) ?? sub.listPriceAmount;
+        data.listPriceAmount = planListPrice(dto.planKey, sub.currency) ?? sub.listPriceAmount;
         changed.push('listPrice');
       }
     }

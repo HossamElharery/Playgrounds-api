@@ -101,6 +101,7 @@ describe('ContentService support inbox', () => {
         units: 4,
         source: '/ar/partners/padel',
         campaign: 'facebook / cpc',
+        country: 'SA',
         lang: 'ar',
       }),
     ).resolves.toEqual({ received: true });
@@ -111,6 +112,7 @@ describe('ContentService support inbox', () => {
     expect(data.email).toBe('venue-lead@no-email.matchena.com');
     expect(data.message.startsWith('[VENUE_LEAD]')).toBe(true);
     expect(data.message).toContain('Venue: Golden Goal');
+    expect(data.message).toContain('Country: SA');
     expect(data.message).toContain('Sports: football, padel');
     expect(data.message).toContain('Courts / devices: 4');
     expect(data.message).toContain('Page: /ar/partners/padel');

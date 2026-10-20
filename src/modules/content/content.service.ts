@@ -311,6 +311,7 @@ export class ContentService {
     const lines = [
       VENUE_LEAD_MARKER,
       `Venue: ${dto.venueName ?? '—'}`,
+      `Country: ${dto.country ?? '—'}`,
       `Area: ${dto.city ?? '—'}`,
       `Sports: ${dto.sports?.length ? dto.sports.join(', ') : '—'}`,
       `Courts / devices: ${dto.units ?? '—'}`,

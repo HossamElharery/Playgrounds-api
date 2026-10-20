@@ -1,21 +1,36 @@
 /**
- * Public plan catalog, per venue per month, in piasters. The same numbers are shown on
- * /partners/pricing (web app: PARTNER_PLANS). Change both together.
+ * Venue plans. What a plan covers is the same everywhere; its price depends on the venue's
+ * currency (from its country), never on where the visitor browsing the website is.
+ * The web /partners/pricing page shows the same numbers (src/app/core/config/venue-plans.ts).
  *
  * Plans are commercial terms, not feature locks: nothing in the product is switched off
  * when a venue is over its court count or its plan ends.
  */
 export const SUBSCRIPTION_PLANS = {
-  starter: { listPrice: 100_000, maxUnits: 2, assistantRequests: 200 },
-  pro: { listPrice: 200_000, maxUnits: 5, assistantRequests: 1_000 },
-  business: { listPrice: 350_000, maxUnits: null, assistantRequests: 3_000 },
-  'gaming-lite': { listPrice: 30_000, maxUnits: 10, assistantRequests: 200 },
-  'gaming-pro': { listPrice: 60_000, maxUnits: null, assistantRequests: 1_000 },
+  starter: { maxUnits: 2, assistantRequests: 200 },
+  pro: { maxUnits: 5, assistantRequests: 1_000 },
+  business: { maxUnits: null, assistantRequests: 3_000 },
+  'gaming-lite': { maxUnits: 10, assistantRequests: 200 },
+  'gaming-pro': { maxUnits: null, assistantRequests: 1_000 },
 } as const;
 
 export type PlanKey = keyof typeof SUBSCRIPTION_PLANS;
 
 export const PLAN_KEYS = Object.keys(SUBSCRIPTION_PLANS) as PlanKey[];
+
+/**
+ * Public list prices per month, in minor units, by currency. A currency that is not listed
+ * has no public price yet: its venues get a list price of 0 and the admin agrees the price.
+ */
+export const PLAN_PRICES: Partial<Record<string, Record<PlanKey, number>>> = {
+  EGP: {
+    starter: 100_000,
+    pro: 200_000,
+    business: 350_000,
+    'gaming-lite': 30_000,
+    'gaming-pro': 60_000,
+  },
+};
 
 /** New venues trial the Pro plan, so the owner sees the full product and its real list price. */
 export const DEFAULT_PLAN_KEY: PlanKey = 'pro';
@@ -27,6 +42,8 @@ export function isPlanKey(value: unknown): value is PlanKey {
   return typeof value === 'string' && (PLAN_KEYS as string[]).includes(value);
 }
 
-export function planListPrice(key: string): number | null {
-  return isPlanKey(key) ? SUBSCRIPTION_PLANS[key].listPrice : null;
+/** The plan's public monthly price in this currency, or null when that currency has none. */
+export function planListPrice(key: string, currency = 'EGP'): number | null {
+  if (!isPlanKey(key)) return null;
+  return PLAN_PRICES[currency.toUpperCase()]?.[key] ?? null;
 }

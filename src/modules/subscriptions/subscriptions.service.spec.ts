@@ -66,6 +66,24 @@ describe('SubscriptionsService', () => {
     expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', deepLink: '/owner/settings' }));
   });
 
+  it('a new subscription is billed in the venue currency, never in EGP for a Saudi venue', async () => {
+    const { svc, prisma } = build([]);
+    prisma.venueSubscription.findUnique.mockResolvedValue(null);
+    prisma.venueSubscription.create = jest.fn(async ({ data }: any) => data);
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'SAR' });
+    const sa: any = await svc.ensure('v-sa');
+    expect(sa).toMatchObject({ currency: 'SAR', planKey: 'pro', listPriceAmount: 0 });
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'EGP' });
+    const eg: any = await svc.ensure('v-eg');
+    expect(eg).toMatchObject({ currency: 'EGP', listPriceAmount: 200000 });
+  });
+
+  it('switching plan in a currency without a price list keeps the current list price', async () => {
+    const { svc, prisma } = build([sub({ currency: 'AED', listPriceAmount: 0 })]);
+    await svc.updateTerms(admin, 'v1', { planKey: 'starter' });
+    expect(prisma.venueSubscription.update.mock.calls[0][0].data).toMatchObject({ planKey: 'starter', listPriceAmount: 0 });
+  });
+
   it('switching plan moves the list price to the catalog price and audits both', async () => {
     const { svc, prisma } = build([sub()]);
     await svc.updateTerms(admin, 'v1', { planKey: 'starter' });

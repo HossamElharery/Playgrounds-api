@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsPhoneNumber,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -18,6 +19,10 @@ import { normalizeOptionalPhone } from '../../../common/utils/phone.util';
 
 function trimString(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
+}
+
+function upperCode(value: unknown): unknown {
+  return typeof value === 'string' ? value.trim().toUpperCase() : value;
 }
 
 function emptyToUndefined(value: unknown): unknown {
@@ -108,6 +113,16 @@ export class CreateVenueLeadDto {
   @IsString()
   @MaxLength(200)
   campaign?: string;
+
+  @ApiPropertyOptional({
+    example: 'SA',
+    description:
+      'Country the owner picked or the page guessed (ISO 3166-1 alpha-2).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => upperCode(value))
+  @Matches(/^[A-Z]{2}$/)
+  country?: string;
 
   @ApiPropertyOptional({ enum: ['ar', 'en'] })
   @IsOptional()
