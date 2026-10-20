@@ -18,7 +18,7 @@ import {
 import { DEFAULT_PLAN_KEY, planListPrice } from './subscription-plans';
 
 export const DEFAULT_LIST_PRICE = planListPrice(DEFAULT_PLAN_KEY, 'EGP') ?? 0; // 2,000 EGP in piasters
-export const DEFAULT_TRIAL_DAYS = 30;
+export const DEFAULT_TRIAL_DAYS = 15;
 
 function localDate(now: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);

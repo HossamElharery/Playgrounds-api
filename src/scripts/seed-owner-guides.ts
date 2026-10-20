@@ -52,8 +52,8 @@ const GUIDES: Guide[] = [
       'football pitch management, pitch booking system, five-a-side, booking notebook',
     relatedSportSlug: 'football',
     ctaHref: '/partners/football',
-    ctaLabelAr: 'جرّب سيستم ملاعب الكورة 30 يوم ببلاش',
-    ctaLabelEn: 'Try the football pitch system free for 30 days',
+    ctaLabelAr: 'جرّب سيستم ملاعب الكورة 15 يوم ببلاش',
+    ctaLabelEn: 'Try the football pitch system free for 15 days',
     contentAr: `
 <p>أغلب ملاعب الكورة في مصر لسه بتشتغل بدفتر على الشباك وموبايل صاحب الملعب. ده بيمشي لحد ما الملعب يبقى عليه ضغط: فريقين يوصلوا لنفس الميعاد، فلوس مش متسجلة، وساعات فاضية محدش واخد باله منها. الدليل ده بيقولك تنظّم الشغل إزاي خطوة بخطوة، بسيستم أو من غيره.</p>
 <h2>1. خلّي فيه مكان واحد بس للحجز</h2>
