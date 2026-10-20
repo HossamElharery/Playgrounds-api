@@ -66,5 +66,33 @@ describe('booking database integrity (e2e)', () => {
         },
       }),
     ).resolves.toMatchObject({ code: 'QA-NON-OVERLAP' });
+
+    // Manual bookings are stored under the owner who recorded them, so the
+    // one-player rule must not stop two walk-ins at the same hour on different
+    // courts, or a walk-in that overlaps the owner's own player booking.
+    const ownerVenue = await prisma.venue.create({
+      data: {
+        slug: 'qa-booking-owner-venue', ownerId: owner.id, countryCode: 'EG',
+        nameEn: 'QA Owner Venue', nameAr: 'ملعب المالك', lat: 30, lng: 31,
+        geohash: 'stq4', status: 'active', instantBook: true,
+      },
+    });
+    const [ownerCourtOne, ownerCourtTwo] = await Promise.all([
+      prisma.court.create({ data: { venueId: ownerVenue.id, sportId: sport.id, name: 'Court 1' } }),
+      prisma.court.create({ data: { venueId: ownerVenue.id, sportId: sport.id, name: 'Court 2' } }),
+    ]);
+    await prisma.booking.create({ data: booking(courtTwo.id, owner.id, 'QA-OWNER-PLAYS') });
+    const walkIn = (courtId: string, code: string) => ({
+      ...booking(courtId, owner.id, code), venueId: ownerVenue.id, source: 'manual' as const,
+    });
+    await expect(
+      prisma.booking.create({ data: walkIn(ownerCourtOne.id, 'QA-WALKIN-ONE') }),
+    ).resolves.toMatchObject({ code: 'QA-WALKIN-ONE' });
+    await expect(
+      prisma.booking.create({ data: walkIn(ownerCourtTwo.id, 'QA-WALKIN-TWO') }),
+    ).resolves.toMatchObject({ code: 'QA-WALKIN-TWO' });
+    await expect(
+      prisma.booking.create({ data: walkIn(ownerCourtOne.id, 'QA-WALKIN-COURT-OVERLAP') }),
+    ).rejects.toThrow(/Booking_court_slot_range_excl|23P01|Unique constraint/);
   });
 });
