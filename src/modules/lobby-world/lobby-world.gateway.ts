@@ -14,6 +14,7 @@ import { CLASSIC_MORPH_ID } from '../morphs/morph-catalog';
 import { lobbyMorphsEnabled } from '../morphs/morphs-flag';
 import { lobbyBallEnabled, lobbyMovementEnabled } from './lobby-world-flags';
 import { parseLobbyKick, parseLobbyMove } from './lobby-move.util';
+import { isChant, parseLevel, parseReport } from './dakhla-rules';
 import { LobbyWorldService, type BallSink } from './lobby-world.service';
 
 export const SNAPSHOT_DB_CHECK_MS = 1000;
@@ -166,11 +167,106 @@ export class LobbyWorldGateway
     if (target) this.world.declinePenalty(target.squadId, target.userId, Date.now());
   }
 
+  @SubscribeMessage('lobby.dak.start')
+  dakStart(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    const body = data as { chant?: unknown; level?: unknown } | null;
+    if (target && isChant(body?.chant))
+      this.world.startDakhla(target.squadId, target.userId, body.chant, parseLevel(body.level), Date.now());
+  }
+
+  @SubscribeMessage('lobby.dak.join')
+  dakJoin(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    const level = parseLevel((data as { level?: unknown } | null)?.level);
+    if (target) this.world.joinDakhla(target.squadId, target.userId, level, Date.now());
+  }
+
+  @SubscribeMessage('lobby.dak.go')
+  dakGo(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    if (target) this.world.goDakhla(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.dak.leave')
+  dakLeave(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    if (target) this.world.leaveDakhla(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.dak.cancel')
+  dakCancel(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    if (target) this.world.cancelDakhla(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.dak.report')
+  dakReport(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.gameTarget(client, data);
+    const report = parseReport(data);
+    if (target && report) this.world.reportDakhla(target.squadId, target.userId, report, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.start')
+  thiefStart(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.startThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.join')
+  thiefJoin(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.joinThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.go')
+  thiefGo(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.goThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.leave')
+  thiefLeave(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.leaveThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.cancel')
+  thiefCancel(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.cancelThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.tackle')
+  thiefTackle(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.tackleThief(target.squadId, target.userId, Date.now());
+  }
+
+  @SubscribeMessage('lobby.thief.dodge')
+  thiefDodge(@ConnectedSocket() client: Socket, @MessageBody() data: unknown): void {
+    const target = this.penTarget(client, data);
+    if (target) this.world.dodgeThief(target.squadId, target.userId, Date.now());
+  }
+
+  /** The lobby games without the ball only need the lobby world (movement). */
+  private gameTarget(client: Socket, data: unknown): { squadId: string; userId: string } | null {
+    if (!lobbyMovementEnabled(this.config)) return null;
+    return this.roomTarget(client, data);
+  }
+
   private penTarget(
     client: Socket,
     data: unknown,
   ): { squadId: string; userId: string } | null {
     if (!lobbyBallEnabled(this.config)) return null;
+    return this.roomTarget(client, data);
+  }
+
+  private roomTarget(
+    client: Socket,
+    data: unknown,
+  ): { squadId: string; userId: string } | null {
     const userId = authedUserId(client);
     const squadId = (data as { squadId?: unknown } | null)?.squadId;
     if (
