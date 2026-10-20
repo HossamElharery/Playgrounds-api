@@ -73,6 +73,12 @@ function futureStart(tz: string, days = 3, hhmm = '20:00') {
   return sessionWindow(d, hhmm, 60, tz).start.toISOString();
 }
 
+/** The same local time N weeks after futureStart(); adding 7 × 24 h drifts by an hour across a DST change. */
+function weekLater(tz: string, weeks: number, days = 3, hhmm = '20:00') {
+  const d = addDays(new Date().toISOString().slice(0, 10), days + 7 * weeks);
+  return sessionWindow(d, hhmm, 60, tz).start;
+}
+
 const base = (tz: string, extra: object = {}) => ({
   venueId: 'v1', courtId: 'c1', startsAt: futureStart(tz), durationMinutes: 60, weeks: 4, ...extra,
 });
@@ -92,7 +98,7 @@ describe('FixedBookingsService', () => {
   it('previews every date, with quoted prices and a clash flagged', async () => {
     const { svc, bookings, tz } = setup();
     const dto = base(tz);
-    const second = new Date(new Date(dto.startsAt).getTime() + 7 * 86_400_000);
+    const second = weekLater(tz, 1);
     bookings.push({ id: 'x', courtId: 'c1', status: 'confirmed', slotStart: second, slotEnd: new Date(second.getTime() + 3_600_000) });
     const out = await svc.preview(owner, dto);
     expect(out.sessions).toHaveLength(4);
@@ -104,7 +110,7 @@ describe('FixedBookingsService', () => {
   it('books the free dates, skips the clash and records it once', async () => {
     const { svc, bookings, series, tz } = setup();
     const dto = base(tz);
-    const second = new Date(new Date(dto.startsAt).getTime() + 7 * 86_400_000);
+    const second = weekLater(tz, 1);
     bookings.push({ id: 'x', courtId: 'c1', status: 'confirmed', slotStart: second, slotEnd: new Date(second.getTime() + 3_600_000) });
     const out = await svc.create(owner, { ...dto, customerName: 'الأهلي' });
     expect(out.created).toBe(3);
