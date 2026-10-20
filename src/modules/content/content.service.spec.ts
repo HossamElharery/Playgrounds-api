@@ -163,3 +163,39 @@ describe('ContentService account deletion requests', () => {
     expect(res.requestedAt.toISOString()).toBe('2026-10-13T10:00:00.000Z');
   });
 });
+
+describe('ContentService blog pagination', () => {
+  it('pages with a stable order and reports totals for the pager', async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: 'b' }]);
+    const count = jest.fn().mockResolvedValue(25);
+    const service = new ContentService(
+      { blogPost: { findMany, count } } as never,
+      { notifyUrls: jest.fn() } as never,
+      {} as never,
+    );
+
+    const { pagination } = await service.listBlogPosts(3, 10, 'published', 'cat-1');
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: 'published', categoryId: 'cat-1' },
+        skip: 20,
+        take: 10,
+        orderBy: [
+          { publishedAt: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
+      }),
+    );
+    expect(count).toHaveBeenCalledWith({ where: { status: 'published', categoryId: 'cat-1' } });
+    expect(pagination).toEqual({
+      currentPage: 3,
+      perPage: 10,
+      total: 25,
+      noOfPages: 3,
+      hasNextPage: false,
+      hasPrevPage: true,
+    });
+  });
+});

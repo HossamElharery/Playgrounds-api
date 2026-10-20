@@ -62,9 +62,11 @@ export class ContentService {
         },
         skip: (page - 1) * perPage,
         take: perPage,
+        // `id` breaks ties so posts sharing a publish time never repeat or vanish between pages.
         orderBy: [
           { publishedAt: { sort: 'desc', nulls: 'last' } },
           { createdAt: 'desc' },
+          { id: 'desc' },
         ],
       }),
       this.prisma.blogPost.count({ where }),
