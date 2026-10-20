@@ -94,7 +94,7 @@ export class LlmsService {
       ['/partners', 'Venue management system (for owners)', 'Booking, calendar, cash shifts, staff and profit reports for football, padel and gaming venues. Free trial, plans from 1,000 EGP a month.'],
       ['/partners/pricing', 'Plans and pricing for venues', 'Starter, Pro and Business plans per venue, plus gaming-lounge plans. Annual billing pays 10 months for 12.'],
       ['/partners/football', 'Football pitch management', 'Five- and seven-a-side bookings, fixed weekly slots, deposits and tournaments.'],
-      ['/partners/padel', 'Padel court management', 'Per-court prices, peak hours, 90-minute slots and split payments.'],
+      ['/partners/padel', 'Padel court management', 'Per-court prices, peak hours, 90-minute slots and prepaid app bookings.'],
       ['/partners/gaming', 'PlayStation and billiards lounge system', 'Device timers, a live floor board, cafe stock and printed receipts.'],
       ['/partners/vs-whatsapp', 'Notebook and WhatsApp vs a booking system', 'What changes when a venue moves bookings off paper and chat.'],
       ['/about', 'About', 'Who we are and what Matchena does.'],
