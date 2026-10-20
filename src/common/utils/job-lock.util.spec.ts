@@ -1,8 +1,11 @@
 import { withJobLock } from './job-lock.util';
 
 function fakePrisma(locked: boolean) {
-  const tx = { $queryRaw: jest.fn().mockResolvedValue([{ locked }]) };
-  return { $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)) } as any;
+  const queryRaw = jest
+    .fn()
+    .mockResolvedValueOnce(locked ? [{ name: 'x' }] : [])
+    .mockResolvedValue([]);
+  return { $queryRaw: queryRaw } as any;
 }
 
 describe('withJobLock', () => {
@@ -18,7 +21,7 @@ describe('withJobLock', () => {
     expect(work).not.toHaveBeenCalled();
   });
 
-  it('propagates a job failure (so the lock transaction rolls back)', async () => {
+  it('propagates a job failure and releases the lease', async () => {
     await expect(withJobLock(fakePrisma(true), 'x', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
   });
 });
