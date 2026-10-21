@@ -4,11 +4,9 @@ const sharp: typeof import('sharp').default = require('sharp');
 export type UploadPurpose = 'cover' | 'inline' | 'general';
 export const UPLOAD_PURPOSE_RULES: Record<
   UploadPurpose,
-  { minWidth: number; recommendedWidth: number; recommendedHeight?: number }
+  { minWidth: number; recommendedWidth: number }
 > = {
-  // Matchena blog cover ratio: 1584×672 (2.357:1). Keep 1200px as the
-  // hard minimum, while treating the CMS's standard upload size as sharp.
-  cover: { minWidth: 1200, recommendedWidth: 1584, recommendedHeight: 672 },
+  cover: { minWidth: 1200, recommendedWidth: 1600 },
   inline: { minWidth: 640, recommendedWidth: 1200 },
   general: { minWidth: 0, recommendedWidth: 0 },
 };
@@ -44,13 +42,10 @@ export async function prepareUploadImage(
     throw new UnprocessableEntityException('The file is not a readable image');
 
   const rules = UPLOAD_PURPOSE_RULES[purpose];
-  const recommendedSize = rules.recommendedHeight
-    ? `${rules.recommendedWidth}×${rules.recommendedHeight}`
-    : `${rules.recommendedWidth}px`;
   if (srcWidth < rules.minWidth) {
     throw new UnprocessableEntityException(
       `Image is too small (${srcWidth}px wide). Upload at least ${rules.minWidth}px wide ` +
-        `(${recommendedSize} or larger recommended).`,
+        `(${rules.recommendedWidth}px or more recommended).`,
     );
   }
 
@@ -83,7 +78,7 @@ export async function prepareUploadImage(
   const warnings: string[] = [];
   if (width < rules.recommendedWidth) {
     warnings.push(
-      `low_resolution: ${width}px wide; ${recommendedSize} or larger recommended for sharp display`,
+      `low_resolution: ${width}px wide; ${rules.recommendedWidth}px or more recommended for sharp display`,
     );
   }
   return { buffer, mimeType, width, height, warnings };

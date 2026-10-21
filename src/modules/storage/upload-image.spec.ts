@@ -30,7 +30,7 @@ describe('prepareUploadImage', () => {
 
   it('does not warn at the recommended width', async () => {
     const out = await prepareUploadImage(
-      await png(1584, 672),
+      await png(1700, 700),
       'image/png',
       'cover',
     );
