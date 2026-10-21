@@ -935,7 +935,8 @@ export class OwnerController {
     return this.bookings.verifyVenueQr(user, dto);
   }
 
-  @RequirePermission('bookings.view')
+  // Messaging a customer needs their number, so the same right that shows phones.
+  @RequirePermission('customers.view')
   @Post('bookings/:id/customer-message')
   @ApiOperation({ summary: 'Record that a WhatsApp message (confirm / reminder / balance) was opened for this booking\'s customer' })
   recordCustomerMessage(

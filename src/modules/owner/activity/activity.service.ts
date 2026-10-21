@@ -125,7 +125,13 @@ export function describeActivity(
     case 'owner.booking.customer_messaged': {
       const cust = str(m.customer);
       const what =
-        m.kind === 'confirm' ? bi('تأكيد الحجز', 'a booking confirmation') : m.kind === 'balance' ? bi('تذكير بالمبلغ', 'a balance reminder') : bi('تذكير بالميعاد', 'a reminder');
+        m.kind === 'confirm'
+          ? bi('تأكيد الحجز', 'a booking confirmation')
+          : m.kind === 'balance'
+            ? bi('تذكير بالمبلغ', 'a balance reminder')
+            : m.kind === 'cancel'
+              ? bi('خبر إلغاء الحجز', 'the cancellation')
+              : bi('تذكير بالميعاد', 'a reminder');
       return {
         kind: 'booking',
         text: (who) =>

@@ -52,6 +52,7 @@ describe('describeActivity — a decision in a sentence', () => {
       en: 'Sara sent a reminder on WhatsApp to Ahmed (MAN-1)',
     });
     expect(describeActivity('owner.booking.customer_messaged', { kind: 'confirm' }, 'EGP').text({ ar: 'أ', en: 'A' }).ar).toBe('أ بعت تأكيد الحجز على واتساب');
+    expect(describeActivity('owner.booking.customer_messaged', { kind: 'cancel', customer: 'Ali' }, 'EGP').text({ ar: 'أ', en: 'A' }).ar).toBe('أ بعت خبر إلغاء الحجز على واتساب لـ Ali');
   });
 
   it('an expense category is a word, never the raw key', () => {

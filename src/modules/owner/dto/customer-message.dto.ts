@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn } from 'class-validator';
 
-export const CUSTOMER_MESSAGE_KINDS = ['confirm', 'reminder', 'balance'] as const;
+export const CUSTOMER_MESSAGE_KINDS = ['confirm', 'reminder', 'balance', 'cancel'] as const;
 export type CustomerMessageKind = (typeof CUSTOMER_MESSAGE_KINDS)[number];
 
 export class CustomerMessageDto {
