@@ -45,6 +45,15 @@ describe('describeActivity — a decision in a sentence', () => {
     expect(say('owner.booking.cancelled', { code: 'MAN-4' }, 'EGP').en).toBe('Ahmed cancelled booking MAN-4');
   });
 
+  it('a WhatsApp message to the customer says what was sent, to whom', () => {
+    const d = describeActivity('owner.booking.customer_messaged', { kind: 'reminder', customer: 'Ahmed', code: 'MAN-1' }, 'EGP');
+    expect(d.text({ ar: 'سارة', en: 'Sara' })).toEqual({
+      ar: 'سارة بعت تذكير بالميعاد على واتساب لـ Ahmed (MAN-1)',
+      en: 'Sara sent a reminder on WhatsApp to Ahmed (MAN-1)',
+    });
+    expect(describeActivity('owner.booking.customer_messaged', { kind: 'confirm' }, 'EGP').text({ ar: 'أ', en: 'A' }).ar).toBe('أ بعت تأكيد الحجز على واتساب');
+  });
+
   it('an expense category is a word, never the raw key', () => {
     const t = say('owner.expense.recorded', { category: 'electricity', amount: 5_050, currency: 'EGP' }, 'EGP');
     expect(t.ar).toBe('أحمد سجّل مصروف كهرباء 50.5 ج.م');

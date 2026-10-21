@@ -552,6 +552,8 @@ model Venue {
   cancellationPolicy       String?          @db.Text
   weeklyHours              Json?
   contactPhone             String?
+  /// The venue's own line added to customer WhatsApp messages (parking, what to bring…).
+  customerMessageNote      String?          @db.Text
   legalBusinessName        String?
   registrationNumber       String?
   houseRules               String?          @db.Text
@@ -828,6 +830,9 @@ model Booking {
   isSplitPayment      Boolean                 @default(false)
   qrPayload           String?                 @unique
   checkedInAt         DateTime?
+  /// Last WhatsApp message the venue opened for this customer (confirm | reminder | balance), so staff don't send twice.
+  customerMessagedAt  DateTime?
+  customerMessageKind String?
   checkedInByUserId   String?
   cancelledAt         DateTime?
   cancellationReason  String?

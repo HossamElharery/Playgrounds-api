@@ -185,7 +185,7 @@ export class VenuesService {
     venueId: string,
     ownerId: string,
     isPrivileged: boolean,
-    dto: UpdateVenueDto & { contactPhone?: string | null },
+    dto: UpdateVenueDto & { contactPhone?: string | null; customerMessageNote?: string | null },
   ) {
     await this.assertOwnership(venueId, ownerId, isPrivileged);
     if (dto.sportIds && !isPrivileged) {
@@ -241,6 +241,7 @@ export class VenuesService {
         governorateId: dto.governorateId,
         address: dto.address,
         contactPhone: dto.contactPhone,
+        customerMessageNote: dto.customerMessageNote === undefined ? undefined : dto.customerMessageNote || null,
         surface: dto.surface,
         instantBook: dto.instantBook,
         cancellationPolicy: dto.cancellationPolicy,

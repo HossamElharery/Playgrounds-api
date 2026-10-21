@@ -14,6 +14,7 @@ export const ACTIVITY_ACTIONS = [
   'owner.booking.payment_recorded',
   'owner.booking.payment_voided',
   'owner.booking.change_requested',
+  'owner.booking.customer_messaged',
   'owner.shift.opened',
   'owner.shift.closed',
   'owner.shift.reviewed',
@@ -119,6 +120,19 @@ export function describeActivity(
       return {
         kind: 'booking',
         text: (who) => bi(`${who.ar} لغى ${r.ar}${arMoney}${arKept}`, `${who.en} cancelled ${r.en}${enMoney}${enKept}`),
+      };
+    }
+    case 'owner.booking.customer_messaged': {
+      const cust = str(m.customer);
+      const what =
+        m.kind === 'confirm' ? bi('تأكيد الحجز', 'a booking confirmation') : m.kind === 'balance' ? bi('تذكير بالمبلغ', 'a balance reminder') : bi('تذكير بالميعاد', 'a reminder');
+      return {
+        kind: 'booking',
+        text: (who) =>
+          bi(
+            `${who.ar} بعت ${what.ar} على واتساب${cust ? ` لـ ${cust}` : ''}${code ? ` (${code})` : ''}`,
+            `${who.en} sent ${what.en} on WhatsApp${cust ? ` to ${cust}` : ''}${code ? ` (${code})` : ''}`,
+          ),
       };
     }
     case 'owner.booking.restored': {

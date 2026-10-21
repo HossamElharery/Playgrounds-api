@@ -33,6 +33,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { OwnerService } from './owner.service';
 import { CreateWalkInDto } from './dto/walk-in.dto';
+import { CustomerMessageDto } from './dto/customer-message.dto';
 import {
   CreateAssistantMessageDto,
   CreateCalendarBlockDto,
@@ -932,6 +933,17 @@ export class OwnerController {
     @Body() dto: VerifyVenueQrDto,
   ) {
     return this.bookings.verifyVenueQr(user, dto);
+  }
+
+  @RequirePermission('bookings.view')
+  @Post('bookings/:id/customer-message')
+  @ApiOperation({ summary: 'Record that a WhatsApp message (confirm / reminder / balance) was opened for this booking\'s customer' })
+  recordCustomerMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: CustomerMessageDto,
+  ) {
+    return this.ownerBookings.recordCustomerMessage(user, id, dto.kind);
   }
 
   @RequirePermission('bookings.checkin')

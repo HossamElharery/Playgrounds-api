@@ -411,6 +411,43 @@ describe('OwnerBookingsService', () => {
     });
   });
 
+  describe('WhatsApp messages to the customer', () => {
+    it('remembers the last message on the booking and logs who sent it', async () => {
+      const { prisma, tx } = makePrisma();
+      await service(prisma).recordCustomerMessage(owner, 'b1', 'reminder');
+      expect(tx.booking.update).toHaveBeenCalledWith({
+        where: { id: 'b1' },
+        data: { customerMessagedAt: expect.any(Date), customerMessageKind: 'reminder' },
+      });
+      expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'owner.booking.customer_messaged',
+          actorUserId: owner.id,
+          metadata: expect.objectContaining({ kind: 'reminder', customer: 'Ahmed', code: 'MAN-ABC' }),
+        }),
+      });
+    });
+
+    it('refuses a booking with no phone to message (or a Matchena booking)', async () => {
+      for (const booking of [bookingRow({ guestPhone: null }), bookingRow({ source: 'platform' })]) {
+        const { prisma, tx } = makePrisma({ booking });
+        prisma.booking.findUnique.mockResolvedValue(booking);
+        await expect(service(prisma).recordCustomerMessage(owner, 'b1', 'confirm')).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'NO_CUSTOMER_PHONE' }),
+        });
+        expect(tx.booking.update).not.toHaveBeenCalled();
+      }
+    });
+
+    it('returns the last message on the booking', async () => {
+      const booking = bookingRow({ customerMessagedAt: new Date('2026-09-20T15:00:00Z'), customerMessageKind: 'confirm' });
+      const { prisma } = makePrisma({ booking });
+      prisma.booking.findUnique.mockResolvedValue(booking);
+      const dto = await service(prisma).getBooking(owner, 'b1');
+      expect(dto.customerMessage).toEqual({ kind: 'confirm', at: '2026-09-20T15:00:00.000Z' });
+    });
+  });
+
   it('restores a cancelled manual booking when the slot is free', async () => {
     const cancelled = bookingRow({ status: 'cancelled' });
     const { prisma } = makePrisma({ booking: cancelled });

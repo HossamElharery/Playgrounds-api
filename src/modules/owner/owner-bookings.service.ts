@@ -1,4 +1,5 @@
 import { GAMING_BOOKING_MONEY_SELECT,gamingBookingPayments } from './gaming/booking-gaming-money';
+import type { CustomerMessageKind } from './dto/customer-message.dto';
 import { assertActivityDuration, usesMinuteTiming } from '../../common/utils/activity-timing.util';
 import { rethrowConcurrentWrite } from '../../common/utils/transaction-error.util';
 import { isSafeReceiptUrl } from '../../common/utils/receipt-url.util';
@@ -749,6 +750,36 @@ export class OwnerBookingsService {
     return this.toOwnerBookingDto(updated, user);
   }
 
+  /**
+   * The venue opened a WhatsApp message to its own customer (click-to-chat: the
+   * owner's phone sends it). Remember it on the booking and in the activity log,
+   * so the next person on the desk can see it was already sent.
+   */
+  async recordCustomerMessage(user: AuthenticatedUser, bookingId: string, kind: CustomerMessageKind) {
+    const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
+    if (booking.source !== 'manual' || !booking.guestPhone) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, 'NO_CUSTOMER_PHONE', 'This booking has no customer phone to message');
+    }
+    const at = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.booking.update({
+        where: { id: bookingId },
+        data: { customerMessagedAt: at, customerMessageKind: kind },
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          actorUserId: user.id,
+          action: 'owner.booking.customer_messaged',
+          targetType: 'booking',
+          targetId: bookingId,
+          metadata: { bookingId, venueId: booking.venueId, code: booking.code, customer: booking.guestName, kind } as Prisma.InputJsonValue,
+        },
+      });
+      return row;
+    });
+    return this.toOwnerBookingDto(updated, user);
+  }
+
   async restoreManualBooking(user: AuthenticatedUser, bookingId: string) {
     const { booking } = await assertBookingAccess(this.prisma, user, bookingId, { write: true });
     if (booking.source === 'platform') {
@@ -1399,6 +1430,8 @@ export class OwnerBookingsService {
     paymentMethod: Booking['paymentMethod'];
     notes: string | null;
     checkedInAt: Date | null;
+    customerMessagedAt?: Date | null;
+    customerMessageKind?: string | null;
     currency: string;
     bundleId?: string | null;
     payments?: { amount: number }[];
@@ -1453,6 +1486,10 @@ export class OwnerBookingsService {
       paymentMethod: b.paymentMethod,
       notes: b.notes,
       checkedInAt: b.checkedInAt?.toISOString() ?? null,
+      customerMessage:
+        b.customerMessagedAt && b.customerMessageKind
+          ? { kind: b.customerMessageKind, at: b.customerMessagedAt.toISOString() }
+          : null,
       bundleId: b.bundleId ?? null,
       receiptsEnabled:b.venue?.gamingReceiptsEnabled??false,
       gamingOrderId:b.usageSession?.orderId??null,
