@@ -543,6 +543,18 @@ export function acceptPaint(m: CamoMatch, eid: string, strokes: readonly WireStr
   return acceptStrokes(p.paint, strokes);
 }
 
+/** The player redrew their whole paint (undo / clear): the book is replaced by what the server accepts. */
+export function resetPaint(m: CamoMatch, eid: string, strokes: readonly WireStroke[], now: number): { accepted: WireStroke[]; rejected: number } | null {
+  const p = playerById(m, eid);
+  if (!p || p.role !== 'hider' || !p.alive) return null;
+  const inPrep = m.phase === 'prep';
+  const inTouchUp = m.phase === 'hunt' && now < p.touchUpUntil;
+  if (!inPrep && !inTouchUp) return null;
+  p.lastInputAt = now;
+  p.paint = emptyPaintBook();
+  return acceptStrokes(p.paint, strokes);
+}
+
 /** The single 5 s repair touch of the hunt (section 5.1). */
 export function beginTouchUp(m: CamoMatch, eid: string, now: number): boolean {
   const p = playerById(m, eid);

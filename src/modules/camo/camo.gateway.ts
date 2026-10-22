@@ -199,6 +199,12 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return (await this.input(client, (u) => this.camo.host.paint(u, bytes))) ?? { accepted: 0, rejected: 0 };
   }
 
+  @SubscribeMessage('camo.paint.reset')
+  async paintReset(@ConnectedSocket() client: Socket, @MessageBody() d: unknown): Promise<unknown> {
+    const bytes = (d as { bytes?: unknown } | null)?.bytes ?? d;
+    return (await this.input(client, (u) => this.camo.host.paintReset(u, bytes))) ?? { accepted: 0, rejected: 0 };
+  }
+
   @SubscribeMessage('camo.touchup')
   async touchup(@ConnectedSocket() client: Socket): Promise<unknown> {
     return { ok: !!(await this.input(client, (u) => this.camo.host.touchUp(u))) };

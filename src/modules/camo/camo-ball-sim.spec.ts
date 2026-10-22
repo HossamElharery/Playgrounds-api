@@ -44,7 +44,7 @@ describe('camo ball sim', () => {
   it('matches the shared fixture the client also checks (to 1e-6)', () => {
     const file = join(__dirname, 'camo-ball-sim.fixture.json');
     const current = Object.fromEntries(SCENARIOS.map((s) => [s.name, summary(run(s))]));
-    if (!existsSync(file)) writeFileSync(file, JSON.stringify({ scenarios: SCENARIOS, expected: current }, null, 1));
+    if (!existsSync(file)) writeFileSync(file, JSON.stringify({ room: { bounds: room.bounds, colliders: room.colliders }, scenarios: SCENARIOS, expected: current }, null, 1));
     const fixture = JSON.parse(readFileSync(file, 'utf8')) as { expected: typeof current };
     expect(current).toEqual(fixture.expected);
   });

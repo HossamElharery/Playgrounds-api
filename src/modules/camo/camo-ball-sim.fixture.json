@@ -1,4 +1,1004 @@
 {
+ "room": {
+  "bounds": {
+   "minX": -18,
+   "maxX": 18,
+   "minZ": -13,
+   "maxZ": 13
+  },
+  "colliders": [
+   {
+    "id": "wall-n",
+    "minX": -18.4,
+    "maxX": 18.4,
+    "minZ": -13.4,
+    "maxZ": -13,
+    "minY": 0,
+    "maxY": 4,
+    "material": "concrete"
+   },
+   {
+    "id": "wall-s",
+    "minX": -18.4,
+    "maxX": 18.4,
+    "minZ": 13,
+    "maxZ": 13.4,
+    "minY": 0,
+    "maxY": 4,
+    "material": "concrete"
+   },
+   {
+    "id": "wall-w",
+    "minX": -18.4,
+    "maxX": -18,
+    "minZ": -13,
+    "maxZ": 13,
+    "minY": 0,
+    "maxY": 4,
+    "material": "concrete"
+   },
+   {
+    "id": "wall-e",
+    "minX": 18,
+    "maxX": 18.4,
+    "minZ": -13,
+    "maxZ": 13,
+    "minY": 0,
+    "maxY": 4,
+    "material": "concrete"
+   },
+   {
+    "id": "lk-n1-0",
+    "minX": -15.6,
+    "maxX": -14.999999999999998,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-1",
+    "minX": -15,
+    "maxX": -14.399999999999999,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-2",
+    "minX": -14.4,
+    "maxX": -13.799999999999999,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-3",
+    "minX": -13.8,
+    "maxX": -13.2,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-4",
+    "minX": -13.2,
+    "maxX": -12.599999999999998,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-5",
+    "minX": -12.6,
+    "maxX": -11.999999999999998,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-6",
+    "minX": -12,
+    "maxX": -11.399999999999999,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-7",
+    "minX": -11.399999999999999,
+    "maxX": -10.799999999999997,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-8",
+    "minX": -10.8,
+    "maxX": -10.2,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-9",
+    "minX": -10.2,
+    "maxX": -9.599999999999998,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-10",
+    "minX": -9.6,
+    "maxX": -8.999999999999998,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-11",
+    "minX": -9,
+    "maxX": -8.399999999999999,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-12",
+    "minX": -8.4,
+    "maxX": -7.8,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n1-13",
+    "minX": -7.8,
+    "maxX": -7.2,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-0",
+    "minX": 4.2,
+    "maxX": 4.8,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-1",
+    "minX": 4.8,
+    "maxX": 5.3999999999999995,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-2",
+    "minX": 5.4,
+    "maxX": 6,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-3",
+    "minX": 6,
+    "maxX": 6.6,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-4",
+    "minX": 6.6,
+    "maxX": 7.199999999999999,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-5",
+    "minX": 7.2,
+    "maxX": 7.8,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-6",
+    "minX": 7.8,
+    "maxX": 8.4,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-7",
+    "minX": 8.4,
+    "maxX": 9.000000000000002,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-8",
+    "minX": 9,
+    "maxX": 9.600000000000001,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-9",
+    "minX": 9.6,
+    "maxX": 10.200000000000001,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-10",
+    "minX": 10.2,
+    "maxX": 10.8,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-11",
+    "minX": 10.8,
+    "maxX": 11.400000000000002,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-12",
+    "minX": 11.399999999999999,
+    "maxX": 12,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-n2-13",
+    "minX": 12,
+    "maxX": 12.600000000000001,
+    "minZ": -13,
+    "maxZ": -12.5,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-0",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -9,
+    "maxZ": -8.399999999999999,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-1",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -8.4,
+    "maxZ": -7.8,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-2",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -7.8,
+    "maxZ": -7.2,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-3",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -7.2,
+    "maxZ": -6.6000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-4",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -6.6,
+    "maxZ": -6,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-5",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -6,
+    "maxZ": -5.4,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-6",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -5.4,
+    "maxZ": -4.800000000000001,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-7",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -4.8,
+    "maxZ": -4.2,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-8",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -4.2,
+    "maxZ": -3.6000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-9",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -3.6000000000000005,
+    "maxZ": -3.000000000000001,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-10",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -3,
+    "maxZ": -2.4000000000000004,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-w-11",
+    "minX": -18,
+    "maxX": -17.5,
+    "minZ": -2.4000000000000004,
+    "maxZ": -1.8000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-0",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -9,
+    "maxZ": -8.399999999999999,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-1",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -8.4,
+    "maxZ": -7.8,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-2",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -7.8,
+    "maxZ": -7.2,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-3",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -7.2,
+    "maxZ": -6.6000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-4",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -6.6,
+    "maxZ": -6,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-5",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -6,
+    "maxZ": -5.4,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-6",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -5.4,
+    "maxZ": -4.800000000000001,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-7",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -4.8,
+    "maxZ": -4.2,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-8",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -4.2,
+    "maxZ": -3.6000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-9",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -3.6000000000000005,
+    "maxZ": -3.000000000000001,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-10",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -3,
+    "maxZ": -2.4000000000000004,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "lk-e-11",
+    "minX": 17.5,
+    "maxX": 18,
+    "minZ": -2.4000000000000004,
+    "maxZ": -1.8000000000000005,
+    "minY": 0,
+    "maxY": 2,
+    "material": "metal"
+   },
+   {
+    "id": "bench54",
+    "minX": -13.3,
+    "maxX": -10.7,
+    "minZ": -9.25,
+    "maxZ": -8.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench57",
+    "minX": -7.3,
+    "maxX": -4.7,
+    "minZ": -9.25,
+    "maxZ": -8.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench60",
+    "minX": -1.3,
+    "maxX": 1.3,
+    "minZ": -9.25,
+    "maxZ": -8.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench63",
+    "minX": 4.7,
+    "maxX": 7.3,
+    "minZ": -9.25,
+    "maxZ": -8.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench66",
+    "minX": 10.7,
+    "maxX": 13.3,
+    "minZ": -9.25,
+    "maxZ": -8.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench69",
+    "minX": -15.25,
+    "maxX": -14.75,
+    "minZ": -6.3,
+    "maxZ": -3.7,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench72",
+    "minX": 14.75,
+    "maxX": 15.25,
+    "minZ": -6.3,
+    "maxZ": -3.7,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench75",
+    "minX": -15.25,
+    "maxX": -14.75,
+    "minZ": -2.3,
+    "maxZ": 0.30000000000000004,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench78",
+    "minX": 14.75,
+    "maxX": 15.25,
+    "minZ": -2.3,
+    "maxZ": 0.30000000000000004,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench81",
+    "minX": -15.25,
+    "maxX": -14.75,
+    "minZ": 1.7,
+    "maxZ": 4.3,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench84",
+    "minX": 14.75,
+    "maxX": 15.25,
+    "minZ": 1.7,
+    "maxZ": 4.3,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench87",
+    "minX": -10.5,
+    "maxX": -7.5,
+    "minZ": 1.75,
+    "maxZ": 2.25,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench90",
+    "minX": -10.5,
+    "maxX": -7.5,
+    "minZ": 5.25,
+    "maxZ": 5.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench93",
+    "minX": 7.5,
+    "maxX": 10.5,
+    "minZ": 1.75,
+    "maxZ": 2.25,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench96",
+    "minX": 7.5,
+    "maxX": 10.5,
+    "minZ": 5.25,
+    "maxZ": 5.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "bench99",
+    "minX": -1.5,
+    "maxX": 1.5,
+    "minZ": 6.25,
+    "maxZ": 6.75,
+    "minY": 0,
+    "maxY": 0.45,
+    "material": "wood"
+   },
+   {
+    "id": "tactics-table",
+    "minX": -1.3,
+    "maxX": 1.3,
+    "minZ": -1.6,
+    "maxZ": -0.4,
+    "minY": 0,
+    "maxY": 0.9,
+    "material": "wood"
+   },
+   {
+    "id": "tactics-board",
+    "minX": -1.2,
+    "maxX": 1.2,
+    "minZ": -4.275,
+    "maxZ": -4.125,
+    "minY": 0,
+    "maxY": 1.8,
+    "material": "metal"
+   },
+   {
+    "id": "ice-tub",
+    "minX": -8.9,
+    "maxX": -7.1,
+    "minZ": 11.05,
+    "maxZ": 11.95,
+    "minY": 0,
+    "maxY": 0.9,
+    "material": "metal"
+   },
+   {
+    "id": "ball-net-1",
+    "minX": 13,
+    "maxX": 14,
+    "minZ": 9.5,
+    "maxZ": 10.5,
+    "minY": 0,
+    "maxY": 1.1,
+    "material": "cloth"
+   },
+   {
+    "id": "ball-net-2",
+    "minX": 14.5,
+    "maxX": 15.5,
+    "minZ": 7.3,
+    "maxZ": 8.3,
+    "minY": 0,
+    "maxY": 1.1,
+    "material": "cloth"
+   },
+   {
+    "id": "crate107",
+    "minX": -5.35,
+    "maxX": -4.65,
+    "minZ": 9.75,
+    "maxZ": 10.25,
+    "minY": 0,
+    "maxY": 0.5,
+    "material": "wood"
+   },
+   {
+    "id": "crate109",
+    "minX": -3.35,
+    "maxX": -2.65,
+    "minZ": 10.55,
+    "maxZ": 11.05,
+    "minY": 0,
+    "maxY": 0.5,
+    "material": "wood"
+   },
+   {
+    "id": "crate111",
+    "minX": 2.65,
+    "maxX": 3.35,
+    "minZ": 9.75,
+    "maxZ": 10.25,
+    "minY": 0,
+    "maxY": 0.5,
+    "material": "wood"
+   },
+   {
+    "id": "crate113",
+    "minX": 4.65,
+    "maxX": 5.35,
+    "minZ": 10.55,
+    "maxZ": 11.05,
+    "minY": 0,
+    "maxY": 0.5,
+    "material": "wood"
+   },
+   {
+    "id": "crate115",
+    "minX": 7.65,
+    "maxX": 8.35,
+    "minZ": 8.75,
+    "maxZ": 9.25,
+    "minY": 0,
+    "maxY": 0.5,
+    "material": "wood"
+   },
+   {
+    "id": "cone117",
+    "minX": -7.15,
+    "maxX": -6.85,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone119",
+    "minX": -6.25,
+    "maxX": -5.949999999999999,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone121",
+    "minX": -5.3500000000000005,
+    "maxX": -5.05,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone123",
+    "minX": -4.45,
+    "maxX": -4.1499999999999995,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone125",
+    "minX": -3.55,
+    "maxX": -3.25,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone127",
+    "minX": -2.65,
+    "maxX": -2.35,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone129",
+    "minX": -1.7499999999999996,
+    "maxX": -1.4499999999999997,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "cone131",
+    "minX": -0.8500000000000002,
+    "maxX": -0.5500000000000002,
+    "minZ": 11.049999999999999,
+    "maxZ": 11.35,
+    "minY": 0,
+    "maxY": 0.4,
+    "material": "cloth"
+   },
+   {
+    "id": "shower-wall133",
+    "minX": 10.25,
+    "maxX": 10.350000000000001,
+    "minZ": 9.3,
+    "maxZ": 11.7,
+    "minY": 0,
+    "maxY": 2,
+    "material": "tile"
+   },
+   {
+    "id": "shower-wall135",
+    "minX": 11.85,
+    "maxX": 11.950000000000001,
+    "minZ": 9.3,
+    "maxZ": 11.7,
+    "minY": 0,
+    "maxY": 2,
+    "material": "tile"
+   },
+   {
+    "id": "shower-wall137",
+    "minX": 13.45,
+    "maxX": 13.55,
+    "minZ": 9.3,
+    "maxZ": 11.7,
+    "minY": 0,
+    "maxY": 2,
+    "material": "tile"
+   },
+   {
+    "id": "shower-wall139",
+    "minX": 15.05,
+    "maxX": 15.150000000000002,
+    "minZ": 9.3,
+    "maxZ": 11.7,
+    "minY": 0,
+    "maxY": 2,
+    "material": "tile"
+   },
+   {
+    "id": "shower-wall141",
+    "minX": 16.65,
+    "maxX": 16.75,
+    "minZ": 9.3,
+    "maxZ": 11.7,
+    "minY": 0,
+    "maxY": 2,
+    "material": "tile"
+   },
+   {
+    "id": "shower-back",
+    "minX": 9.200000000000001,
+    "maxX": 17.4,
+    "minZ": 12.1,
+    "maxZ": 12.299999999999999,
+    "minY": 0,
+    "maxY": 2.4,
+    "material": "tile"
+   },
+   {
+    "id": "ref-n",
+    "minX": -17.8,
+    "maxX": -14.4,
+    "minZ": 8.5,
+    "maxZ": 8.7,
+    "minY": 0,
+    "maxY": 2.6,
+    "material": "wood"
+   },
+   {
+    "id": "ref-n2",
+    "minX": -13.2,
+    "maxX": -12.8,
+    "minZ": 8.5,
+    "maxZ": 8.7,
+    "minY": 0,
+    "maxY": 2.6,
+    "material": "wood"
+   },
+   {
+    "id": "ref-e",
+    "minX": -13,
+    "maxX": -12.8,
+    "minZ": 8.5,
+    "maxZ": 12.5,
+    "minY": 0,
+    "maxY": 2.6,
+    "material": "wood"
+   }
+  ]
+ },
  "scenarios": [
   {
    "name": "direct-miss",

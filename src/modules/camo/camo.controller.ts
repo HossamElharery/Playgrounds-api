@@ -1,4 +1,6 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, HttpStatus, Param, UseGuards } from '@nestjs/common';
+import { ApiException } from '../../common/errors/api-exception';
+import { roomHash } from './camo-room';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
@@ -22,6 +24,16 @@ export class CamoController {
   live() {
     const f = this.camo.features();
     return f.enabled ? this.camo.live() : { total: 0, matches: 0, rooms: {} };
+  }
+
+  /** The authoritative room file (colliders, hide spots, props). The client builds its scene and prediction from it. */
+  @Public()
+  @Get('rooms/:id')
+  @Header('Cache-Control', 'public, max-age=300')
+  room(@Param('id') id: string) {
+    const room = this.camo.host.roomData(id);
+    if (!room) throw new ApiException(HttpStatus.NOT_FOUND, 'CAMO_ROOM_UNKNOWN', 'Unknown room');
+    return { ...room, hash: roomHash(room) };
   }
 
   @ApiBearerAuth()

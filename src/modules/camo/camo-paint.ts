@@ -87,11 +87,11 @@ export function encodeStrokes(list: readonly WireStroke[]): Uint8Array {
 }
 
 /** Decodes a batch; null when the bytes are not a well-formed stroke list. */
-export function decodeStrokes(bytes: Uint8Array): WireStroke[] | null {
+export function decodeStrokes(bytes: Uint8Array, maxCount = MAX_BATCH_STROKES): WireStroke[] | null {
   if (bytes.byteLength < 2 || bytes.byteLength > MAX_WIRE_BYTES + 64) return null;
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const count = v.getUint16(0, true);
-  if (count > MAX_BATCH_STROKES) return null;
+  if (count > maxCount) return null;
   const out: WireStroke[] = [];
   let o = 2;
   for (let i = 0; i < count; i++) {

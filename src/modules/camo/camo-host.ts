@@ -6,11 +6,12 @@
 import { CAMO_PROTOCOL_VERSION, MAX_PLAYERS, MIN_PLAYERS, TIMERS, TAUNT, TICK_MS } from './camo-constants';
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
 import { buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
-import { decodeStrokes, encodeStrokes } from './camo-paint';
+import { MAX_STROKES_PER_PLAYER, decodeStrokes, encodeStrokes } from './camo-paint';
 import {
   acceptKick,
   acceptMove,
   acceptPaint,
+  resetPaint,
   acceptScan,
   acceptTag,
   acceptTaunt,
@@ -454,6 +455,22 @@ export class CamoHost {
     return { accepted: v.accepted.length, rejected: v.rejected };
   }
 
+  /** Undo/clear on the client: the whole stroke list replaces the player's paint, and everybody gets a fresh snapshot. */
+  paintReset(userId: string, bytes: unknown, now = this.now): { accepted: number; rejected: number } | null {
+    const c = this.ctx(userId, 'paint', now);
+    if (!c) return null;
+    const raw = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : Array.isArray(bytes) ? Uint8Array.from(bytes as number[]) : null;
+    const strokes = raw ? decodeStrokes(raw, MAX_STROKES_PER_PLAYER) : null;
+    if (!strokes) return null;
+    const v = resetPaint(c.m, c.p.eid, strokes, now);
+    if (!v) return null;
+    for (const p of this.humans(c.m)) {
+      if (p === c.p) continue;
+      if (paintTargets(c.m, viewerOf(p)).includes(c.p)) this.sendPaint(p.userId!, c.p);
+    }
+    return { accepted: v.accepted.length, rejected: v.rejected };
+  }
+
   touchUp(userId: string, now = this.now): boolean {
     const c = this.ctx(userId, 'paint', now);
     return c ? beginTouchUp(c.m, c.p.eid, now) : false;
@@ -648,6 +665,7 @@ export class CamoHost {
   private fanPaint(m: CamoMatch, h: CamoPlayer, accepted: readonly import('./camo-paint').WireStroke[], now: number): void {
     const bytes = encodeStrokes(accepted);
     for (const p of this.humans(m)) {
+      if (p === h) continue; // the painter already drew it locally
       const v = viewerOf(p);
       if (!paintTargets(m, v).includes(h)) continue;
       this.o.sink.emit(p.userId!, 'camo.paint.delta', { eid: h.eid, bytes });

@@ -132,7 +132,14 @@ describe('camo host', () => {
     const targets = new Set(sent.filter((s) => s.event === 'camo.paint.delta').map((s) => s.userId));
     const seekerUsers = seekers(m).map((s) => s.userId!);
     for (const sk of seekerUsers) expect(targets.has(sk)).toBe(false);
-    expect(targets.has(hider.userId!)).toBe(true);
+    expect(targets.has(hider.userId!)).toBe(false); // the painter drew it locally
+    const otherHider = m.players.find((p) => !p.isBot && p.role === 'hider' && p !== hider);
+    if (otherHider) expect(targets.has(otherHider.userId!)).toBe(true);
+    // undo/clear: the whole list replaces the paint and the others get a fresh snapshot
+    sent.length = 0;
+    expect(host.paintReset(hider.userId!, encodeStrokes([]))).toEqual({ accepted: 0, rejected: 0 });
+    expect(hider.paint.strokes.length).toBe(0);
+    if (otherHider) expect(sent.some((s) => s.userId === otherHider.userId && s.event === 'camo.paint.delta' && s.payload.snapshot)).toBe(true);
     expect(host.paint(hider.userId!, new Uint8Array([1, 2, 3]))).toBeNull();
   });
 
