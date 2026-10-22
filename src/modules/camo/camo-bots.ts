@@ -182,8 +182,8 @@ export class BotBrain {
         if (!canSee(room, p, h, 16, 110)) continue;
         const d = Math.hypot(h.x - p.x, h.z - p.z);
         const moving = !h.frozen;
-        const base = 0.12 + 0.5 * skill;
-        const rate = base * (1 - h.stats.camo * 0.9) * Math.max(0.05, 1 - d / 16) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
+        const base = 0.18 + 0.55 * skill;
+        const rate = base * (1 - h.stats.camo * 0.85) * Math.max(0.05, 1 - d / 16) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
         if (match.rng() < 1 - Math.exp(-rate * dt)) {
           m.target = h.eid;
           m.aimUntil = now + 600 + (1 - skill) * 900;

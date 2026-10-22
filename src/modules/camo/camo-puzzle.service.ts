@@ -33,6 +33,9 @@ export function seeded(text: string): () => number {
 export class CamoPuzzleService {
   private readonly logger = new Logger(CamoPuzzleService.name);
 
+  /** Set by the Camo service: tells a challenge's creator (when online) how a friend did. */
+  notifyCreator: ((creatorId: string, payload: { id: string; found: boolean; foundMs: number | null; attempts: number; missed: number }) => void) | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: CamoSettingsService,
@@ -85,6 +88,10 @@ export class CamoPuzzleService {
       await this.prisma.camoPuzzle.update({ where: { id: pz.puzzleId }, data: { attempts: { increment: 1 }, ...(success ? { found: { increment: 1 } } : {}) } });
       const puzzle = await this.prisma.camoPuzzle.findUnique({ where: { id: pz.puzzleId }, select: { kind: true, dayKey: true, creatorId: true } });
       if (puzzle?.kind === 'daily' && human.userId && puzzle.dayKey) await this.bumpStreak(human.userId, puzzle.dayKey);
+      if (puzzle?.kind === 'challenge' && puzzle.creatorId && puzzle.creatorId !== human.userId) {
+        const now = await this.prisma.camoPuzzle.findUnique({ where: { id: pz.puzzleId }, select: { attempts: true, found: true } });
+        if (now) this.notifyCreator?.(puzzle.creatorId, { id: pz.puzzleId, found: success, foundMs: pz.foundMs, attempts: now.attempts, missed: now.attempts - now.found });
+      }
     } catch (err) {
       this.logger.warn(`puzzle attempt not stored: ${err instanceof Error ? err.message : err}`);
     }

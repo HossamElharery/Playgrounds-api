@@ -82,6 +82,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
 
   attachSink(sink: HostSink | null): void {
     this.sink = sink;
+    this.puzzles.notifyCreator = sink ? (u, p) => sink.emit(u, 'camo.challenge.result', p) : null;
   }
 
   features(): CamoFeatures {
