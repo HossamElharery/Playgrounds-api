@@ -50,6 +50,8 @@ model User {
   /// Real User row so sockets, squads and voice work unchanged, but the
   /// AuthGuard confines it to the squad surface. Swept after 24h idle.
   isGuest           Boolean       @default(false)
+  /// How a guest account was made: 'squad_link' (invite link) or 'camo_play' (instant guest of the camo game).
+  guestSource       String?
   name              String
   avatarUrl         String?
   avatarConfig      Json?
@@ -122,6 +124,11 @@ model User {
   chatMessages              ChatMessage[]
   notifications             Notification[]
   squadMemberships          SquadMember[]
+  camoPlayers               CamoMatchPlayer[]
+  camoStats                 CamoStats?
+  camoReportsMade           CamoReport[]        @relation("CamoReportReporter")
+  camoReportsAgainst        CamoReport[]        @relation("CamoReportTarget")
+  camoSanctions             CamoSanction[]
   sentSquadInvites          SquadInvite[]             @relation("SquadInviteFrom")
   receivedSquadInvites      SquadInvite[]             @relation("SquadInviteTo")
   squadJoinRequestsMade     SquadJoinRequest[]        @relation("SquadJoinRequestFrom")
@@ -197,6 +204,7 @@ model User {
   morphRolls                MorphRoll[]
 
   @@index([isGuest, createdAt])
+  @@index([guestSource, createdAt])
   @@index([status])
   @@index([countryCode])
   @@index([governorateId])
@@ -3499,4 +3507,162 @@ model PaymentWebhookEvent {
 
   @@unique([provider, eventId])
   @@index([intentId])
+}
+
+
+// ── «استغماية» (camo game) ─────────────────────────────────────────────────────
+
+/// One match of the camo game (3 rounds). Rooms live in server memory; only the result is stored.
+model CamoMatch {
+  id        String   @id @default(uuid())
+  roomId    String
+  mode      String   @default("classic")
+  isPrivate Boolean  @default(false)
+  code      String?
+  rounds    Int      @default(3)
+  botCount  Int      @default(0)
+  startedAt DateTime @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3)
+  players   CamoMatchPlayer[]
+  reports   CamoReport[]
+
+  @@index([startedAt])
+  @@index([roomId, startedAt])
+}
+
+model CamoMatchPlayer {
+  id      String  @id @default(uuid())
+  matchId String
+  match   CamoMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  /// Null for bots, and for a guest whose account was cleaned up later (the record stays).
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  isBot   Boolean @default(false)
+  name    String
+  morphId String
+  /// Role per round, e.g. ["hider","seeker","hider"].
+  roles   Json    @default("[]")
+  points  Int     @default(0)
+  caught  Int     @default(0)
+  cardsGiven Int  @default(0)
+  yellows Int     @default(0)
+  bestSurvivalMs Int @default(0)
+  rank    Int     @default(0)
+  awards  String[] @default([])
+  won     Boolean @default(false)
+
+  @@index([userId])
+  @@index([matchId])
+}
+
+model CamoStats {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matches       Int      @default(0)
+  wins          Int      @default(0)
+  caughtCount   Int      @default(0)
+  cardsGiven    Int      @default(0)
+  yellows       Int      @default(0)
+  bestSurvivalMs Int     @default(0)
+  streak        Int      @default(0)
+  xp            Int      @default(0)
+  level         Int      @default(1)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model CamoReport {
+  id           String   @id @default(uuid())
+  matchId      String?
+  match        CamoMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  reporterId   String?
+  reporter     User?    @relation("CamoReportReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  targetUserId String?
+  target       User?    @relation("CamoReportTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  round        Int      @default(0)
+  reason       String
+  note         String?
+  /// Last 60 s of the server's event log (who spoke when, cards, votes). Never audio.
+  context      Json     @default("{}")
+  /// Whether it counted towards the sanction ladder (distinct reporters, distinct matches, 24 h).
+  counted      Boolean  @default(false)
+  status       String   @default("open")
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([targetUserId, createdAt])
+  @@index([status, createdAt])
+  @@index([reporterId, createdAt])
+}
+
+model CamoVote {
+  id           String   @id @default(uuid())
+  matchId      String
+  kind         String
+  targetUserId String
+  startedBy    String
+  votes        Json     @default("{}")
+  result       String   @default("open")
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([matchId])
+  @@index([startedBy, createdAt])
+}
+
+model CamoRoomBan {
+  id             String   @id @default(uuid())
+  roomInstanceId String
+  userId         String
+  reason         String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([roomInstanceId, userId])
+}
+
+model CamoSanction {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  deviceId  String?
+  ipHash    String?
+  /// warn | voice_restrict | camo_ban | name_hidden
+  kind      String
+  until     DateTime? @db.Timestamptz(3)
+  /// auto | admin
+  source    String   @default("auto")
+  reportIds String[] @default([])
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, until])
+  @@index([deviceId, until])
+  @@index([ipHash, until])
+}
+
+model CamoModerationAudit {
+  id           String   @id @default(uuid())
+  /// A user id, or "system".
+  actorId      String
+  action       String
+  targetUserId String?
+  details      Json     @default("{}")
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([targetUserId, createdAt])
+  @@index([createdAt])
+}
+
+model CamoMatchmakingAvoid {
+  id          String   @id @default(uuid())
+  userId      String
+  avoidUserId String
+  until       DateTime @db.Timestamptz(3)
+
+  @@unique([userId, avoidUserId])
+  @@index([until])
+}
+
+/// Admin-tunable numbers of the camo game (timers, sanction ladder, daily caps...), one JSON per key.
+model CamoSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 }
