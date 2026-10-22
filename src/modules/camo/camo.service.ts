@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CAMO_PROTOCOL_VERSION } from './camo-constants';
 import { camoDailyEnabled, camoDraining, camoEnabled, camoPublicMatchEnabled, camoVoiceEnabled } from './camo-flags';
 import { CamoHost, type CamoUser, type HostPolicy, type HostSink, type JoinResult } from './camo-host';
+import { CamoPuzzleService } from './camo-puzzle.service';
 import { CamoModerationService } from './camo-moderation.service';
 import { CamoSettingsService } from './camo-settings.service';
 import { ranking, type CamoMatch } from './camo-rules';
@@ -18,6 +19,8 @@ export interface CamoFeatures {
   daily: boolean;
   drain: boolean;
   protocolVersion: number;
+  /** The rooms players can be matched into right now. */
+  rooms: string[];
 }
 
 @Injectable()
@@ -36,6 +39,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly settingsService: CamoSettingsService,
     readonly moderation: CamoModerationService,
+    readonly puzzles: CamoPuzzleService,
   ) {
     this.flags = this.settingsService.flagSource(this.config);
     const policy: HostPolicy = {
@@ -47,10 +51,11 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       now: () => Date.now(),
       sink: { emit: (u, e, p, v) => this.sink?.emit(u, e, p, v) },
       policy,
+      rooms: () => this.settingsService.current.enabledRooms,
       voiceOn: () => camoVoiceEnabled(this.flags),
       votes: () => this.settingsService.current,
       onModeration: (e) => this.moderation.record(e),
-      onMatchEnd: (m) => void this.persist(m),
+      onMatchEnd: (m) => void (m.puzzle ? this.puzzles.finished(m) : this.persist(m)),
     });
   }
 
@@ -79,6 +84,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       daily: camoDailyEnabled(this.flags),
       drain: camoDraining(this.flags),
       protocolVersion: CAMO_PROTOCOL_VERSION,
+      rooms: this.settingsService.current.enabledRooms,
     };
   }
 

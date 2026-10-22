@@ -80,6 +80,15 @@ export class CamoAdminController {
     return { ok };
   }
 
+  /** The admin picks (or replaces) the daily Chameleon from any challenge. */
+  @Put('daily/:day')
+  async setDaily(@CurrentUser() admin: AuthenticatedUser, @Param('day') day: string, @Body() body: { fromPuzzleId?: string }) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !body?.fromPuzzleId) return { ok: false, reason: 'bad_input' };
+    const ok = await this.camo.puzzles.setDaily(day, body.fromPuzzleId);
+    if (ok) await this.camo.moderation.logAdmin(admin.id, 'daily.set', null, { day, from: body.fromPuzzleId });
+    return { ok };
+  }
+
   @Get('audit')
   audit() {
     return this.camo.moderation.audit();

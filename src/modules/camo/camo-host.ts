@@ -5,7 +5,8 @@
  */
 import { CAMO_PROTOCOL_VERSION, MAX_PLAYERS, MIN_PLAYERS, TIMERS, TAUNT, TICK_MS } from './camo-constants';
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
-import { buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
+import { M2_ROOMS } from './camo-rooms-m2';
+import { isWalkable, buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
 import { MAX_STROKES_PER_PLAYER, decodeStrokes, encodeStrokes } from './camo-paint';
 import {
   acceptKick,
@@ -32,6 +33,7 @@ import {
   type CamoEvent,
   type CamoMatch,
   type CamoPlayer,
+  type PuzzleState,
 } from './camo-rules';
 import { SPEAKING_HOLD_MS, voiceMapFor } from './camo-voice';
 import { castVote, logEvent, recentLog, startVote, stepVotes, tally, type RoomVote, type StartDenied, type VoteKind, type VoteResult, type VoteSettings } from './camo-moderation';
@@ -144,8 +146,10 @@ export class CamoHost {
   private lastVoice = new Map<string, number>();
 
   constructor(private readonly o: HostOptions) {
-    const room = generateLockerRoom();
-    this.rooms.set(room.id, { room, grid: buildWalkGrid(room) });
+    for (const make of [generateLockerRoom, ...M2_ROOMS]) {
+      const room = make();
+      this.rooms.set(room.id, { room, grid: buildWalkGrid(room) });
+    }
   }
 
   get now(): number {
@@ -272,8 +276,9 @@ export class CamoHost {
   joinPublic(u: CamoUser, roomId: string | 'any' = 'any', now = this.now): JoinResult {
     const denied = this.denyJoin(u, now);
     if (denied) return denied;
-    const room = roomId === 'any' ? (this.o.rooms?.()[0] ?? 'locker_room') : roomId;
-    if (!this.rooms.has(room)) return { ok: false, reason: 'unknown_code', detail: 'room' };
+    const open = (this.o.rooms?.() ?? ['locker_room']).filter((id) => this.rooms.has(id));
+    const room = roomId === 'any' ? (open[Math.floor(Math.random() * open.length)] ?? 'locker_room') : roomId;
+    if (!this.rooms.has(room) || (roomId !== 'any' && !open.includes(room))) return { ok: false, reason: 'unknown_code', detail: 'room' };
     for (const m of this.matches.values()) {
       if (m.isPrivate || m.phase !== 'waiting' || m.roomId !== room || m.players.length >= MAX_PLAYERS || m.locked) continue;
       if (m.players.some((p) => p.userId && this.o.policy?.avoid(u.userId, p.userId))) continue;
@@ -311,7 +316,8 @@ export class CamoHost {
   createPrivate(u: CamoUser, opts: { roomId?: string; mode?: 'classic' | 'contagion'; prepSeconds?: number; huntSeconds?: number; bots?: number } = {}, now = this.now): JoinResult {
     const denied = this.denyJoin(u, now);
     if (denied) return denied;
-    const roomId = this.rooms.has(opts.roomId ?? '') ? opts.roomId! : 'locker_room';
+    const enabled = this.o.rooms?.() ?? ['locker_room'];
+    const roomId = this.rooms.has(opts.roomId ?? '') && enabled.includes(opts.roomId!) ? opts.roomId! : 'locker_room';
     const bots = Math.min(MAX_PLAYERS - 1, Math.max(0, Math.floor(opts.bots ?? 5)));
     const m = this.spawnMatch(roomId, {
       isPrivate: true,
@@ -337,6 +343,50 @@ export class CamoHost {
   }
 
   /** Host of a private room presses «ابدأ»: bots fill, the first round begins. */
+  /** Starts a one-seeker puzzle (link challenge / daily): the human seeks one painted, motionless bot for 60 s with 3 misses. */
+  startPuzzle(u: CamoUser, pz: Omit<PuzzleState, 'misses' | 'failed' | 'foundMs' | 'maxMisses'> & { roomId: string; creatorName?: string }, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    if (!this.rooms.has(pz.roomId)) return { ok: false, reason: 'unknown_code', detail: 'room' };
+    const m = this.spawnMatch(pz.roomId, { isPrivate: true, hostId: u.userId, botsAllowed: false });
+    if (!m) return { ok: false, reason: 'busy' };
+    m.locked = true;
+    m.timers.prepMs = 4_000;
+    m.timers.huntMs = 60_000;
+    if (!this.place(m, u, now)) return { ok: false, reason: 'full' };
+    addPlayer(m, { userId: null, name: pz.creatorName || '?', isBot: true, morphId: pz.morphId }, now);
+    m.puzzle = { puzzleId: pz.puzzleId, x: pz.x, z: pz.z, yaw: pz.yaw, pose: pz.pose, strokes: pz.strokes, morphId: pz.morphId, maxMisses: 3, misses: 0, failed: false, foundMs: null };
+    startRound(m, this.rooms.get(m.roomId)!.room, now);
+    this.afterOutbox(m, now);
+    return { ok: true, matchId: m.id };
+  }
+
+  /** A challenge creator hides alone in a locked room (90 s of preparation, no seekers). */
+  startCreator(u: CamoUser, roomId: string, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    if (!this.rooms.has(roomId)) return { ok: false, reason: 'unknown_code', detail: 'room' };
+    const m = this.spawnMatch(roomId, { isPrivate: true, hostId: u.userId, botsAllowed: false });
+    if (!m) return { ok: false, reason: 'busy' };
+    m.locked = true;
+    m.creator = true;
+    m.timers.prepMs = 90_000;
+    if (!this.place(m, u, now)) return { ok: false, reason: 'full' };
+    startRound(m, this.rooms.get(m.roomId)!.room, now);
+    this.afterOutbox(m, now);
+    return { ok: true, matchId: m.id };
+  }
+
+  /** What the creator is hiding as right now, checked: inside the room, on free floor, outside the referees' zone. */
+  creatorSnapshot(userId: string): { roomId: string; x: number; z: number; yaw: number; pose: string; morphId: string; strokes: PuzzleState['strokes'] } | null {
+    const m = this.matchOf(userId);
+    const p = m && playerByUser(m, userId);
+    if (!m || !m.creator || !p || m.phase !== 'prep') return null;
+    const room = this.rooms.get(m.roomId)!.room;
+    if (!isWalkable(room, p.x, p.z, 0.2) || room.forbidden.some((f) => p.x >= f.minX && p.x <= f.maxX && p.z >= f.minZ && p.z <= f.maxZ)) return null;
+    return { roomId: m.roomId, x: p.x, z: p.z, yaw: p.yaw, pose: p.pose, morphId: p.morphId, strokes: [...p.paint.strokes] };
+  }
+
   hostStart(userId: string, now = this.now): boolean {
     const m = this.matchOf(userId);
     if (!m || !m.isPrivate || m.hostId !== userId || m.phase !== 'waiting') return false;

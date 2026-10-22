@@ -3565,6 +3565,8 @@ model CamoStats {
   yellows       Int      @default(0)
   bestSurvivalMs Int     @default(0)
   streak        Int      @default(0)
+  dailyStreak   Int      @default(0)
+  lastDailyDay  String?
   xp            Int      @default(0)
   level         Int      @default(1)
   updatedAt     DateTime @updatedAt @db.Timestamptz(3)
@@ -3665,4 +3667,46 @@ model CamoSetting {
   value     Json
   updatedBy String?
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+/// A hide-and-find puzzle: a player's link challenge (14 days) or the day's Chameleon for all of Egypt.
+model CamoPuzzle {
+  id        String   @id
+  /// challenge | daily
+  kind      String
+  /// Cairo day (yyyy-mm-dd) for the daily one, unique so a day has one puzzle.
+  dayKey    String?  @unique
+  creatorId String?
+  roomId    String
+  x         Float
+  z         Float
+  yaw       Float    @default(0)
+  pose      String   @default("stand")
+  morphId   String   @default("classic")
+  look      Json?
+  /// The paint strokes in the wire format (<= 40 KB).
+  strokes   Bytes
+  /// player | bot | admin
+  source    String   @default("player")
+  expiresAt DateTime? @db.Timestamptz(3)
+  attempts  Int      @default(0)
+  found     Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([creatorId, createdAt])
+  @@index([kind, createdAt])
+}
+
+model CamoPuzzleAttempt {
+  id        String   @id @default(uuid())
+  puzzleId  String
+  userId    String?
+  deviceId  String?
+  success   Boolean
+  foundMs   Int?
+  tags      Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([puzzleId, createdAt])
+  @@index([userId, createdAt])
 }

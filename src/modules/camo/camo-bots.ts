@@ -58,6 +58,7 @@ export class BotBrain {
 
   /** Drives every bot of the match for one tick. */
   tick(match: CamoMatch, now: number): void {
+    if (match.puzzle) return; // the puzzle's hider never moves
     for (const p of match.players) {
       if (!(p.isBot || p.botCover)) continue;
       if (p.role === 'hider' && p.alive) this.hider(match, p, now);

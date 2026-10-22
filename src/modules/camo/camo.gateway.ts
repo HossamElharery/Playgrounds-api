@@ -10,7 +10,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { camoEnabled, camoPublicMatchEnabled } from './camo-flags';
+import { camoDailyEnabled, camoEnabled, camoPublicMatchEnabled } from './camo-flags';
 import type { JoinResult } from './camo-host';
 import { VoiceScopeRegistry } from '../realtime/voice-scope.registry';
 import { LobbyWorldService } from '../lobby-world/lobby-world.service';
@@ -267,6 +267,46 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     const reason = str(data?.['reason']);
     if (!userId || !this.owns(userId, client) || !eid || !reason) return { ok: false, reason: 'unknown' };
     return this.camo.moderation.report(this.camo.host, userId, { eid, reason, note: str(data?.['note'], 300) ?? undefined }).catch(() => ({ ok: false, reason: 'error' }));
+  }
+
+  // ── puzzles: link challenges and the daily Chameleon (section 13) ──────────────────────────
+
+  @SubscribeMessage('camo.creator.start')
+  async creatorStart(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const roomId = str(data?.['roomId']) ?? 'locker_room';
+    return this.joinWith(client, (u) => this.camo.host.startCreator(u, roomId));
+  }
+
+  @SubscribeMessage('camo.challenge.make')
+  async challengeMake(@ConnectedSocket() client: Socket): Promise<unknown> {
+    const userId = await this.who(client);
+    if (!userId || !this.owns(userId, client)) return { ok: false, reason: 'not_ready' };
+    return this.camo.puzzles.createChallenge(this.camo.host, userId).catch(() => ({ ok: false, reason: 'error' }));
+  }
+
+  @SubscribeMessage('camo.puzzle.start')
+  async puzzleStart(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const id = str(data?.['id'], 40);
+    const userId = await this.who(client);
+    if (!userId || !this.owns(userId, client) || !id) return { ok: false, reason: 'not_ready' };
+    const drain = this.camo.drainResult();
+    if (drain) return drain;
+    const user = await this.camo.userFor(userId);
+    if (!user) return { ok: false, reason: 'denied' };
+    await this.camo.prepare(userId);
+    return this.camo.puzzles.start(this.camo.host, user, id).catch(() => ({ ok: false, reason: 'error' }));
+  }
+
+  @SubscribeMessage('camo.daily.start')
+  async dailyStart(@ConnectedSocket() client: Socket): Promise<unknown> {
+    const userId = await this.who(client);
+    if (!userId || !this.owns(userId, client)) return { ok: false, reason: 'not_ready' };
+    if (!camoDailyEnabled(this.camo.flags)) return { ok: false, reason: 'disabled' };
+    const user = await this.camo.userFor(userId);
+    if (!user) return { ok: false, reason: 'denied' };
+    await this.camo.prepare(userId);
+    const today = await this.camo.puzzles.today(this.camo.host);
+    return this.camo.puzzles.start(this.camo.host, user, today.id).catch(() => ({ ok: false, reason: 'error' }));
   }
 
   @SubscribeMessage('camo.private.join')

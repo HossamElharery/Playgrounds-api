@@ -172,6 +172,21 @@ export interface VarEntry {
   award: CamoAward | null;
 }
 
+/** A one-seeker puzzle (link challenge or daily): one hidden bot that never moves, 60 s, 3 wrong tags. */
+export interface PuzzleState {
+  puzzleId: string;
+  x: number;
+  z: number;
+  yaw: number;
+  pose: CamoPoseId;
+  strokes: WireStroke[];
+  morphId: string;
+  maxMisses: number;
+  misses: number;
+  failed: boolean;
+  foundMs: number | null;
+}
+
 export interface CamoMatch {
   id: string;
   roomId: string;
@@ -207,6 +222,9 @@ export interface CamoMatch {
   banned: Set<string>;
   /** Room votes, mutes and cooldowns (section 17a). */
   mod: ModerationState;
+  puzzle: PuzzleState | null;
+  /** The creator of a link challenge: alone, hiding with the full prep time, until they press "make challenge". */
+  creator: boolean;
 }
 
 export interface NewPlayer {
@@ -272,6 +290,8 @@ export function createMatch(opts: {
     varSkipVotes: new Set(),
     banned: new Set(),
     mod: newModeration(),
+    puzzle: null,
+    creator: false,
   };
 }
 
@@ -453,11 +473,29 @@ function resetForRound(m: CamoMatch, room: CamoRoomData, now: number): void {
   m.varSkipVotes = new Set();
 }
 
+function placePuzzleHider(m: CamoMatch): void {
+  const pz = m.puzzle!;
+  const h = m.players.find((p) => p.isBot);
+  if (!h) return;
+  h.x = pz.x;
+  h.z = pz.z;
+  h.yaw = pz.yaw;
+  h.pose = pz.pose;
+  h.frozen = true;
+  h.loaded = true;
+  h.paint = { strokes: [...pz.strokes], bytes: 2, stamps: 0 };
+}
+
 export function startRound(m: CamoMatch, room: CamoRoomData, now: number): void {
   m.round++;
   if (!m.startedAt) m.startedAt = now;
-  assignRoles(m);
+  if (m.puzzle) {
+    for (const p of m.players) p.role = p.isBot ? 'hider' : 'seeker';
+  } else if (m.creator) {
+    for (const p of m.players) p.role = 'hider';
+  } else assignRoles(m);
   resetForRound(m, room, now);
+  if (m.puzzle) placePuzzleHider(m);
   for (const p of m.players) m.outbox.push({ t: 'role', eid: p.eid, role: p.role, round: m.round });
   setPhase(m, 'reveal', now, TIMERS.revealMs);
 }
@@ -577,6 +615,13 @@ export function beginTouchUp(m: CamoMatch, eid: string, now: number): boolean {
 // ── cards ───────────────────────────────────────────────────────────────────
 
 function giveYellow(m: CamoMatch, s: CamoPlayer, now: number): void {
+  if (m.puzzle) {
+    // a puzzle has its own 3 misses: no suspension, the round is lost on the last one
+    m.puzzle.misses++;
+    m.outbox.push({ t: 'card', kind: 'yellow', target: null, by: s.eid, at: now });
+    if (m.puzzle.misses >= m.puzzle.maxMisses) m.puzzle.failed = true;
+    return;
+  }
   s.yellows++;
   s.stats.yellowCards++;
   s.points += POINTS.yellowCard;
@@ -590,6 +635,7 @@ function giveYellow(m: CamoMatch, s: CamoPlayer, now: number): void {
 
 function giveRed(m: CamoMatch, s: CamoPlayer, h: CamoPlayer, now: number, ricochet: boolean, distance: number): void {
   if (!h.alive) return;
+  if (m.puzzle) m.puzzle.foundMs = Math.max(0, now - m.huntStartedAt);
   h.alive = false;
   h.caughtAt = now;
   h.caughtBy = s.eid;
@@ -772,6 +818,11 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
       }
       return true;
     case 'prep': {
+      if (m.creator) {
+        // the creator hides for as long as they need (the room closes if they leave)
+        if (now >= m.phaseEndsAt) m.phaseEndsAt = now + 60_000;
+        return true;
+      }
       if (now >= m.phaseEndsAt) {
         setPhase(m, 'whistle', now, TIMERS.whistleMs);
         for (const h of m.players) if (h.role === 'hider' && !h.frozen && !inForbiddenZone(room, h)) h.frozen = false;
@@ -805,7 +856,7 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
       const anySeeker = seekers(m).length > 0;
       if (!left.length && m.mode === 'classic') return endRound(m, room, now, 'seekers'), true;
       if (m.mode === 'contagion' && !m.players.some((p) => p.role === 'hider' && p.alive)) return endRound(m, room, now, 'seekers'), true;
-      if (!anySeeker) return endRound(m, room, now, 'hiders'), true;
+      if (!anySeeker || m.puzzle?.failed) return endRound(m, room, now, 'hiders'), true;
       if (now >= m.phaseEndsAt) {
         if (!m.stoppageUsed && lastHiderSeenRecently(m, now)) {
           m.stoppageUsed = true;
@@ -822,7 +873,7 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
       return true;
     case 'results':
       if (now >= m.phaseEndsAt) {
-        if (m.round >= ROUNDS_PER_MATCH) {
+        if (m.round >= (m.puzzle ? 1 : ROUNDS_PER_MATCH)) {
           m.phase = 'ended';
           m.endedAt = now;
           m.outbox.push({ t: 'match.end' });

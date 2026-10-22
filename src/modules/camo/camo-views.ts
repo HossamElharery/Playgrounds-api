@@ -148,7 +148,7 @@ export function stateFor(m: CamoMatch, v: Viewer | null, now: number): StateView
     hostId: m.hostId,
     locked: m.locked,
     round: m.round,
-    rounds: 3,
+    rounds: m.puzzle ? 1 : 3,
     phase: m.phase,
     endsAt: m.phaseEndsAt,
     you: me ? { eid: me.eid, role: me.role, suspendedUntil: me.suspendedUntil, yellows: me.yellows, stamina: Math.round(me.stamina * 10) / 10 } : null,
