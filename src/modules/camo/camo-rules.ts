@@ -62,6 +62,8 @@ export interface CamoPlayer {
   botSkill: number;
   morphId: string;
   guest: boolean;
+  /** How a `classic` body looks (the player's avatar config); null for the catalogue morphs. */
+  look: unknown;
   /** Party members share one vote (section 17a). */
   partyId: string | null;
   deviceId: string | null;
@@ -107,6 +109,8 @@ export interface CamoPlayer {
   total: number;
   stats: PlayerStats;
   lastInputAt: number;
+  /** Totals over the rounds of this match (what is stored when it ends). */
+  match: { roles: CamoRole[]; caught: number; cardsGiven: number; yellows: number; bestSurvivalMs: number; awards: CamoAward[] };
 }
 
 export type CamoEvent =
@@ -205,6 +209,7 @@ export interface NewPlayer {
   botSkill?: number;
   morphId: string;
   guest?: boolean;
+  look?: unknown;
   partyId?: string | null;
   deviceId?: string | null;
 }
@@ -287,6 +292,7 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     botSkill: np.botSkill ?? 0.5,
     morphId: np.morphId,
     guest: !!np.guest,
+    look: np.look ?? null,
     partyId: np.partyId ?? null,
     deviceId: np.deviceId ?? null,
     role: 'spectator',
@@ -329,6 +335,7 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     total: 0,
     stats: emptyStats(),
     lastInputAt: now,
+    match: { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [] },
   };
   m.players.push(p);
   return p;
@@ -368,11 +375,11 @@ export function fillWithBots(m: CamoMatch, now: number, names: (i: number) => st
   return added;
 }
 
-/** Roles of a round: the ones who were not a seeker yet go first, ties by the seeded draw (humans before bots). */
+/** Roles of a round: the ones who were not a seeker yet go first, ties by the seeded draw (bots and humans alike). */
 export function assignRoles(m: CamoMatch): void {
   const eligible = m.players.filter((p) => p.connected || p.botCover || p.isBot);
   const order = eligible
-    .map((p) => ({ p, k: p.seekerRounds * 10 + (p.isBot ? 3 : 0) + m.rng() * 2 }))
+    .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 }))
     .sort((a, b) => a.k - b.k)
     .map((x) => x.p);
   const n = seekerCount(eligible.length);
@@ -872,6 +879,12 @@ function endRound(m: CamoMatch, room: CamoRoomData, now: number, winner: 'hiders
     roles[p.eid] = p.role;
     pts[p.eid] = Math.round(p.points);
     p.total += Math.round(p.points);
+    p.match.roles.push(p.role);
+    if (p.caughtAt !== null) p.match.caught++;
+    p.match.cardsGiven += p.stats.redCards;
+    p.match.yellows += p.stats.yellowCards;
+    if (p.role === 'hider' || p.caughtAt !== null) p.match.bestSurvivalMs = Math.max(p.match.bestSurvivalMs, p.stats.survivedMs);
+    for (const a of awards) if (a.eid === p.eid) p.match.awards.push(a.award);
   }
   m.rounds.push({
     round: m.round,

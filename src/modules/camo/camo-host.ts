@@ -39,6 +39,7 @@ export interface CamoUser {
   name: string;
   morphId: string;
   guest: boolean;
+  look?: unknown;
   deviceId?: string | null;
   partyId?: string | null;
 }
@@ -233,7 +234,7 @@ export class CamoHost {
   }
 
   private place(m: CamoMatch, u: CamoUser, now: number): CamoPlayer | null {
-    const p = addPlayer(m, { userId: u.userId, name: u.name, isBot: false, morphId: u.morphId, guest: u.guest, partyId: u.partyId ?? null, deviceId: u.deviceId ?? null }, now);
+    const p = addPlayer(m, { userId: u.userId, name: u.name, isBot: false, morphId: u.morphId, guest: u.guest, look: u.look, partyId: u.partyId ?? null, deviceId: u.deviceId ?? null }, now);
     if (!p) return null;
     this.byUser.set(u.userId, m.id);
     this.emptySince.delete(m.id);
@@ -511,6 +512,7 @@ export class CamoHost {
     for (const p of m.players) {
       p.total = 0;
       p.seekerRounds = 0;
+      p.match = { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [] };
     }
     m.round = 0;
     m.rounds = [];

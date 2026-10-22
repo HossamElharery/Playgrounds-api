@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
+import { guestDisplayName } from './guest-name.util';
 import { CompleteGuestDto } from './dto/complete-guest.dto';
 import { GuestJoinDto } from './dto/guest-join.dto';
 import { JwtService } from '@nestjs/jwt';
@@ -862,17 +863,10 @@ export class AuthService {
   ): Promise<TokenPair & { user: Partial<User>; squadId: string }> {
     await this.squad.previewInviteLink(dto.token); // 404 for bad/expired, 409-free
     const lang = dto.lang === 'en' ? 'en' : 'ar';
-    // Strip control/bidi-override characters and collapse whitespace.
-    const cleaned = (dto.name ?? '')
-      .replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 24);
-    const suffix = String(1000 + Math.floor(Math.random() * 9000));
-    const name = cleaned || (lang === 'ar' ? `ضيف ${suffix}` : `Guest ${suffix}`);
+    const name = guestDisplayName(dto.name, lang);
 
     const user = await this.prisma.user.create({
-      data: { name, isGuest: true, roles: ['player'], preferredLang: lang },
+      data: { name, isGuest: true, guestSource: 'squad_link', roles: ['player'], preferredLang: lang },
     });
     try {
       const joined = await this.squad.joinViaInviteLink(user.id, dto.token);

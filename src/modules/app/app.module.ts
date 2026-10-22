@@ -49,6 +49,7 @@ import { FinanceModule } from '../finance/finance.module';
 import { MorphsModule } from '../morphs/morphs.module';
 import { LobbyKioskModule } from '../lobby-kiosk/lobby-kiosk.module';
 import { LobbyWorldModule } from '../lobby-world/lobby-world.module';
+import { CamoModule } from '../camo/camo.module';
 import { LobbySocialModule } from '../lobby-social/lobby-social.module';
 import { CallsModule } from '../calls/calls.module';
 
@@ -106,6 +107,7 @@ import { CallsModule } from '../calls/calls.module';
     FinanceModule,
     MorphsModule,
     LobbyWorldModule,
+    CamoModule,
     LobbyKioskModule,
     LobbySocialModule,
     CallsModule,

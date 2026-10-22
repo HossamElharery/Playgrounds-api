@@ -136,8 +136,9 @@ export function decodeStrokes(bytes: Uint8Array): WireStroke[] | null {
 const BOUNDS = { x: 900, yMin: -100, yMax: 1900, z: 900 };
 
 export function strokeInBounds(s: WireStroke): boolean {
+  if (s.kind === 'fill') return true;
   if (Math.abs(s.x) > BOUNDS.x || Math.abs(s.z) > BOUNDS.z || s.y < BOUNDS.yMin || s.y > BOUNDS.yMax) {
-    return s.kind === 'fill';
+    return false;
   }
   return s.r >= 1;
 }

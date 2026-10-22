@@ -7,13 +7,17 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { CompleteGuestDto } from './dto/complete-guest.dto';
 import { GuestJoinDto } from './dto/guest-join.dto';
+import { GuestPlayDto } from './dto/guest-play.dto';
+import { CamoGuestService } from '../camo/camo-guest.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
@@ -40,6 +44,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly webauthn: WebAuthnService,
+    private readonly camoGuest: CamoGuestService,
   ) {}
 
   @Public()
@@ -55,6 +60,17 @@ export class AuthController {
   async guestJoin(@Body() dto: GuestJoinDto) {
     const result = await this.authService.joinSquadAsGuest(dto);
     return { message: 'authenticated', result };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('guest/play')
+  @ApiOperation({ summary: 'Instant guest for the camo game (Turnstile + per-IP/device daily limits)' })
+  async guestPlay(@Body() dto: GuestPlayDto, @Req() req: Request) {
+    const ip = (req.ip ?? req.socket?.remoteAddress ?? undefined) as string | undefined;
+    const user = await this.camoGuest.create({ name: dto.name, lang: dto.lang, turnstileToken: dto.turnstileToken, deviceId: dto.deviceId, ip });
+    const tokens = await this.authService.issueSession(user, req.headers['user-agent']?.toString().slice(0, 200));
+    return { message: 'authenticated', result: { ...tokens, user: this.authService.publicUser(user) } };
   }
 
   @ApiBearerAuth()

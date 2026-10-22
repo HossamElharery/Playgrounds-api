@@ -6,6 +6,9 @@ import { AuthController } from './auth.controller';
 import { WebAuthnService } from './webauthn.service';
 import { SmsModule } from '../sms/sms.module';
 import { SquadModule } from '../squad/squad.module';
+import { TurnstileService } from '../ai/turnstile.service';
+import { CamoGuestService } from '../camo/camo-guest.service';
+import { CamoSettingsService } from '../camo/camo-settings.service';
 
 const JwtModuleConfigured = JwtModule.registerAsync({
   imports: [ConfigModule],
@@ -20,8 +23,8 @@ const JwtModuleConfigured = JwtModule.registerAsync({
 
 @Module({
   imports: [SmsModule, forwardRef(() => SquadModule), JwtModuleConfigured],
-    providers: [AuthService, WebAuthnService],
+    providers: [AuthService, WebAuthnService, TurnstileService, CamoSettingsService, CamoGuestService],
     controllers: [AuthController],
-    exports: [AuthService, WebAuthnService, JwtModuleConfigured],
+    exports: [AuthService, WebAuthnService, JwtModuleConfigured, CamoGuestService, CamoSettingsService],
 })
 export class AuthModule {}

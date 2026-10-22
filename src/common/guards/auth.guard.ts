@@ -20,7 +20,7 @@ import { loadStaffScope } from '../access/staff-scope';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../modules/prisma/prisma.service';
 
-const GUEST_ALLOWED = /^\/api\/v1\/(squad|realtime|presence|morphs|lobby)(\/|\?|$)/;
+const GUEST_ALLOWED = /^\/api\/v1\/(squad|realtime|presence|morphs|lobby|camo)(\/|\?|$)/;
 const GUEST_SQUAD_WRITE = /^\/api\/v1\/squad\/(start|invite-link(?:\/reset)?|invites|join-requests\/[^/]+\/(approve|decline)|[^/]+\/(kick|make-leader|mute)\/[^/]+)(\?|$)/;
 const GUEST_AUTH = /^\/api\/v1\/auth\/(guest\/(email\/otp|complete|oauth\/(google|facebook|apple))|logout-all)(\?|$)/;
 const GUEST_SELF = /^\/api\/v1\/users\/me(\?|$)/;

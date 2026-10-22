@@ -288,6 +288,8 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     const stale = await this.prisma.user.findMany({
       where: {
         isGuest: true,
+        // camo_play guests are swept by the camo job (30 days, only when unconverted and without bookings)
+        AND: [{ OR: [{ guestSource: null }, { guestSource: { not: 'camo_play' } }] }],
         createdAt: { lt: cutoff },
         OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }],
         squadMemberships: { none: {} },
@@ -299,7 +301,7 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${g.id} FOR UPDATE`;
         const current = await tx.user.findFirst({
-          where: { id: g.id, isGuest: true, createdAt: { lt: cutoff }, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }], squadMemberships: { none: {} } },
+          where: { id: g.id, isGuest: true, AND: [{ OR: [{ guestSource: null }, { guestSource: { not: 'camo_play' } }] }], createdAt: { lt: cutoff }, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }], squadMemberships: { none: {} } },
         });
         if (!current) return;
         await tx.friendship.deleteMany({

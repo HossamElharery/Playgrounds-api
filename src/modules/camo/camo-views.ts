@@ -38,6 +38,7 @@ export interface PlayerView {
   isBot?: boolean;
   guest?: boolean;
   morphId: string;
+  look?: unknown;
   role: CamoRole;
   alive: boolean;
 }
@@ -55,7 +56,7 @@ export function playersFor(m: CamoMatch, v: Viewer): PlayersPayload {
   const players: PlayerView[] = [];
   for (const p of m.players) {
     const hidden = blind && p.role !== 'seeker' && p.eid !== v.eid;
-    const base: PlayerView = { eid: p.eid, morphId: p.morphId, role: hidden ? 'hider' : p.role, alive: p.alive || p.role === 'seeker' };
+    const base: PlayerView = { eid: p.eid, morphId: p.morphId, ...(p.look ? { look: p.look } : {}), role: hidden ? 'hider' : p.role, alive: p.alive || p.role === 'seeker' };
     if (!hidden || (p.role === 'hider' && !p.alive && p.caughtAt !== null)) {
       base.userId = p.userId ?? undefined;
       base.name = p.name;
