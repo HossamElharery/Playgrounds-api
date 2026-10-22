@@ -60,6 +60,16 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     this.voiceScopes.register('camo', (matchId, userId) => {
       const m = this.camo.host.matchOf(userId);
       return !!m && m.id === matchId && !m.mod.muted.has(userId);
+    }, {
+      // strangers are named by a per-match vid on the wire, never by user id (section 8)
+      toUser: (matchId, viewerId, key) => {
+        const m = this.camo.host.matchOf(viewerId);
+        return m && m.id === matchId ? this.camo.host.userOfVid(viewerId, key) : null;
+      },
+      toKey: (matchId, userId) => {
+        const m = this.camo.host.matchOf(userId);
+        return m && m.id === matchId ? this.camo.host.vidOf(userId) : null;
+      },
     });
     this.sweeper = setInterval(() => this.sweepSquads(), 5000);
     this.sweeper.unref?.();

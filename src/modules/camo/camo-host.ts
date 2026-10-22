@@ -35,7 +35,7 @@ import {
   type CamoPlayer,
   type PuzzleState,
 } from './camo-rules';
-import { SPEAKING_HOLD_MS, voiceMapFor } from './camo-voice';
+import { opaqueVoice, SPEAKING_HOLD_MS, userOfVid, voiceMapFor } from './camo-voice';
 import type { Flair } from './camo-rules';
 import { castVote, logEvent, recentLog, startVote, stepVotes, tally, type RoomVote, type StartDenied, type VoteKind, type VoteResult, type VoteSettings } from './camo-moderation';
 import { paintTargets, playersFor, positionsFor, stateFor, varPayload, viewerOf } from './camo-views';
@@ -817,7 +817,7 @@ export class CamoHost {
     const scope = `camo:${m.id}`;
     for (const p of this.humans(m)) {
       const map = voiceMapFor(m, p, now);
-      this.o.sink.emit(p.userId!, 'camo.voice', { scope, t: now, peers: map.peers.map((e) => [e.userId, Math.round(e.gain * 100) / 100, e.x === undefined ? null : Math.round(e.x * 10) / 10, e.z === undefined ? null : Math.round((e.z as number) * 10) / 10]), connect: map.connect, phase: m.phase });
+      this.o.sink.emit(p.userId!, 'camo.voice', { scope, t: now, ...opaqueVoice(m, p, map), phase: m.phase });
     }
   }
 
@@ -913,6 +913,17 @@ export class CamoHost {
     const m = this.matchOf(viewerId);
     const p = m?.players.find((x) => x.eid === eid);
     return p?.userId && !p.isBot ? { userId: p.userId, name: p.name, partyId: p.partyId } : null;
+  }
+
+  /** Voice signalling in `camo:<matchId>`: the vid a stranger sees for this user, and back. Both only inside the user's own match. */
+  vidOf(userId: string): string | null {
+    const m = this.matchOf(userId);
+    return m ? playerByUser(m, userId)?.vid ?? null : null;
+  }
+
+  userOfVid(viewerId: string, vid: string): string | null {
+    const m = this.matchOf(viewerId);
+    return m ? userOfVid(m, vid) : null;
   }
 
   partyOf(userId: string): string | null {

@@ -2,6 +2,7 @@
  * The rules of «استغماية»: pure, deterministic (every random draw comes from the match's seeded `rng`) and free of
  * Nest, sockets and the database. The host feeds it moves and kicks, calls `step` every tick, and drains `outbox`.
  */
+import { randomBytes } from 'crypto';
 import { newModeration, type ModerationState } from './camo-moderation';
 import {
   AWARDS,
@@ -57,6 +58,11 @@ export interface PlayerStats {
 export interface CamoPlayer {
   /** Entity id: changes every round, never reveals who is behind it. */
   eid: string;
+  /**
+   * Random per match and per player: the only name voice signalling may carry between strangers, so a link never
+   * spells out who is behind a hider's entity (section 8). Never leaves the server except inside voice messages.
+   */
+  vid: string;
   userId: string | null;
   name: string;
   isBot: boolean;
@@ -325,6 +331,7 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
   if (np.userId && m.players.some((p) => p.userId === np.userId)) return null;
   const p: CamoPlayer = {
     eid: `e${m.nextEid++}`,
+    vid: randomBytes(8).toString('hex'),
     userId: np.userId,
     name: np.name,
     isBot: np.isBot,

@@ -370,6 +370,18 @@ export class RealtimeGateway
     });
   }
 
+  /** Who a signal goes to and what name it carries: user ids in a squad, opaque ids in an anonymous room scope. */
+  private signalPeer(
+    scope: string,
+    userId: string,
+    toKey: string,
+  ): { to: string; from: string } | null {
+    if (!this.voiceScopes) return { to: toKey, from: userId };
+    const to = this.voiceScopes.resolveTarget(scope, userId, toKey);
+    const from = this.voiceScopes.senderKey(scope, userId);
+    return to && from ? { to, from } : null;
+  }
+
   @SubscribeMessage('voice.offer')
   voiceOffer(
     @ConnectedSocket() client: Socket,
@@ -379,11 +391,13 @@ export class RealtimeGateway
       const userId = this.authedUserId(client);
       if (!userId || !data?.squadId || !data.toUserId) return;
       if (!(await this.assertSquadMember(userId, data.squadId))) return;
-      if (!(await this.assertSquadMember(data.toUserId, data.squadId))) return;
-      this.emitToUser(data.toUserId, {
+      const peer = this.signalPeer(data.squadId, userId, data.toUserId);
+      if (!peer) return;
+      if (!(await this.assertSquadMember(peer.to, data.squadId))) return;
+      this.emitToUser(peer.to, {
         type: 'voice.offer',
         squadId: data.squadId,
-        fromUserId: userId,
+        fromUserId: peer.from,
         sdp: data.sdp,
       });
     });
@@ -398,10 +412,12 @@ export class RealtimeGateway
       const userId = this.authedUserId(client);
       if (!userId || !data?.squadId || !data.toUserId) return;
       if (!(await this.assertSquadMember(userId, data.squadId))) return;
-      this.emitToUser(data.toUserId, {
+      const peer = this.signalPeer(data.squadId, userId, data.toUserId);
+      if (!peer) return;
+      this.emitToUser(peer.to, {
         type: 'voice.answer',
         squadId: data.squadId,
-        fromUserId: userId,
+        fromUserId: peer.from,
         sdp: data.sdp,
       });
     });
@@ -417,10 +433,12 @@ export class RealtimeGateway
       const userId = this.authedUserId(client);
       if (!userId || !data?.squadId || !data.toUserId) return;
       if (!(await this.assertSquadMember(userId, data.squadId))) return;
-      this.emitToUser(data.toUserId, {
+      const peer = this.signalPeer(data.squadId, userId, data.toUserId);
+      if (!peer) return;
+      this.emitToUser(peer.to, {
         type: 'voice.ice',
         squadId: data.squadId,
-        fromUserId: userId,
+        fromUserId: peer.from,
         candidate: data.candidate,
       });
     });
@@ -470,13 +488,21 @@ export class RealtimeGateway
       const userId = this.authedUserId(client);
       if (!userId || !data?.squadId) return;
       if (!(await this.assertSquadMember(userId, data.squadId))) return;
-      const event = {
-        type: 'voice.hangup',
-        squadId: data.squadId,
-        fromUserId: userId,
-      };
-      if (data.toUserId) this.emitToUser(data.toUserId, event);
-      else this.emitToRoom(`squad:${data.squadId}`, event);
+      if (data.toUserId) {
+        const peer = this.signalPeer(data.squadId, userId, data.toUserId);
+        if (!peer) return;
+        this.emitToUser(peer.to, {
+          type: 'voice.hangup',
+          squadId: data.squadId,
+          fromUserId: peer.from,
+        });
+      } else {
+        this.emitToRoom(`squad:${data.squadId}`, {
+          type: 'voice.hangup',
+          squadId: data.squadId,
+          fromUserId: this.voiceScopes?.senderKey(data.squadId, userId) ?? userId,
+        });
+      }
     });
   }
 

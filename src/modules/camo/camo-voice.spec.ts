@@ -1,4 +1,4 @@
-import { channelOpen, voiceMapFor, VOICE_MAX_LINKS } from './camo-voice';
+import { channelOpen, opaqueVoice, userOfVid, voiceMapFor, VOICE_MAX_LINKS } from './camo-voice';
 import { generateLockerRoom } from './camo-room';
 import { addPlayer, createMatch, type CamoMatch, type CamoPlayer } from './camo-rules';
 
@@ -69,5 +69,52 @@ describe('camo proximity voice (server side)', () => {
     m.phase = 'waiting';
     m.players.forEach((p, i) => at(p, i, 0));
     expect(voiceMapFor(m, m.players[0], 0).connect.length).toBe(VOICE_MAX_LINKS);
+  });
+});
+
+describe('opaque voice ids (section 8: a link must not name who is behind a hider)', () => {
+  it('a voice message never contains a stranger\'s user id, only vids that resolve back on the server', () => {
+    const m = match(4);
+    m.phase = 'hunt';
+    const [seeker, a, b, c] = m.players;
+    at(seeker, 0, 0, 'seeker'); at(a, 4, 0); at(b, 6, 0); at(c, 8, 0);
+    const msg = opaqueVoice(m, seeker, voiceMapFor(m, seeker, 0));
+    const wire = JSON.stringify(msg);
+    for (const p of m.players) expect(wire).not.toContain(p.userId as string);
+    expect(msg.me).toBe(seeker.vid);
+    expect(msg.peers.map((e) => e[0]).sort()).toEqual([a.vid, b.vid, c.vid].sort());
+    expect(msg.connect).toEqual([a.vid, b.vid, c.vid]);
+    expect(msg.alias).toEqual({});
+    expect(userOfVid(m, a.vid)).toBe('u2');
+  });
+
+  it('vids are random per player and per match, and are never user ids or entity ids', () => {
+    const m1 = match(3);
+    const m2 = match(3);
+    const all = [...m1.players, ...m2.players].map((p) => p.vid);
+    expect(new Set(all).size).toBe(6);
+    for (const p of m1.players) expect(p.vid).toMatch(/^[0-9a-f]{16}$/);
+    expect(m1.players.map((p) => p.vid)).not.toContain(m1.players[0].eid);
+  });
+
+  it('party mates (and only they) are told the real id behind a vid, so their squad call is reused', () => {
+    const m = match(4);
+    m.phase = 'hunt';
+    const [me, mate, stranger] = m.players;
+    me.partyId = 'p1'; mate.partyId = 'p1';
+    at(me, 0, 0, 'seeker'); at(mate, 3, 0); at(stranger, 5, 0);
+    const msg = opaqueVoice(m, me, voiceMapFor(m, me, 0));
+    expect(msg.alias).toEqual({ [mate.vid]: 'u2' });
+    expect(Object.values(msg.alias)).not.toContain('u3');
+    // the stranger's view of the same room knows nothing about the party
+    expect(opaqueVoice(m, stranger, voiceMapFor(m, stranger, 0)).alias).toEqual({});
+  });
+
+  it('an unknown vid, a bot or a stale one resolves to nobody', () => {
+    const m = match(2);
+    addPlayer(m, { userId: null, name: 'Bot', isBot: true, morphId: 'potato' }, 0);
+    expect(userOfVid(m, 'nope')).toBeNull();
+    expect(userOfVid(m, m.players[2].vid)).toBeNull();
+    expect(userOfVid(m, m.players[0].userId as string)).toBeNull(); // a real user id is not a vid
   });
 });
