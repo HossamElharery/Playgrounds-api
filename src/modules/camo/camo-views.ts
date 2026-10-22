@@ -135,6 +135,8 @@ export interface StateView {
   hidersAlive: number;
   total: number;
   scores?: Record<string, number>;
+  /** Set in a puzzle match: how many wrong tags are left and, once found, how long it took. */
+  puzzle?: { misses: number; max: number; foundMs: number | null; failed: boolean };
 }
 
 export function stateFor(m: CamoMatch, v: Viewer | null, now: number): StateView {
@@ -142,7 +144,7 @@ export function stateFor(m: CamoMatch, v: Viewer | null, now: number): StateView
   return {
     matchId: m.id,
     roomId: m.roomId,
-    mode: m.mode,
+    mode: m.puzzle ? 'puzzle' : m.creator ? 'creator' : m.mode,
     isPrivate: m.isPrivate,
     code: m.isPrivate ? m.code : null,
     hostId: m.hostId,
@@ -155,6 +157,7 @@ export function stateFor(m: CamoMatch, v: Viewer | null, now: number): StateView
     seekersLeft: seekersOf(m).length,
     hidersAlive: m.players.filter((p) => p.role === 'hider' && p.alive).length,
     total: m.players.length,
+    ...(m.puzzle ? { puzzle: { misses: m.puzzle.misses, max: m.puzzle.maxMisses, foundMs: m.puzzle.foundMs, failed: m.puzzle.failed } } : {}),
   };
 }
 

@@ -8,7 +8,7 @@ function make(flags: Record<string, string> = { CAMO_ENABLED: 'true' }, turnstil
     { get: (k: string) => flags[k] } as any,
     prisma,
     { enabled: turnstile.enabled, verify: turnstile.verify ?? jest.fn(async () => 'ok') } as any,
-    { load: async () => CAMO_DEFAULTS } as any,
+    { load: async () => CAMO_DEFAULTS, flagSource: (env: any) => env } as any,
   );
   return { svc, prisma, user };
 }

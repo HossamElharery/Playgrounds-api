@@ -965,6 +965,7 @@ export class CamoHost {
         send('camo.ball', { by: e.by, seq: e.seq, keyframes: e.keyframes.map((k) => [k.t, k.x, k.y, k.z]), events: e.events, at: e.at });
         break;
       case 'card': {
+        if (m.puzzle) this.broadcastState(m, now); // the miss counter
         const target = e.target ? playerById(m, e.target) : undefined;
         send('camo.card.result', {
           kind: e.kind,
@@ -1006,6 +1007,7 @@ export class CamoHost {
         break;
       case 'infected':
         send('camo.infected', { eid: e.eid, at: e.at });
+        this.broadcastRoster(m); // the infected player is a seeker now: roles and counts change for everyone
         break;
       case 'round.end':
         send('camo.round.end', { round: e.round, winner: e.winner });
