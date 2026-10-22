@@ -1,4 +1,6 @@
-import { Body, Controller, Get, Header, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpStatus, Param, Post, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
+import { renderChallengeOg } from './camo-og';
 import { ApiException } from '../../common/errors/api-exception';
 import { roomHash } from './camo-room';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -47,6 +49,19 @@ export class CamoController {
     return info;
   }
 
+  /**
+   * The 1200x630 preview card for a challenge link. An unknown or finished challenge gets the plain card, so the
+   * response never says whether an id exists, and nothing in it depends on where the hider is.
+   */
+  @Public()
+  @Get('challenges/:id/og.jpg')
+  async challengeOg(@Param('id') id: string, @Res() res: Response) {
+    const info = await this.camo.puzzles.publicInfo(id).catch(() => null);
+    const jpg = await renderChallengeOg(info?.roomId ?? 'locker_room', info?.attempts ?? 0, info?.found ?? 0);
+    res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=900, s-maxage=900', 'Cross-Origin-Resource-Policy': 'cross-origin' });
+    res.send(jpg);
+  }
+
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Get('my/progress')
@@ -89,6 +104,17 @@ export class CamoController {
     if (!this.camo.features().daily) return { enabled: false };
     const t = await this.camo.puzzles.today(this.camo.host);
     return { enabled: true, day: t.day, roomId: t.roomId, board: await this.camo.puzzles.board(t.day, 10) };
+  }
+
+  /** The daily board for the viewer's own governorate; `governorate: null` when the account has none yet. */
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('daily/governorate')
+  async dailyGovernorate(@CurrentUser() user: AuthenticatedUser) {
+    if (!this.camo.features().daily) return { enabled: false };
+    const t = await this.camo.puzzles.today(this.camo.host);
+    const gov = await this.camo.puzzles.governorateOf(user.id);
+    return { enabled: true, day: t.day, governorate: gov ? { nameAr: gov.nameAr, nameEn: gov.nameEn } : null, board: gov ? await this.camo.puzzles.boardForGovernorate(t.day, gov.id, 10) : [] };
   }
 
   @ApiBearerAuth()

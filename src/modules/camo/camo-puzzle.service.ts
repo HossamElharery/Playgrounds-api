@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -164,6 +165,27 @@ export class CamoPuzzleService {
     const users = await this.prisma.user.findMany({ where: { id: { in: rows.map((r) => r.userId).filter((x): x is string => !!x) } }, select: { id: true, name: true } });
     const name = new Map(users.map((u) => [u.id, u.name]));
     return rows.map((r, i) => ({ rank: i + 1, name: r.userId ? name.get(r.userId) ?? '?' : '?', foundMs: r.foundMs }));
+  }
+
+  /**
+   * The same board limited to one governorate (section 13). A player's governorate is resolved from their device and
+   * stays private: the board shows names and times of the people in it, and nothing says which governorate anyone is in.
+   */
+  async boardForGovernorate(day: string, governorateId: string, take = 10) {
+    const rows = await this.prisma.$queryRaw<Array<{ foundMs: number; name: string | null }>>(Prisma.sql`
+      SELECT a."foundMs" AS "foundMs", u."name" AS "name"
+      FROM "CamoPuzzleAttempt" a
+      JOIN "CamoPuzzle" p ON p."id" = a."puzzleId"
+      JOIN "User" u ON u."id" = a."userId"
+      WHERE p."dayKey" = ${day} AND a."success" = true AND a."foundMs" IS NOT NULL AND u."governorateId" = ${governorateId}
+      ORDER BY a."foundMs" ASC
+      LIMIT ${take}`);
+    return rows.map((r, i) => ({ rank: i + 1, name: r.name ?? '?', foundMs: r.foundMs }));
+  }
+
+  async governorateOf(userId: string): Promise<{ id: string; nameAr: string; nameEn: string } | null> {
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { governorate: { select: { id: true, nameAr: true, nameEn: true } } } });
+    return u?.governorate ?? null;
   }
 
   /** Daily cleanup: expired challenges and their attempts. */
