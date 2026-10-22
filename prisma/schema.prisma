@@ -3567,6 +3567,10 @@ model CamoStats {
   streak        Int      @default(0)
   dailyStreak   Int      @default(0)
   lastDailyDay  String?
+  coinsToday    Int      @default(0)
+  coinsDay      String?
+  missions      Json     @default("{}")
+  cosmetics     Json     @default("{\"owned\":[],\"equipped\":{}}")
   xp            Int      @default(0)
   level         Int      @default(1)
   updatedAt     DateTime @updatedAt @db.Timestamptz(3)

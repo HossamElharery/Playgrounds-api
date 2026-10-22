@@ -21,6 +21,15 @@ export const CAMO_DEFAULTS = Object.freeze({
   kickVoteMinYes: 3,
   voteCooldownSeconds: 180,
   noVoteLastSeconds: 20,
+  /** Progress and rewards (section 16): all tunable, none hard-coded in a rule. */
+  xpPerMatch: 20,
+  xpWinBonus: 40,
+  xpPerRedCard: 5,
+  xpPerSurvivedRound: 8,
+  coinsPerMatch: 8,
+  coinsWinBonus: 8,
+  coinsDailyCap: 100,
+  missionCoins: 15,
   /** Gameplay switches. */
   scanEnabled: true,
   maxMatches: 40,

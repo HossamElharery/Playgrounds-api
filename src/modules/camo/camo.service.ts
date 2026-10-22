@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CAMO_PROTOCOL_VERSION } from './camo-constants';
 import { camoDailyEnabled, camoDraining, camoEnabled, camoPublicMatchEnabled, camoVoiceEnabled } from './camo-flags';
 import { CamoHost, type CamoUser, type HostPolicy, type HostSink, type JoinResult } from './camo-host';
+import { CamoProgressService } from './camo-progress.service';
 import { CamoPuzzleService } from './camo-puzzle.service';
 import { CamoModerationService } from './camo-moderation.service';
 import { CamoSettingsService } from './camo-settings.service';
@@ -40,6 +41,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     private readonly settingsService: CamoSettingsService,
     readonly moderation: CamoModerationService,
     readonly puzzles: CamoPuzzleService,
+    readonly progress: CamoProgressService,
   ) {
     this.flags = this.settingsService.flagSource(this.config);
     const policy: HostPolicy = {
@@ -186,6 +188,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
             streak: won ? { increment: 1 } : 0,
           },
         });
+        await this.progress.award(p, won);
         await this.prisma.$executeRaw`UPDATE "CamoStats" SET "bestSurvivalMs" = GREATEST("bestSurvivalMs", ${p.match.bestSurvivalMs}) WHERE "userId" = ${p.userId}`;
       }
     } catch (err) {

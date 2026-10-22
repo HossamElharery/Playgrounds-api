@@ -597,7 +597,7 @@ export class CamoHost {
     for (const p of m.players) {
       p.total = 0;
       p.seekerRounds = 0;
-      p.match = { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [] };
+      p.match = { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [], stamps: 0 };
     }
     m.round = 0;
     m.rounds = [];

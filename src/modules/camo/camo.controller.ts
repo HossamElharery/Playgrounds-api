@@ -1,4 +1,4 @@
-import { Controller, Get, Header, HttpStatus, Param, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiException } from '../../common/errors/api-exception';
 import { roomHash } from './camo-room';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -45,6 +45,35 @@ export class CamoController {
     const info = await this.camo.puzzles.publicInfo(id);
     if (!info) throw new ApiException(HttpStatus.NOT_FOUND, 'CAMO_CHALLENGE_UNKNOWN', 'This challenge is gone');
     return info;
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('my/progress')
+  progress(@CurrentUser() user: AuthenticatedUser) {
+    return this.camo.progress.me(user.id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post('my/cosmetics/:id/buy')
+  async buy(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.camo.progress.buy(user.id, id).catch(() => ({ ok: false as const, reason: 'coins' as const }));
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post('my/cosmetics/equip')
+  equip(@CurrentUser() user: AuthenticatedUser, @Body() body: { kind?: string; id?: string | null }) {
+    const kinds = ['red_card_anim', 'var_frame', 'name_style', 'win_dance', 'taunt_sound'];
+    if (!kinds.includes(body?.kind ?? '')) return { ok: false };
+    return this.camo.progress.equip(user.id, body.kind as never, body.id ?? null);
+  }
+
+  @Public()
+  @Get('board')
+  board() {
+    return this.camo.progress.board();
   }
 
   @ApiBearerAuth()

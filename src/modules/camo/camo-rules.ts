@@ -115,7 +115,7 @@ export interface CamoPlayer {
   /** Seats this player silenced for themselves only (eids). */
   localMuted: Set<string>;
   /** Totals over the rounds of this match (what is stored when it ends). */
-  match: { roles: CamoRole[]; caught: number; cardsGiven: number; yellows: number; bestSurvivalMs: number; awards: CamoAward[] };
+  match: { roles: CamoRole[]; caught: number; cardsGiven: number; yellows: number; bestSurvivalMs: number; awards: CamoAward[]; stamps: number };
 }
 
 export type CamoEvent =
@@ -365,7 +365,7 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     lastInputAt: now,
     speakingUntil: 0,
     localMuted: new Set(),
-    match: { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [] },
+    match: { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [], stamps: 0 },
   };
   m.players.push(p);
   return p;
@@ -956,6 +956,7 @@ function endRound(m: CamoMatch, room: CamoRoomData, now: number, winner: 'hiders
     if (p.caughtAt !== null) p.match.caught++;
     p.match.cardsGiven += p.stats.redCards;
     p.match.yellows += p.stats.yellowCards;
+    p.match.stamps += p.paint.stamps;
     if (p.role === 'hider' || p.caughtAt !== null) p.match.bestSurvivalMs = Math.max(p.match.bestSurvivalMs, p.stats.survivedMs);
     for (const a of awards) if (a.eid === p.eid) p.match.awards.push(a.award);
   }
