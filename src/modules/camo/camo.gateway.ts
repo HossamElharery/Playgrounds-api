@@ -271,6 +271,16 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   // ── puzzles: link challenges and the daily Chameleon (section 13) ──────────────────────────
 
+  @SubscribeMessage('camo.tutorial.start')
+  async tutorialStart(@ConnectedSocket() client: Socket): Promise<unknown> {
+    return this.joinWith(client, (u) => this.camo.host.startTutorial(u));
+  }
+
+  @SubscribeMessage('camo.tutorial.go')
+  async tutorialGo(@ConnectedSocket() client: Socket): Promise<unknown> {
+    return this.input(client, (userId) => ({ ok: this.camo.host.tutorialGo(userId) }));
+  }
+
   @SubscribeMessage('camo.creator.start')
   async creatorStart(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
     const roomId = str(data?.['roomId']) ?? 'locker_room';

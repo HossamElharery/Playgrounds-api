@@ -67,6 +67,7 @@ export interface CamoPlayer {
   look: unknown;
   /** Party members share one vote (section 17a). */
   partyId: string | null;
+  flair: Flair | null;
   deviceId: string | null;
   role: CamoRole;
   /** Seekers this player was in earlier rounds (priority goes to the ones who have not). */
@@ -225,9 +226,18 @@ export interface CamoMatch {
   puzzle: PuzzleState | null;
   /** The creator of a link challenge: alone, hiding with the full prep time, until they press "make challenge". */
   creator: boolean;
+  /** The 60 s first-time coaching round: the human hides, a scripted bot walks by and does not see them. */
+  tutorial: boolean;
+}
+
+export interface Flair {
+  lv: number;
+  /** name_style, var_frame, red_card_anim, win_dance, taunt_sound ids. */
+  eq: Record<string, string>;
 }
 
 export interface NewPlayer {
+  flair?: Flair;
   userId: string | null;
   name: string;
   isBot: boolean;
@@ -292,6 +302,7 @@ export function createMatch(opts: {
     mod: newModeration(),
     puzzle: null,
     creator: false,
+    tutorial: false,
   };
 }
 
@@ -322,6 +333,7 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     guest: !!np.guest,
     look: np.look ?? null,
     partyId: np.partyId ?? null,
+    flair: np.flair ?? null,
     deviceId: np.deviceId ?? null,
     role: 'spectator',
     seekerRounds: 0,
@@ -469,7 +481,7 @@ function resetForRound(m: CamoMatch, room: CamoRoomData, now: number): void {
   m.closest = new Map();
   m.history = [];
   m.huntStartedAt = 0;
-  m.stoppageUsed = false;
+  m.stoppageUsed = m.tutorial;
   m.varSkipVotes = new Set();
 }
 
@@ -491,6 +503,8 @@ export function startRound(m: CamoMatch, room: CamoRoomData, now: number): void 
   if (!m.startedAt) m.startedAt = now;
   if (m.puzzle) {
     for (const p of m.players) p.role = p.isBot ? 'hider' : 'seeker';
+  } else if (m.tutorial) {
+    for (const p of m.players) p.role = p.isBot ? 'seeker' : 'hider';
   } else if (m.creator) {
     for (const p of m.players) p.role = 'hider';
   } else assignRoles(m);
@@ -873,7 +887,7 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
       return true;
     case 'results':
       if (now >= m.phaseEndsAt) {
-        if (m.round >= (m.puzzle ? 1 : ROUNDS_PER_MATCH)) {
+        if (m.round >= (m.puzzle || m.tutorial ? 1 : ROUNDS_PER_MATCH)) {
           m.phase = 'ended';
           m.endedAt = now;
           m.outbox.push({ t: 'match.end' });

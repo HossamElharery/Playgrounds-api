@@ -32,6 +32,8 @@ export function huntBlind(m: CamoMatch, v: Viewer): boolean {
 }
 
 export interface PlayerView {
+  lv?: number;
+  eq?: { ns?: string; rc?: string; vf?: string };
   eid: string;
   userId?: string;
   name?: string;
@@ -62,6 +64,10 @@ export function playersFor(m: CamoMatch, v: Viewer): PlayersPayload {
       base.name = p.name;
       base.isBot = p.isBot;
       base.guest = p.guest;
+      if (p.flair) {
+        base.lv = p.flair.lv;
+        base.eq = { ns: p.flair.eq['name_style'], rc: p.flair.eq['red_card_anim'], vf: p.flair.eq['var_frame'] };
+      }
     }
     players.push(base);
   }
@@ -144,13 +150,13 @@ export function stateFor(m: CamoMatch, v: Viewer | null, now: number): StateView
   return {
     matchId: m.id,
     roomId: m.roomId,
-    mode: m.puzzle ? 'puzzle' : m.creator ? 'creator' : m.mode,
+    mode: m.puzzle ? 'puzzle' : m.tutorial ? 'tutorial' : m.creator ? 'creator' : m.mode,
     isPrivate: m.isPrivate,
     code: m.isPrivate ? m.code : null,
     hostId: m.hostId,
     locked: m.locked,
     round: m.round,
-    rounds: m.puzzle ? 1 : 3,
+    rounds: m.puzzle || m.tutorial ? 1 : 3,
     phase: m.phase,
     endsAt: m.phaseEndsAt,
     you: me ? { eid: me.eid, role: me.role, suspendedUntil: me.suspendedUntil, yellows: me.yellows, stamina: Math.round(me.stamina * 10) / 10 } : null,

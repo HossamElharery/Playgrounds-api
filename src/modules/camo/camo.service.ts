@@ -57,7 +57,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       voiceOn: () => camoVoiceEnabled(this.flags),
       votes: () => this.settingsService.current,
       onModeration: (e) => this.moderation.record(e),
-      onMatchEnd: (m) => void (m.puzzle ? this.puzzles.finished(m) : this.persist(m)),
+      onMatchEnd: (m) => void (m.puzzle ? this.puzzles.finished(m) : m.tutorial || m.creator ? undefined : this.persist(m)),
     });
   }
 
@@ -115,7 +115,9 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     let morphId = u.isGuest ? GUEST_MORPH : (u.morphProfile?.equippedMorphId ?? CLASSIC);
     // Server-side safety net: a body that failed the M0 tests plays as classic in the match only.
     if (unsupported.includes(morphId)) morphId = CLASSIC;
-    const user: CamoUser = { userId: u.id, name: u.name, morphId, guest: u.isGuest, look: morphId === CLASSIC ? u.avatarConfig : undefined };
+    const looks = await this.progress.looksOf([u.id]).catch(() => ({}) as Record<string, { level: number; equipped: Record<string, string> }>);
+    const lk = looks[u.id];
+    const user: CamoUser = { userId: u.id, name: u.name, morphId, guest: u.isGuest, look: morphId === CLASSIC ? u.avatarConfig : undefined, flair: lk ? { lv: lk.level, eq: lk.equipped as Record<string, string> } : { lv: 1, eq: {} } };
     this.userCache.set(userId, { at: Date.now(), user });
     return user;
   }

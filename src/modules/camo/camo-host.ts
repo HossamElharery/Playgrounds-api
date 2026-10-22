@@ -6,7 +6,7 @@
 import { CAMO_PROTOCOL_VERSION, MAX_PLAYERS, MIN_PLAYERS, TIMERS, TAUNT, TICK_MS } from './camo-constants';
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
 import { M2_ROOMS } from './camo-rooms-m2';
-import { isWalkable, buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
+import { findPath, isWalkable, pushOut, buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
 import { MAX_STROKES_PER_PLAYER, decodeStrokes, encodeStrokes } from './camo-paint';
 import {
   acceptKick,
@@ -36,6 +36,7 @@ import {
   type PuzzleState,
 } from './camo-rules';
 import { SPEAKING_HOLD_MS, voiceMapFor } from './camo-voice';
+import type { Flair } from './camo-rules';
 import { castVote, logEvent, recentLog, startVote, stepVotes, tally, type RoomVote, type StartDenied, type VoteKind, type VoteResult, type VoteSettings } from './camo-moderation';
 import { paintTargets, playersFor, positionsFor, stateFor, varPayload, viewerOf } from './camo-views';
 
@@ -47,6 +48,8 @@ export interface CamoUser {
   look?: unknown;
   deviceId?: string | null;
   partyId?: string | null;
+  /** Level and equipped cosmetics other players may see (cosmetics only, never a play advantage). */
+  flair?: Flair;
 }
 
 export interface HostSink {
@@ -257,7 +260,7 @@ export class CamoHost {
   }
 
   private place(m: CamoMatch, u: CamoUser, now: number): CamoPlayer | null {
-    const p = addPlayer(m, { userId: u.userId, name: u.name, isBot: false, morphId: u.morphId, guest: u.guest, look: u.look, partyId: u.partyId ?? null, deviceId: u.deviceId ?? null }, now);
+    const p = addPlayer(m, { userId: u.userId, name: u.name, isBot: false, morphId: u.morphId, guest: u.guest, look: u.look, partyId: u.partyId ?? null, deviceId: u.deviceId ?? null, flair: u.flair }, now);
     if (!p) return null;
     this.byUser.set(u.userId, m.id);
     this.emptySince.delete(m.id);
@@ -360,6 +363,78 @@ export class CamoHost {
     this.afterOutbox(m, now);
     return { ok: true, matchId: m.id };
   }
+
+  /** The first-time coaching round (section 15): hide, pose, freeze; then a bot referee walks past and does not see you. */
+  startTutorial(u: CamoUser, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    const m = this.spawnMatch('locker_room', { isPrivate: true, hostId: u.userId, botsAllowed: false });
+    if (!m) return { ok: false, reason: 'busy' };
+    m.locked = true;
+    m.creator = true; // holds the preparation until the player finishes the steps
+    m.tutorial = true;
+    m.stoppageUsed = true; // no stoppage time in a coached round
+    m.timers.prepMs = 90_000;
+    m.timers.huntMs = 16_000;
+    if (!this.place(m, u, now)) return { ok: false, reason: 'full' };
+    addPlayer(m, { userId: null, name: '🟨', isBot: true, morphId: 'referee' }, now);
+    startRound(m, this.rooms.get(m.roomId)!.room, now);
+    this.afterOutbox(m, now);
+    return { ok: true, matchId: m.id };
+  }
+
+  /** The player finished the steps: release the prep, the whistle blows, the bot referee takes its walk. */
+  tutorialGo(userId: string, now = this.now): boolean {
+    const m = this.matchOf(userId);
+    if (!m || !m.tutorial || m.phase !== 'prep') return false;
+    m.creator = false;
+    m.phaseEndsAt = now;
+    return true;
+  }
+
+  /** The scripted walk of the tutorial's referee: to 1.6 m from the hider, a pause, then away. It never tags. */
+  private tutorialWalk(m: CamoMatch, now: number): void {
+    const bot = m.players.find((p) => p.isBot);
+    const me = m.players.find((p) => !p.isBot);
+    const entry = this.rooms.get(m.roomId);
+    if (!bot || !me || !entry || m.phase !== 'hunt') return;
+    const t = this.tut.get(m.id) ?? (() => {
+      const door = entry.room.refereeRoom.door;
+      const goal = pushOut(entry.room, me.x + 1.6, me.z + 1.0);
+      const there = findPath(entry.grid, { x: door.x, z: door.z - 0.6 }, goal) ?? [goal];
+      const away = findPath(entry.grid, goal, { x: 8, z: 5 }) ?? [{ x: 8, z: 5 }];
+      const st = { path: [...there, ...away], i: 0, pauseUntil: 0, pauseAt: there.length - 1, last: now };
+      this.tut.set(m.id, st);
+      bot.x = door.x;
+      bot.z = door.z - 0.6;
+      return st;
+    })();
+    const dt = Math.min(0.2, (now - t.last) / 1000);
+    t.last = now;
+    if (t.i >= t.path.length) return;
+    if (t.i === t.pauseAt && t.pauseUntil === 0) t.pauseUntil = now + 2_200;
+    if (t.pauseUntil && now < t.pauseUntil) {
+      bot.yaw = Math.atan2(me.x - bot.x, me.z - bot.z);
+      bot.vx = bot.vz = 0;
+      return;
+    }
+    const to = t.path[t.i];
+    const dx = to.x - bot.x;
+    const dz = to.z - bot.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.15) {
+      t.i++;
+      return;
+    }
+    const step = Math.min(d, 2.4 * dt);
+    bot.x += (dx / d) * step;
+    bot.z += (dz / d) * step;
+    bot.yaw = Math.atan2(dx, dz);
+    bot.vx = (dx / d) * 2.4;
+    bot.vz = (dz / d) * 2.4;
+  }
+
+  private readonly tut = new Map<string, { path: Array<{ x: number; z: number }>; i: number; pauseUntil: number; pauseAt: number; last: number }>();
 
   /** A challenge creator hides alone in a locked room (90 s of preparation, no seekers). */
   startCreator(u: CamoUser, roomId: string, now = this.now): JoinResult {
@@ -630,6 +705,7 @@ export class CamoHost {
       this.watchAfk(m, now);
       this.stepModeration(m, now);
       this.brains.get(m.id)?.tick(m, now);
+      if (m.tutorial) this.tutorialWalk(m, now);
       const alive = step(m, entry.room, now);
       this.afterOutbox(m, now);
       if ((m.phase as string) !== 'ended') this.broadcastPositions(m, entry.room, now);

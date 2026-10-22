@@ -102,4 +102,27 @@ describe('camo puzzles', () => {
     expect([a(), a(), a()]).toEqual([b(), b(), b()]);
     expect(decodeStrokes(encodeStrokes(strokes))!.length).toBe(1);
   });
+
+  it('the tutorial holds the prep, then a bot referee walks past the hider and never tags', () => {
+    const { host, advance, ended } = harness();
+    expect(host.startTutorial(user(3)).ok).toBe(true);
+    const m = host.matchOf('u3')!;
+    advance(5_000);
+    expect(m.phase).toBe('prep');
+    advance(120_000); // the player takes their time
+    expect(m.phase).toBe('prep');
+    const me = m.players.find((p) => !p.isBot)!;
+    const bot = m.players.find((p) => p.isBot)!;
+    expect(me.role).toBe('hider');
+    expect(bot.role).toBe('seeker');
+    expect(host.tutorialGo('u3')).toBe(true);
+    let nearest = Infinity;
+    for (let i = 0; i < 260; i++) {
+      advance(100);
+      if (m.phase === 'hunt') nearest = Math.min(nearest, Math.hypot(bot.x - me.x, bot.z - me.z));
+    }
+    expect(nearest).toBeLessThan(2.6);
+    expect(me.alive).toBe(true);
+    expect(m.rounds[0]?.winner).toBe('hiders');
+  });
 });
