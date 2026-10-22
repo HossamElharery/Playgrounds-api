@@ -33,6 +33,7 @@ import {
   type CamoMatch,
   type CamoPlayer,
 } from './camo-rules';
+import { castVote, logEvent, recentLog, startVote, stepVotes, tally, type RoomVote, type StartDenied, type VoteKind, type VoteResult, type VoteSettings } from './camo-moderation';
 import { paintTargets, playersFor, positionsFor, stateFor, varPayload, viewerOf } from './camo-views';
 
 export interface CamoUser {
@@ -56,6 +57,14 @@ export interface HostPolicy {
   denied(userId: string): string | null;
 }
 
+export const DEFAULT_VOTES: VoteSettings = { muteVoteSeconds: 20, muteVoteMinYes: 2, kickVotePct: 0.6, kickVoteMinYes: 3, voteCooldownSeconds: 180, noVoteLastSeconds: 20 };
+
+export type ModerationEvent =
+  | { type: 'vote.start'; matchId: string; voteId: string; kind: VoteKind; by: string; target: string }
+  | { type: 'vote.end'; matchId: string; voteId: string; kind: VoteKind; passed: boolean; yes: string[]; target: string; by: string }
+  | { type: 'mute'; matchId: string; target: string; by: string | 'vote' }
+  | { type: 'kick'; matchId: string; target: string; by: string | 'vote'; voters: string[]; ban: boolean };
+
 export interface HostOptions {
   maxMatches: number;
   now: () => number;
@@ -65,6 +74,10 @@ export interface HostOptions {
   onMatchOpen?: (m: CamoMatch) => void;
   /** Only the room ids the owner enabled; default: the locker room. */
   rooms?: () => readonly string[];
+  /** Vote numbers (section 17a); the admin settings feed this. */
+  votes?: () => VoteSettings;
+  /** Everything a moderator or the audit log wants to know (votes, kicks, mutes); the host never touches a database. */
+  onModeration?: (e: ModerationEvent) => void;
   /** Sleeps the wait for a public lobby (tests). */
   waitMs?: number;
 }
@@ -346,7 +359,7 @@ export class CamoHost {
 
   private beginMatch(m: CamoMatch, now: number): void {
     const room = this.rooms.get(m.roomId)!.room;
-    if (m.botsAllowed) fillWithBots(m, now, (i) => BOT_NAMES_AR[(i * 7 + Math.floor(m.rng() * 40)) % BOT_NAMES_AR.length], ['potato', 'banana', 'penguin', 'camel', 'keeper', 'referee', 'dino', 'robot', 'ultra', 'gamer', 'cactus', 'ghost', 'taameya', 'classic']);
+    if (m.botsAllowed) fillWithBots(m, now, (i) => BOT_NAMES_AR[(i * 7 + Math.floor(m.rng() * 200)) % BOT_NAMES_AR.length], ['potato', 'banana', 'penguin', 'camel', 'keeper', 'referee', 'dino', 'robot', 'ultra', 'gamer', 'cactus', 'ghost', 'taameya', 'classic']);
     if (m.players.length < MIN_PLAYERS) {
       // too few people and no bots: wait for more
       m.phaseEndsAt = now + 5_000;
@@ -558,6 +571,7 @@ export class CamoHost {
       }
       if (m.phase === 'ended') continue;
       this.watchAfk(m, now);
+      this.stepModeration(m, now);
       this.brains.get(m.id)?.tick(m, now);
       const alive = step(m, entry.room, now);
       this.afterOutbox(m, now);
@@ -643,8 +657,152 @@ export class CamoHost {
     this.broadcastState(m, this.now);
   }
 
+  // ── moderation (section 17a) ─────────────────────────────────────────────────
+
+  private get voteCfg(): VoteSettings {
+    return this.o.votes?.() ?? DEFAULT_VOTES;
+  }
+
+  private voteView(m: CamoMatch, v: RoomVote): unknown {
+    const t = tally(m, v, this.voteCfg);
+    const target = m.players.find((p) => p.eid === v.targetEid);
+    return { id: v.id, kind: v.kind, eid: v.targetEid, name: target?.name, endsAt: v.endsAt, yes: t.yes, no: t.no, needed: t.needed, groups: t.groups };
+  }
+
+  voteStart(userId: string, eid: string, kind: VoteKind, now = this.now): { ok: true; voteId: string } | { ok: false; reason: StartDenied | 'not_in_room' } {
+    const m = this.matchOf(userId);
+    if (!m) return { ok: false, reason: 'not_in_room' };
+    const r = startVote(m, userId, eid, kind, this.voteCfg, now);
+    if (!r.ok) return r;
+    logEvent(m, 'vote.start', { kind, target: r.vote.targetEid }, now);
+    this.o.onModeration?.({ type: 'vote.start', matchId: m.id, voteId: r.vote.id, kind, by: userId, target: r.vote.targetUserId });
+    const view = this.voteView(m, r.vote);
+    for (const p of this.humans(m)) if (p.userId !== r.vote.targetUserId) this.o.sink.emit(p.userId!, 'camo.vote', view);
+    return { ok: true, voteId: r.vote.id };
+  }
+
+  voteCast(userId: string, voteId: string, yes: boolean): boolean {
+    const m = this.matchOf(userId);
+    if (!m || !castVote(m, userId, voteId, yes)) return false;
+    const v = m.mod.votes.get(voteId);
+    if (v) {
+      const view = this.voteView(m, v);
+      for (const p of this.humans(m)) if (p.userId !== v.targetUserId) this.o.sink.emit(p.userId!, 'camo.vote', view);
+    }
+    return true;
+  }
+
+  isMuted(userId: string): boolean {
+    const m = this.matchOf(userId);
+    return !!m && m.mod.muted.has(userId);
+  }
+
+  /** The seats muted in this room (by eid), for a joining or returning client. */
+  mutedEids(m: CamoMatch): string[] {
+    return m.players.filter((p) => p.userId && m.mod.muted.has(p.userId)).map((p) => p.eid);
+  }
+
+  private applyMute(m: CamoMatch, userId: string, by: string): void {
+    const p = playerByUser(m, userId);
+    if (!p || m.mod.muted.has(userId)) return;
+    m.mod.muted.add(userId);
+    this.o.onModeration?.({ type: 'mute', matchId: m.id, target: userId, by });
+    for (const h of this.humans(m)) this.o.sink.emit(h.userId!, 'camo.muted', { eid: p.eid, self: h.userId === userId });
+  }
+
+  private applyKick(m: CamoMatch, userId: string, by: string, voters: string[], ban: boolean, now: number): void {
+    const p = playerByUser(m, userId);
+    if (!p) return;
+    this.o.onModeration?.({ type: 'kick', matchId: m.id, target: userId, by, voters, ban });
+    if (ban) m.banned.add(userId);
+    this.o.sink.emit(userId, 'camo.kicked', { reason: by === 'vote' ? 'vote' : 'host' });
+    this.leave(userId, now, false);
+  }
+
+  private stepModeration(m: CamoMatch, now: number): void {
+    const cfg = this.voteCfg;
+    const results: VoteResult[] = stepVotes(m, cfg, now);
+    for (const r of results) {
+      this.o.onModeration?.({ type: 'vote.end', matchId: m.id, voteId: r.vote.id, kind: r.vote.kind, passed: r.passed, yes: r.voters, target: r.vote.targetUserId, by: r.vote.startedBy });
+      const view = { ...(this.voteView(m, r.vote) as object), passed: r.passed, closed: true };
+      for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.vote', view);
+      if (!r.passed) continue;
+      if (r.vote.kind === 'mute') this.applyMute(m, r.vote.targetUserId, 'vote');
+      // a kick that passes while the round is nearly over (or in the VAR) waits for the round to end
+      else if (m.phase === 'var' || m.phase === 'results' || (m.phase === 'hunt' && m.phaseEndsAt - now < cfg.noVoteLastSeconds * 1000)) m.mod.deferred.push({ userId: r.vote.targetUserId, voters: r.voters });
+      else this.applyKick(m, r.vote.targetUserId, 'vote', r.voters, true, now);
+    }
+    if (m.mod.deferred.length && (m.phase === 'results' || m.phase === 'ended')) {
+      for (const d of m.mod.deferred.splice(0)) this.applyKick(m, d.userId, 'vote', d.voters, true, now);
+    }
+  }
+
+  /** What a report about someone in this room carries: phase, round and the last minute of events. */
+  reportContext(userId: string, now = this.now): { matchId: string; round: number; phase: string; log: unknown[] } | null {
+    const m = this.matchOf(userId);
+    if (!m) return null;
+    return { matchId: m.id, round: m.round, phase: m.phase, log: recentLog(m, now) };
+  }
+
+  /** Who a seat (eid) is, for the viewer's own room only (reports and votes name seats, never user ids). */
+  userOfEid(viewerId: string, eid: string): { userId: string; name: string; partyId: string | null } | null {
+    const m = this.matchOf(viewerId);
+    const p = m?.players.find((x) => x.eid === eid);
+    return p?.userId && !p.isBot ? { userId: p.userId, name: p.name, partyId: p.partyId } : null;
+  }
+
+  partyOf(userId: string): string | null {
+    const m = this.matchOf(userId);
+    return m ? playerByUser(m, userId)?.partyId ?? null : null;
+  }
+
+  /** The running rooms for the admin tab: names and counts only, no hider positions. */
+  liveRooms(): Array<{ id: string; roomId: string; private: boolean; code: string | null; phase: string; round: number; humans: Array<{ userId: string; name: string; muted: boolean; guest: boolean }>; bots: number }> {
+    return [...this.matches.values()].map((m) => ({
+      id: m.id,
+      roomId: m.roomId,
+      private: m.isPrivate,
+      code: m.code,
+      phase: m.phase,
+      round: m.round,
+      humans: m.players.filter((p) => !p.isBot && p.userId).map((p) => ({ userId: p.userId!, name: p.name, muted: m.mod.muted.has(p.userId!), guest: p.guest })),
+      bots: m.players.filter((p) => p.isBot).length,
+    }));
+  }
+
+  /** An admin removes someone from a live room (a bot takes the seat). */
+  adminKick(matchId: string, userId: string, now = this.now): boolean {
+    const m = this.matches.get(matchId);
+    if (!m || !playerByUser(m, userId)) return false;
+    this.applyKick(m, userId, 'admin', [], true, now);
+    return true;
+  }
+
+  adminCloseRoom(matchId: string): boolean {
+    const m = this.matches.get(matchId);
+    if (!m) return false;
+    for (const p of this.humans(m)) {
+      this.o.sink.emit(p.userId!, 'camo.kicked', { reason: 'closed' });
+      this.byUser.delete(p.userId!);
+    }
+    this.closeMatch(m);
+    return true;
+  }
+
+  /** A private room's host acts directly, no vote: mute, kick, or kick and bar the way back. */
+  hostAct(userId: string, eid: string, action: 'mute' | 'kick' | 'ban', now = this.now): boolean {
+    const m = this.matchOf(userId);
+    if (!m || !m.isPrivate || m.hostId !== userId) return false;
+    const target = m.players.find((p) => p.eid === eid);
+    if (!target || !target.userId || target.userId === userId || target.isBot) return false;
+    if (action === 'mute') this.applyMute(m, target.userId, userId);
+    else this.applyKick(m, target.userId, userId, [], action === 'ban', now);
+    return true;
+  }
+
   sendSnapshot(m: CamoMatch, p: CamoPlayer): void {
     if (!p.userId) return;
+    for (const eid of this.mutedEids(m)) this.o.sink.emit(p.userId, 'camo.muted', { eid, self: m.players.find((x) => x.eid === eid)?.userId === p.userId });
     const room = this.rooms.get(m.roomId)!.room;
     const now = this.now;
     const v = viewerOf(p);
@@ -706,6 +864,7 @@ export class CamoHost {
   }
 
   private route(m: CamoMatch, e: CamoEvent, now: number): void {
+    if (e.t === 'card' || e.t === 'caught' || e.t === 'whistle' || e.t === 'taunt' || e.t === 'round.end') logEvent(m, e.t, { ...e }, now);
     const send = (event: string, payload: unknown, filter?: (p: CamoPlayer) => boolean): void => {
       for (const p of this.humans(m)) if (!filter || filter(p)) this.o.sink.emit(p.userId!, event, payload);
     };

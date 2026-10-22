@@ -709,6 +709,7 @@ export class LobbyWorldService implements OnModuleDestroy {
     level: DakhlaLevel,
     now: number,
   ): DakhlaView | null {
+    if (this.externalBusy?.(userId)) return null;
     return this.dakhla.start(squadId, userId, chant, level, now);
   }
 
@@ -738,6 +739,7 @@ export class LobbyWorldService implements OnModuleDestroy {
 
   // ── «حرامي الكورة» ──
   startThief(squadId: string, userId: string, now: number): ThiefView | null {
+    if (this.externalBusy?.(userId)) return null;
     if (!this.hasBall(squadId)) this.ensureBall(squadId);
     return this.thief.start(squadId, userId, now);
   }
@@ -800,6 +802,24 @@ export class LobbyWorldService implements OnModuleDestroy {
     );
   }
 
+  /** A player is in one game at a time: another module (the camo game) reports who it is holding. */
+  private externalBusy: ((userId: string) => boolean) | null = null;
+
+  setExternalBusy(fn: ((userId: string) => boolean) | null): void {
+    this.externalBusy = fn;
+  }
+
+  /** Whether the user takes part in a live lobby game of any of their squads right now. */
+  userInLobbyGame(userId: string): boolean {
+    for (const [squadId, members] of this.squads) {
+      if (!members.has(userId)) continue;
+      const pen = this.penalties.get(squadId);
+      if (pen && pen.phase !== 'ended' && pen.order.includes(userId)) return true;
+      if (this.dakhla.active(squadId) || this.thief.active(squadId)) return true;
+    }
+    return false;
+  }
+
   private penaltyLive(squadId: string): boolean {
     const pen = this.penalties.get(squadId);
     return !!pen && pen.phase !== 'ended';
@@ -816,6 +836,7 @@ export class LobbyWorldService implements OnModuleDestroy {
   ): PenaltyView | null {
     const existing = this.penalties.get(squadId);
     if (existing && existing.phase !== 'ended') return null;
+    if (this.externalBusy?.(userId)) return null;
     if (this.dakhla.active(squadId) || this.thief.active(squadId)) return null;
     const members = this.squads.get(squadId);
     if (!members?.has(userId)) return null;

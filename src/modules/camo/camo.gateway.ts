@@ -12,7 +12,20 @@ import {
 import { Server, Socket } from 'socket.io';
 import { camoEnabled, camoPublicMatchEnabled } from './camo-flags';
 import type { JoinResult } from './camo-host';
+import { LobbyWorldService } from '../lobby-world/lobby-world.service';
 import { CamoService } from './camo.service';
+
+const INVITE_MS = 15_000;
+
+interface SquadInvite {
+  id: string;
+  squadId: string;
+  hostId: string;
+  hostName: string;
+  code: string;
+  expiresAt: number;
+  invited: Set<string>;
+}
 
 type Body = Record<string, unknown> | null | undefined;
 
@@ -31,9 +44,18 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   constructor(
     private readonly config: ConfigService,
     private readonly camo: CamoService,
+    private readonly lobby: LobbyWorldService,
   ) {}
 
+  private readonly invites = new Map<string, SquadInvite>();
+  /** Squad members currently inside a camo match, per squad (for the lobby badge). */
+  private readonly squadPlaying = new Map<string, Set<string>>();
+  private sweeper: ReturnType<typeof setInterval> | null = null;
+
   afterInit(): void {
+    this.lobby.setExternalBusy((userId) => this.camo.host.isPlaying(userId));
+    this.sweeper = setInterval(() => this.sweepSquads(), 5000);
+    this.sweeper.unref?.();
     this.camo.attachSink({
       emit: (userId, event, payload, volatile) => {
         const room = this.server?.to(`user:${userId}`);
@@ -45,6 +67,8 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   }
 
   onModuleDestroy(): void {
+    if (this.sweeper) clearInterval(this.sweeper);
+    this.lobby.setExternalBusy(null);
     this.camo.attachSink(null);
   }
 
@@ -81,7 +105,8 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     if (prev && prev !== client.id) this.server.to(prev).emit('camo.superseded', {});
     this.active.set(userId, client.id);
     const resumed = this.camo.host.reconnect(userId);
-    return { ok: true, resumed, ...verdict, features: this.camo.features() };
+    const notices = await this.camo.moderation.notices(userId).catch(() => null);
+    return { ok: true, resumed, ...verdict, features: this.camo.features(), notices };
   }
 
   private async joinWith(client: Socket, fn: (u: NonNullable<Awaited<ReturnType<CamoService['userFor']>>>) => JoinResult): Promise<unknown> {
@@ -89,6 +114,7 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     if (!userId || !this.owns(userId, client)) return { ok: false, reason: 'not_ready' };
     const drain = this.camo.drainResult();
     if (drain) return drain;
+    if (this.lobby.userInLobbyGame(userId)) return { ok: false, reason: 'in_lobby_game' };
     const user = await this.camo.userFor(userId);
     if (!user) return { ok: false, reason: 'denied', detail: 'account' };
     await this.camo.prepare(userId);
@@ -124,6 +150,95 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     );
   }
 
+  // ── squad play (section 4.1b): the host starts, the squad gets a 15 s invite ──────────────
+
+  private publishSquad(squadId: string): void {
+    const live = [...(this.squadPlaying.get(squadId) ?? [])].filter((id) => this.camo.host.isPlaying(id));
+    if (live.length) this.squadPlaying.set(squadId, new Set(live));
+    else this.squadPlaying.delete(squadId);
+    this.server?.to(`squad:${squadId}`).emit('camo.lobby.status', { squadId, playingUserIds: live });
+  }
+
+  private sweepSquads(): void {
+    const now = Date.now();
+    for (const [id, inv] of this.invites) if (inv.expiresAt + 60_000 < now) this.invites.delete(id);
+    for (const squadId of [...this.squadPlaying.keys()]) this.publishSquad(squadId);
+  }
+
+  @SubscribeMessage('camo.squad.start')
+  async squadStart(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const squadId = str(data?.['squadId']);
+    if (!squadId || !client.rooms.has(`squad:${squadId}`)) return { ok: false, reason: 'denied' };
+    const userId = await this.who(client);
+    if (!userId) return { ok: false, reason: 'disabled' };
+    const mode = data?.['mode'] === 'contagion' ? 'contagion' : 'classic';
+    const made = (await this.joinWith(client, (u) => this.camo.host.createPrivate(u, { mode, bots: num(data?.['bots']) ?? 5 }))) as JoinResult;
+    if (!made.ok || !made.code) return made;
+    const hostUser = await this.camo.userFor(userId);
+    const sockets = await this.server.in(`squad:${squadId}`).fetchSockets();
+    const invited = new Set<string>();
+    for (const s of sockets) {
+      const id = authedUserId(s as unknown as Socket);
+      if (id && id !== userId) invited.add(id);
+    }
+    const invite: SquadInvite = { id: `si${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`, squadId, hostId: userId, hostName: hostUser?.name ?? '', code: made.code, expiresAt: Date.now() + INVITE_MS, invited };
+    this.invites.set(invite.id, invite);
+    for (const id of invited) this.server.to(`user:${id}`).emit('camo.squad.invite', { inviteId: invite.id, squadId, hostName: invite.hostName, expiresAt: invite.expiresAt });
+    (this.squadPlaying.get(squadId) ?? this.squadPlaying.set(squadId, new Set()).get(squadId)!).add(userId);
+    this.publishSquad(squadId);
+    return { ...made, invited: invited.size };
+  }
+
+  @SubscribeMessage('camo.squad.respond')
+  async squadRespond(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const inv = this.invites.get(str(data?.['inviteId']) ?? '');
+    const userId = await this.who(client);
+    if (!inv || !userId || !inv.invited.has(userId) || !client.rooms.has(`squad:${inv.squadId}`)) return { ok: false, reason: 'unknown_code' };
+    if (data?.['accept'] !== true) {
+      inv.invited.delete(userId);
+      return { ok: true, declined: true };
+    }
+    if (Date.now() > inv.expiresAt + 20_000) return { ok: false, reason: 'unknown_code' };
+    const joined = (await this.joinWith(client, (u) => this.camo.host.joinPrivate(u, inv.code))) as JoinResult;
+    if (joined.ok) {
+      this.squadPlaying.get(inv.squadId)?.add(userId);
+      this.publishSquad(inv.squadId);
+    }
+    return joined;
+  }
+
+  // ── moderation (section 17a): votes, host powers, reports. Seats are named by eid, never by user id. ──
+
+  @SubscribeMessage('camo.vote.start')
+  async voteStart(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const eid = str(data?.['eid']);
+    const kind = data?.['kind'] === 'kick' ? 'kick' : data?.['kind'] === 'mute' ? 'mute' : null;
+    return this.input(client, (userId) => (eid && kind ? this.camo.host.voteStart(userId, eid, kind) : { ok: false, reason: 'unknown' }));
+  }
+
+  @SubscribeMessage('camo.vote.cast')
+  async voteCast(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const id = str(data?.['voteId']);
+    return this.input(client, (userId) => ({ ok: !!id && this.camo.host.voteCast(userId, id, data?.['yes'] === true) }));
+  }
+
+  @SubscribeMessage('camo.host.act')
+  async hostAct(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const eid = str(data?.['eid']);
+    const a = data?.['action'];
+    const action = a === 'mute' || a === 'kick' || a === 'ban' ? a : null;
+    return this.input(client, (userId) => ({ ok: !!eid && !!action && this.camo.host.hostAct(userId, eid, action) }));
+  }
+
+  @SubscribeMessage('camo.report')
+  async report(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const userId = await this.who(client);
+    const eid = str(data?.['eid']);
+    const reason = str(data?.['reason']);
+    if (!userId || !this.owns(userId, client) || !eid || !reason) return { ok: false, reason: 'unknown' };
+    return this.camo.moderation.report(this.camo.host, userId, { eid, reason, note: str(data?.['note'], 300) ?? undefined });
+  }
+
   @SubscribeMessage('camo.private.join')
   async privateJoin(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
     const code = str(data?.['code'], 12);
@@ -153,7 +268,10 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   @SubscribeMessage('camo.leave')
   async leave(@ConnectedSocket() client: Socket): Promise<unknown> {
     const userId = await this.who(client);
-    if (userId && this.owns(userId, client)) this.camo.host.leave(userId);
+    if (userId && this.owns(userId, client)) {
+      this.camo.host.leave(userId);
+      for (const squadId of [...this.squadPlaying.keys()]) if (this.squadPlaying.get(squadId)?.has(userId)) this.publishSquad(squadId);
+    }
     return { ok: true };
   }
 

@@ -1,0 +1,33 @@
+// Squad play smoke (section 4.1b): host starts from a squad, member gets the invite, accepts and lands in the same room.
+import { io } from '/Users/hossamelharery/Documents/Playgrounds/angular/node_modules/socket.io-client/build/esm/index.js';
+const API = process.env.API || 'http://localhost:3050';
+const post = async (path, token, body) => (await fetch(`${API}/api/v1${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body ?? {}) })).json();
+const guest = async (i) => { const j = await post('/auth/guest/play', null, { name: `Sq${i}`, deviceId: `sq-${Date.now()}-${i}` }); return { token: j.result.accessToken, id: j.result.user.id, name: j.result.user.name }; };
+const ack = (s, ev, body) => new Promise((res) => s.emit(ev, body, res));
+const A = await guest(1), B = await guest(2);
+// squads need real accounts: promote the two throwaway guests in the SCRATCH database only
+const { execFileSync } = await import('node:child_process');
+const db = process.env.CAMO_DB || 'camo_scratch_20261022';
+if (!/scratch/.test(db)) throw new Error('refusing: not a scratch db');
+execFileSync('psql', ['-d', db, '-c', `UPDATE "User" SET "isGuest"=false WHERE id IN ('${A.id}','${B.id}')`]);
+const start = await post('/squad/start', A.token); console.log('squad.start', JSON.stringify(start).slice(0, 160));
+const squadId = start.result?.squadId;
+const link = await post('/squad/invite-link', A.token); const token = link.result?.token ?? link.result?.url?.split('/').pop();
+console.log('link', JSON.stringify(link).slice(0, 120));
+const joined = await post(`/squad/join-link/${token}/join`, B.token); console.log('join', JSON.stringify(joined).slice(0, 160));
+const connect = async (g) => { const s = io(API, { auth: { token: g.token }, transports: ['websocket'] }); g.events = []; s.onAny((e, p) => g.events.push([e, p])); await new Promise((r) => s.on('connect', r)); await new Promise((r) => setTimeout(r, 500)); g.socket = s; };
+await connect(A); await connect(B);
+for (const g of [A, B]) g.socket.emit('squad.lobby.join', { squadId });
+await new Promise((r) => setTimeout(r, 800));
+for (const g of [A, B]) console.log(g.name, 'hello', JSON.stringify((await ack(g.socket, 'camo.hello', { protocolVersion: 1 })).ok));
+const r = await ack(A.socket, 'camo.squad.start', { squadId, bots: 3 }); console.log('A squad.start ->', JSON.stringify(r));
+await new Promise((res) => setTimeout(res, 600));
+const inv = B.events.find(([e]) => e === 'camo.squad.invite'); console.log('B got invite:', JSON.stringify(inv?.[1]));
+const dup = await ack(A.socket, 'camo.queue.join', { roomId: 'any' }); console.log('A queue while hosting ->', JSON.stringify(dup));
+const acc = await ack(B.socket, 'camo.squad.respond', { inviteId: inv?.[1]?.inviteId, accept: true }); console.log('B respond ->', JSON.stringify(acc));
+await new Promise((res) => setTimeout(res, 800));
+const st = (g) => g.events.filter(([e]) => e === 'camo.lobby.status').pop()?.[1]; console.log('lobby status', JSON.stringify(st(A)));
+const same = acc.matchId && r.matchId === acc.matchId; console.log('same match:', same);
+await ack(B.socket, 'camo.leave', {}); await new Promise((res) => setTimeout(res, 500));
+console.log('after B leaves', JSON.stringify(st(A)));
+process.exit(same ? 0 : 1);

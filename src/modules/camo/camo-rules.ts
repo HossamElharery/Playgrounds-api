@@ -2,6 +2,7 @@
  * The rules of «استغماية»: pure, deterministic (every random draw comes from the match's seeded `rng`) and free of
  * Nest, sockets and the database. The host feeds it moves and kicks, calls `step` every tick, and drains `outbox`.
  */
+import { newModeration, type ModerationState } from './camo-moderation';
 import {
   AWARDS,
   CARD,
@@ -200,6 +201,8 @@ export interface CamoMatch {
   varSkipVotes: Set<string>;
   /** Private rooms: who was banned from this room instance (user ids). */
   banned: Set<string>;
+  /** Room votes, mutes and cooldowns (section 17a). */
+  mod: ModerationState;
 }
 
 export interface NewPlayer {
@@ -264,6 +267,7 @@ export function createMatch(opts: {
     endedAt: null,
     varSkipVotes: new Set(),
     banned: new Set(),
+    mod: newModeration(),
   };
 }
 
