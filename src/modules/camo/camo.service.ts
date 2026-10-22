@@ -61,12 +61,18 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private settingsTimer: NodeJS.Timeout | null = null;
+
   onModuleInit(): void {
     void this.settingsService.load();
+    // other API instances and the admin tab write the settings: pick changes up every 30 s
+    this.settingsTimer = setInterval(() => void this.settingsService.load(true), 30_000);
+    this.settingsTimer.unref?.();
     this.host.start();
   }
 
   onModuleDestroy(): void {
+    if (this.settingsTimer) clearInterval(this.settingsTimer);
     this.host.dispose();
   }
 
