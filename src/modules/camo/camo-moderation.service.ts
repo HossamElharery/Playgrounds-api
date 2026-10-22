@@ -59,13 +59,14 @@ export class CamoModerationService {
     const priorForTarget = await this.prisma.camoReport.count({ where: { targetUserId: target.userId } });
     const row = await this.prisma.camoReport.create({
       data: {
-        matchId: context.matchId || null,
+        // the match row only exists once the match ends, so a live report keeps the id inside its context
+        matchId: null,
         reporterId,
         targetUserId: target.userId,
         round: context.round,
         reason: input.reason,
         note: input.note?.slice(0, 300) ?? null,
-        context: JSON.parse(JSON.stringify({ phase: context.phase, log: context.log, priorReports: priorForTarget, reporterParty: host.partyOf(reporterId) })),
+        context: JSON.parse(JSON.stringify({ matchId: context.matchId, phase: context.phase, log: context.log, priorReports: priorForTarget, reporterParty: host.partyOf(reporterId) })),
       },
     });
     await this.applyLadder(target.userId, row.id).catch((err) => this.logger.warn(`ladder failed: ${err instanceof Error ? err.message : err}`));
@@ -76,7 +77,7 @@ export class CamoModerationService {
     const cfg = this.settings.current;
     const from = new Date(Date.now() - cfg.reportWindowHours * 3_600_000);
     const rows = await this.prisma.camoReport.findMany({ where: { targetUserId, createdAt: { gte: from } }, select: { id: true, reporterId: true, matchId: true, reason: true, createdAt: true, context: true } });
-    const asRows: ReportRow[] = rows.map((r) => ({ id: r.id, reporterId: r.reporterId, matchId: r.matchId, partyKey: ((r.context as { reporterParty?: string | null } | null)?.reporterParty ?? null) as string | null, reason: r.reason, createdAt: r.createdAt.getTime() }));
+    const asRows: ReportRow[] = rows.map((r) => ({ id: r.id, reporterId: r.reporterId, matchId: ((r.context as { matchId?: string } | null)?.matchId ?? r.matchId) as string | null, partyKey: ((r.context as { reporterParty?: string | null } | null)?.reporterParty ?? null) as string | null, reason: r.reason, createdAt: r.createdAt.getTime() }));
     const counted = countedReports(asRows, Date.now(), cfg);
     await this.prisma.camoReport.updateMany({ where: { id: { in: counted.map((c) => c.id) } }, data: { counted: true } });
     const prior = await this.prisma.camoSanction.findMany({ where: { userId: targetUserId, kind: 'voice_restrict' }, select: { createdAt: true } });
@@ -97,6 +98,17 @@ export class CamoModerationService {
     const rows = await this.prisma.camoSanction.findMany({ where: { userId, OR: [{ until: null }, { until: { gt: now } }] }, select: { kind: true, until: true } });
     const restrict = rows.find((r) => r.kind === 'voice_restrict');
     return { warn: rows.some((r) => r.kind === 'warn'), voiceRestrictedUntil: restrict?.until?.getTime() ?? null, nameHidden: rows.some((r) => r.kind === 'name_hidden') };
+  }
+
+  /** «Block» from the player sheet: the same block list as the rest of Matchena, so the matchmaker and the squads honour it. */
+  async blockSeat(host: CamoHost, viewerId: string, eid: string): Promise<{ ok: boolean }> {
+    const target = host.userOfEid(viewerId, eid);
+    if (!target || target.userId === viewerId) return { ok: false };
+    await this.prisma.$transaction([
+      this.prisma.userBlock.upsert({ where: { blockerId_blockedId: { blockerId: viewerId, blockedId: target.userId } }, update: {}, create: { blockerId: viewerId, blockedId: target.userId } }),
+      this.prisma.friendship.deleteMany({ where: { OR: [{ requesterId: viewerId, addresseeId: target.userId }, { requesterId: target.userId, addresseeId: viewerId }] } }),
+    ]);
+    return { ok: true };
   }
 
   // ── admin tab ─────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       now: () => Date.now(),
       sink: { emit: (u, e, p, v) => this.sink?.emit(u, e, p, v) },
       policy,
+      voiceOn: () => camoVoiceEnabled(this.config),
       votes: () => this.settingsService.current,
       onModeration: (e) => this.moderation.record(e),
       onMatchEnd: (m) => void this.persist(m),

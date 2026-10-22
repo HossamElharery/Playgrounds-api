@@ -110,6 +110,10 @@ export interface CamoPlayer {
   total: number;
   stats: PlayerStats;
   lastInputAt: number;
+  /** The client said it is talking (a flag only, never audio): until when. Used for proximity voice and report context. */
+  speakingUntil: number;
+  /** Seats this player silenced for themselves only (eids). */
+  localMuted: Set<string>;
   /** Totals over the rounds of this match (what is stored when it ends). */
   match: { roles: CamoRole[]; caught: number; cardsGiven: number; yellows: number; bestSurvivalMs: number; awards: CamoAward[] };
 }
@@ -339,6 +343,8 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     total: 0,
     stats: emptyStats(),
     lastInputAt: now,
+    speakingUntil: 0,
+    localMuted: new Set(),
     match: { roles: [], caught: 0, cardsGiven: 0, yellows: 0, bestSurvivalMs: 0, awards: [] },
   };
   m.players.push(p);

@@ -12,6 +12,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { camoEnabled, camoPublicMatchEnabled } from './camo-flags';
 import type { JoinResult } from './camo-host';
+import { VoiceScopeRegistry } from '../realtime/voice-scope.registry';
 import { LobbyWorldService } from '../lobby-world/lobby-world.service';
 import { CamoService } from './camo.service';
 
@@ -45,6 +46,7 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     private readonly config: ConfigService,
     private readonly camo: CamoService,
     private readonly lobby: LobbyWorldService,
+    private readonly voiceScopes: VoiceScopeRegistry,
   ) {}
 
   private readonly invites = new Map<string, SquadInvite>();
@@ -54,6 +56,11 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   afterInit(): void {
     this.lobby.setExternalBusy((userId) => this.camo.host.isPlaying(userId));
+    // voice signalling for `camo:<matchId>`: only people seated in that match, and never someone the room muted
+    this.voiceScopes.register('camo', (matchId, userId) => {
+      const m = this.camo.host.matchOf(userId);
+      return !!m && m.id === matchId && !m.mod.muted.has(userId);
+    });
     this.sweeper = setInterval(() => this.sweepSquads(), 5000);
     this.sweeper.unref?.();
     this.camo.attachSink({
@@ -69,6 +76,7 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   onModuleDestroy(): void {
     if (this.sweeper) clearInterval(this.sweeper);
     this.lobby.setExternalBusy(null);
+    this.voiceScopes.unregister('camo');
     this.camo.attachSink(null);
   }
 
@@ -230,13 +238,35 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return this.input(client, (userId) => ({ ok: !!eid && !!action && this.camo.host.hostAct(userId, eid, action) }));
   }
 
+  @SubscribeMessage('camo.speaking')
+  async speaking(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<void> {
+    await this.input(client, (userId) => this.camo.host.setSpeaking(userId, data?.['on'] === true));
+  }
+
+  @SubscribeMessage('camo.mute.local')
+  async muteLocal(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const eid = str(data?.['eid']);
+    return this.input(client, (userId) => {
+      if (eid) this.camo.host.setLocalMute(userId, eid, data?.['on'] === true);
+      return { ok: !!eid };
+    });
+  }
+
+  @SubscribeMessage('camo.block')
+  async block(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
+    const userId = await this.who(client);
+    const eid = str(data?.['eid']);
+    if (!userId || !this.owns(userId, client) || !eid) return { ok: false };
+    return this.camo.moderation.blockSeat(this.camo.host, userId, eid).catch(() => ({ ok: false }));
+  }
+
   @SubscribeMessage('camo.report')
   async report(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
     const userId = await this.who(client);
     const eid = str(data?.['eid']);
     const reason = str(data?.['reason']);
     if (!userId || !this.owns(userId, client) || !eid || !reason) return { ok: false, reason: 'unknown' };
-    return this.camo.moderation.report(this.camo.host, userId, { eid, reason, note: str(data?.['note'], 300) ?? undefined });
+    return this.camo.moderation.report(this.camo.host, userId, { eid, reason, note: str(data?.['note'], 300) ?? undefined }).catch(() => ({ ok: false, reason: 'error' }));
   }
 
   @SubscribeMessage('camo.private.join')

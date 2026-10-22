@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { VoiceScopeRegistry } from './voice-scope.registry';
+import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -55,6 +56,7 @@ export class RealtimeGateway
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly presence: PresenceService,
+    @Optional() private readonly voiceScopes?: VoiceScopeRegistry,
   ) {
     super();
   }
@@ -360,6 +362,9 @@ export class RealtimeGateway
   }
 
   private async assertSquadMember(userId: string, squadId: string) {
+    // a registered scope kind (`camo:<matchId>`) answers for itself; a plain id is a squad
+    const scoped = this.voiceScopes?.check(squadId, userId) ?? null;
+    if (scoped !== null) return scoped;
     return this.prisma.squadMember.findUnique({
       where: { squadId_userId: { squadId, userId } },
     });

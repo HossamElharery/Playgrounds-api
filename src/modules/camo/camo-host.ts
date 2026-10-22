@@ -33,6 +33,7 @@ import {
   type CamoMatch,
   type CamoPlayer,
 } from './camo-rules';
+import { SPEAKING_HOLD_MS, voiceMapFor } from './camo-voice';
 import { castVote, logEvent, recentLog, startVote, stepVotes, tally, type RoomVote, type StartDenied, type VoteKind, type VoteResult, type VoteSettings } from './camo-moderation';
 import { paintTargets, playersFor, positionsFor, stateFor, varPayload, viewerOf } from './camo-views';
 
@@ -74,6 +75,8 @@ export interface HostOptions {
   onMatchOpen?: (m: CamoMatch) => void;
   /** Only the room ids the owner enabled; default: the locker room. */
   rooms?: () => readonly string[];
+  /** Whether proximity voice is on (the flag). */
+  voiceOn?: () => boolean;
   /** Vote numbers (section 17a); the admin settings feed this. */
   votes?: () => VoteSettings;
   /** Everything a moderator or the audit log wants to know (votes, kicks, mutes); the host never touches a database. */
@@ -113,6 +116,7 @@ export const INPUT_RATES: Readonly<Record<string, [number, number]>> = Object.fr
   scan: [1, 2],
   taunt: [1, 2],
   emoji: [0.5, 5],
+  speaking: [4, 8],
 });
 
 const AFK_WARN_MS = 25_000;
@@ -137,6 +141,7 @@ export class CamoHost {
   private timer: NodeJS.Timeout | null = null;
   private seq = 1;
   private lastBroadcast = new Map<string, number>();
+  private lastVoice = new Map<string, number>();
 
   constructor(private readonly o: HostOptions) {
     const room = generateLockerRoom();
@@ -576,6 +581,7 @@ export class CamoHost {
       const alive = step(m, entry.room, now);
       this.afterOutbox(m, now);
       if ((m.phase as string) !== 'ended') this.broadcastPositions(m, entry.room, now);
+      this.broadcastVoice(m, now);
       if (!alive) this.finish(m, now);
       else this.dropIfEmpty(m, now);
     }
@@ -655,6 +661,35 @@ export class CamoHost {
   private broadcastRoster(m: CamoMatch): void {
     for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.players', playersFor(m, viewerOf(p)));
     this.broadcastState(m, this.now);
+  }
+
+  // ── proximity voice (section 10): the server says who hears whom ──────────────────────────
+
+  setSpeaking(userId: string, on: boolean, now = this.now): void {
+    const m = this.matchOf(userId);
+    const p = m && playerByUser(m, userId);
+    if (!p || !this.rate(userId, 'speaking', now)) return;
+    p.speakingUntil = on && !m.mod.muted.has(userId) ? now + SPEAKING_HOLD_MS : 0;
+  }
+
+  /** «اكتمه عندي»: kept on the server so the voice map drops them and the room's links to them close. */
+  setLocalMute(userId: string, eid: string, on: boolean): void {
+    const m = this.matchOf(userId);
+    const p = m && playerByUser(m, userId);
+    if (!p || !m.players.some((x) => x.eid === eid)) return;
+    if (on) p.localMuted.add(eid);
+    else p.localMuted.delete(eid);
+  }
+
+  private broadcastVoice(m: CamoMatch, now: number): void {
+    if (this.o.voiceOn && !this.o.voiceOn()) return;
+    if (now - (this.lastVoice.get(m.id) ?? 0) < 200) return;
+    this.lastVoice.set(m.id, now);
+    const scope = `camo:${m.id}`;
+    for (const p of this.humans(m)) {
+      const map = voiceMapFor(m, p, now);
+      this.o.sink.emit(p.userId!, 'camo.voice', { scope, t: now, peers: map.peers.map((e) => [e.userId, Math.round(e.gain * 100) / 100, e.x === undefined ? null : Math.round(e.x * 10) / 10, e.z === undefined ? null : Math.round((e.z as number) * 10) / 10]), connect: map.connect, phase: m.phase }, true);
+    }
   }
 
   // ── moderation (section 17a) ─────────────────────────────────────────────────
