@@ -683,6 +683,7 @@ export class CamoHost {
     else p.localMuted.delete(eid);
   }
 
+  /** Not volatile: a volatile packet sent right after the positions in the same tick is dropped by socket.io (the transport is busy). */
   private broadcastVoice(m: CamoMatch, now: number): void {
     if (this.o.voiceOn && !this.o.voiceOn()) return;
     if (now - (this.lastVoice.get(m.id) ?? 0) < 200) return;
@@ -690,7 +691,7 @@ export class CamoHost {
     const scope = `camo:${m.id}`;
     for (const p of this.humans(m)) {
       const map = voiceMapFor(m, p, now);
-      this.o.sink.emit(p.userId!, 'camo.voice', { scope, t: now, peers: map.peers.map((e) => [e.userId, Math.round(e.gain * 100) / 100, e.x === undefined ? null : Math.round(e.x * 10) / 10, e.z === undefined ? null : Math.round((e.z as number) * 10) / 10]), connect: map.connect, phase: m.phase }, true);
+      this.o.sink.emit(p.userId!, 'camo.voice', { scope, t: now, peers: map.peers.map((e) => [e.userId, Math.round(e.gain * 100) / 100, e.x === undefined ? null : Math.round(e.x * 10) / 10, e.z === undefined ? null : Math.round((e.z as number) * 10) / 10]), connect: map.connect, phase: m.phase });
     }
   }
 

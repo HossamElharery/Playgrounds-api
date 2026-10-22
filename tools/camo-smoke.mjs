@@ -18,7 +18,7 @@ for (let i = 1; i <= N; i++) {
   const g = await guest(i);
   const socket = io(API, { auth: { token: g.token }, transports: ['websocket'] });
   const seen = {};
-  socket.onAny((e, p) => { seen[e] = (seen[e] ?? 0) + 1; if (e === 'camo.match.state') seen.lastState = p; if (e === 'camo.players') seen.lastPlayers = p; });
+  socket.onAny((e, p) => { seen[e] = (seen[e] ?? 0) + 1; if (e === 'camo.voice') { seen.voicePhases ??= {}; seen.voicePhases[p.phase] = (seen.voicePhases[p.phase] ?? 0) + 1; } if (e === 'camo.match.state') seen.lastState = p; if (e === 'camo.players') seen.lastPlayers = p; });
   await new Promise((res) => socket.on('connect', res));
   await new Promise((r) => setTimeout(r, 600));
   players.push({ ...g, socket, seen });
@@ -50,5 +50,6 @@ if (hider) {
 if (seeker) log('seeker positions events before whistle:', seeker.seen['camo.positions'] ?? 0);
 await new Promise((r) => setTimeout(r, 1_500));
 for (const p of players) log(p.name, 'events', Object.entries(p.seen).filter(([k]) => k.startsWith('camo.')).map(([k, n]) => k.replace('camo.', '') + '=' + n).join(' '));
+for (const p of players) log(p.name, 'camo.voice', p.seen['camo.voice'], JSON.stringify(p.seen.voicePhases));
 for (const p of players) p.socket.close();
 process.exit(0);

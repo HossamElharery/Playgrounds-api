@@ -98,8 +98,8 @@ export const SURFACE_COLOR: Readonly<Record<SurfaceMaterial, number>> = Object.f
   concrete: 0x9a968c,
 });
 
-const WALL_H = 4;
-const WALL_T = 0.4;
+export const WALL_H = 4;
+export const WALL_T = 0.4;
 let uid = 0;
 
 export const FNV = (text: string): number => {
@@ -165,7 +165,7 @@ export function pushOut(room: CamoRoomData, x: number, z: number, radius = 0.3):
 
 // ── generator ────────────────────────────────────────────────────────────────
 
-const round = (n: number): number => Math.round(n * 1000) / 1000;
+export const round = (n: number): number => Math.round(n * 1000) / 1000;
 
 /** The locker room (`locker_room`): 36 x 26 m, lockers on three walls, benches, showers, the referees' room. */
 export function generateLockerRoom(): CamoRoomData {
