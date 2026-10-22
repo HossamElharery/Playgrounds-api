@@ -106,6 +106,36 @@ describe('camo host', () => {
     expect(sent.map((s) => s.event)).toEqual(expect.arrayContaining(['camo.match.state', 'camo.players', 'camo.positions']));
   });
 
+  it('AFK seeker: warned after 25 s without input, covered by a bot at 35 s, and a hider is never touched', () => {
+    const { host, sent, advance, now } = harness();
+    host.joinPublic(user(1));
+    advance(13_000);
+    const m = host.matchOf('u1')!;
+    for (let i = 0; i < 400 && m.phase !== 'hunt'; i++) advance(1_000);
+    expect(m.phase).toBe('hunt');
+    const p = playerByUser(m, 'u1')!;
+    p.role = 'seeker';
+    p.lastInputAt = now();
+    sent.length = 0;
+    advance(26_000);
+    expect(sent.filter((s) => s.event === 'camo.afk').map((s) => s.payload.state)).toEqual(['warn']);
+    expect(p.botCover).toBe(false);
+    advance(10_000);
+    expect(p.botCover).toBe(true);
+    expect(sent.filter((s) => s.event === 'camo.afk').map((s) => s.payload.state)).toEqual(['warn', 'covered']);
+    // a hider who does nothing is not an AFK case (hiding still is playing)
+    const h = harness();
+    h.host.joinPublic(user(2));
+    h.advance(13_000);
+    const m2 = h.host.matchOf('u2')!;
+    for (let i = 0; i < 400 && m2.phase !== 'hunt'; i++) h.advance(1_000);
+    const q = playerByUser(m2, 'u2')!;
+    q.role = 'hider';
+    q.lastInputAt = h.now();
+    h.advance(60_000);
+    expect(q.botCover).toBe(false);
+  });
+
   it('rate limits inputs and drops moves from outsiders', () => {
     const { host, advance } = harness();
     host.joinPublic(user(1));
