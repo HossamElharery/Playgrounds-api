@@ -1,0 +1,751 @@
+/**
+ * Runs every live match of «استغماية»: matchmaking, private rooms, inputs, the 10 Hz tick and the per-recipient fan-out.
+ * No Nest, no sockets, no database: it talks to a `HostSink` and calls hooks, so the load script and the specs drive
+ * it with a fake clock. One API instance holds all rooms in memory (`RoomStore` is the seam for a later Redis move).
+ */
+import { CAMO_PROTOCOL_VERSION, MAX_PLAYERS, MIN_PLAYERS, TIMERS, TAUNT, TICK_MS } from './camo-constants';
+import { BotBrain, BOT_NAMES_AR } from './camo-bots';
+import { buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
+import { decodeStrokes, encodeStrokes } from './camo-paint';
+import {
+  acceptKick,
+  acceptMove,
+  acceptPaint,
+  acceptScan,
+  acceptTag,
+  acceptTaunt,
+  acceptWhistle,
+  addPlayer,
+  beginTouchUp,
+  createMatch,
+  fillWithBots,
+  hidersAlive,
+  playerById,
+  playerByUser,
+  ranking,
+  setFreeze,
+  setPose,
+  startRound,
+  step,
+  voteVarSkip,
+  type CamoEvent,
+  type CamoMatch,
+  type CamoPlayer,
+} from './camo-rules';
+import { paintTargets, playersFor, positionsFor, stateFor, varPayload, viewerOf } from './camo-views';
+
+export interface CamoUser {
+  userId: string;
+  name: string;
+  morphId: string;
+  guest: boolean;
+  deviceId?: string | null;
+  partyId?: string | null;
+}
+
+export interface HostSink {
+  emit(userId: string, event: string, payload: unknown, volatile?: boolean): void;
+}
+
+export interface HostPolicy {
+  /** Two users must not meet in a public match (a block, or a 24 h vote-kick avoidance). */
+  avoid(a: string, b: string): boolean;
+  /** Reasons a user may not play right now (camo ban, suspended account, …); null = allowed. */
+  denied(userId: string): string | null;
+}
+
+export interface HostOptions {
+  maxMatches: number;
+  now: () => number;
+  sink: HostSink;
+  policy?: HostPolicy;
+  onMatchEnd?: (m: CamoMatch) => void;
+  onMatchOpen?: (m: CamoMatch) => void;
+  /** Only the room ids the owner enabled; default: the locker room. */
+  rooms?: () => readonly string[];
+  /** Sleeps the wait for a public lobby (tests). */
+  waitMs?: number;
+}
+
+export type JoinResult =
+  | { ok: true; matchId: string; code?: string }
+  | { ok: false; reason: 'busy' | 'drain' | 'denied' | 'full' | 'locked' | 'banned' | 'unknown_code' | 'in_match' | 'protocol'; detail?: string };
+
+class Bucket {
+  private tokens: number;
+  private at: number;
+  constructor(private readonly perSecond: number, private readonly burst: number, now: number) {
+    this.tokens = burst;
+    this.at = now;
+  }
+  take(now: number): boolean {
+    this.tokens = Math.min(this.burst, this.tokens + ((now - this.at) / 1000) * this.perSecond);
+    this.at = now;
+    if (this.tokens < 1) return false;
+    this.tokens -= 1;
+    return true;
+  }
+}
+
+export const INPUT_RATES: Readonly<Record<string, [number, number]>> = Object.freeze({
+  move: [20, 30],
+  paint: [6, 10],
+  pose: [4, 6],
+  freeze: [4, 6],
+  kick: [3, 4],
+  tag: [3, 4],
+  whistle: [1, 2],
+  scan: [1, 2],
+  taunt: [1, 2],
+  emoji: [0.5, 5],
+});
+
+const AFK_WARN_MS = 25_000;
+const AFK_COVER_MS = 35_000;
+const EMPTY_CLOSE_MS = 5 * 60_000;
+const LEAVE_WINDOW_MS = 60 * 60_000;
+const LEAVE_LIMIT = 3;
+const LEAVE_WAIT_MS = 2 * 60_000;
+const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+export class CamoHost {
+  readonly matches = new Map<string, CamoMatch>();
+  private readonly byUser = new Map<string, string>();
+  private readonly byCode = new Map<string, string>();
+  private readonly buckets = new Map<string, Bucket>();
+  private readonly brains = new Map<string, BotBrain>();
+  private readonly leaves = new Map<string, number[]>();
+  private readonly waitUntil = new Map<string, number>();
+  private readonly afkWarned = new Set<string>();
+  private readonly rooms = new Map<string, { room: CamoRoomData; grid: WalkGrid }>();
+  private readonly emptySince = new Map<string, number>();
+  private timer: NodeJS.Timeout | null = null;
+  private seq = 1;
+  private lastBroadcast = new Map<string, number>();
+
+  constructor(private readonly o: HostOptions) {
+    const room = generateLockerRoom();
+    this.rooms.set(room.id, { room, grid: buildWalkGrid(room) });
+  }
+
+  get now(): number {
+    return this.o.now();
+  }
+
+  roomData(id: string): CamoRoomData | undefined {
+    return this.rooms.get(id)?.room;
+  }
+
+  get activeMatches(): number {
+    return this.matches.size;
+  }
+
+  get humanCount(): number {
+    let n = 0;
+    for (const m of this.matches.values()) for (const p of m.players) if (!p.isBot && p.connected) n++;
+    return n;
+  }
+
+  matchOf(userId: string): CamoMatch | null {
+    const id = this.byUser.get(userId);
+    return id ? (this.matches.get(id) ?? null) : null;
+  }
+
+  isPlaying(userId: string): boolean {
+    return this.byUser.has(userId);
+  }
+
+  // ── timing ────────────────────────────────────────────────────────────────
+
+  start(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => this.tick(this.now), TICK_MS);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  // ── joining ───────────────────────────────────────────────────────────────
+
+  private rate(userId: string, kind: string, now: number): boolean {
+    const spec = INPUT_RATES[kind];
+    if (!spec) return true;
+    const key = `${userId}:${kind}`;
+    let b = this.buckets.get(key);
+    if (!b) {
+      b = new Bucket(spec[0], spec[1], now);
+      this.buckets.set(key, b);
+    }
+    return b.take(now);
+  }
+
+  hello(protocolVersion: unknown): { ok: boolean; serverVersion: number } {
+    return { ok: protocolVersion === CAMO_PROTOCOL_VERSION, serverVersion: CAMO_PROTOCOL_VERSION };
+  }
+
+  private newCode(): string {
+    for (let tries = 0; tries < 50; tries++) {
+      let c = '';
+      for (let i = 0; i < 5; i++) c += CODE_LETTERS[Math.floor(Math.random() * CODE_LETTERS.length)];
+      if (!this.byCode.has(c)) return c;
+    }
+    return `${Date.now().toString(36).slice(-5).toUpperCase()}`;
+  }
+
+  private denyJoin(u: CamoUser, now: number): JoinResult | null {
+    if (this.byUser.has(u.userId)) return { ok: false, reason: 'in_match' };
+    const why = this.o.policy?.denied(u.userId);
+    if (why) return { ok: false, reason: 'denied', detail: why };
+    const hist = (this.leaves.get(u.userId) ?? []).filter((t) => now - t < LEAVE_WINDOW_MS);
+    if (hist.length >= LEAVE_LIMIT && now - hist[hist.length - 1] < LEAVE_WAIT_MS) {
+      return { ok: false, reason: 'denied', detail: 'wait_after_leaving' };
+    }
+    return null;
+  }
+
+  private spawnMatch(roomId: string, opts: { isPrivate?: boolean; hostId?: string | null; mode?: 'classic' | 'contagion'; timers?: { prepMs?: number; huntMs?: number }; botTarget?: number; botsAllowed?: boolean }): CamoMatch | null {
+    if (this.matches.size >= this.o.maxMatches) return null;
+    const now = this.now;
+    const id = `cm${this.seq++}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const code = opts.isPrivate ? this.newCode() : null;
+    const m = createMatch({
+      id,
+      room: this.rooms.get(roomId)!.room,
+      mode: opts.mode,
+      isPrivate: opts.isPrivate,
+      code,
+      hostId: opts.hostId ?? null,
+      timers: opts.timers,
+      botsAllowed: opts.botsAllowed,
+      botTarget: opts.botTarget,
+      seed: Math.floor(Math.random() * 0xffffffff),
+      now,
+    });
+    m.phaseEndsAt = now + (this.o.waitMs ?? TIMERS.waitingMaxMs);
+    this.matches.set(id, m);
+    if (code) this.byCode.set(code, id);
+    this.brains.set(id, new BotBrain(this.rooms.get(roomId)!.room, this.rooms.get(roomId)!.grid));
+    this.o.onMatchOpen?.(m);
+    return m;
+  }
+
+  private place(m: CamoMatch, u: CamoUser, now: number): CamoPlayer | null {
+    const p = addPlayer(m, { userId: u.userId, name: u.name, isBot: false, morphId: u.morphId, guest: u.guest, partyId: u.partyId ?? null, deviceId: u.deviceId ?? null }, now);
+    if (!p) return null;
+    this.byUser.set(u.userId, m.id);
+    this.emptySince.delete(m.id);
+    // a latecomer to a running match watches until the next round, then a bot gives way (section 20c)
+    if (m.phase !== 'waiting') {
+      p.role = 'spectator';
+      p.alive = false;
+      p.loaded = true;
+    }
+    this.sendSnapshot(m, p);
+    this.broadcastRoster(m);
+    return p;
+  }
+
+  /** A public match: the first open one the player is allowed in, else a fresh one. */
+  joinPublic(u: CamoUser, roomId: string | 'any' = 'any', now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    const room = roomId === 'any' ? (this.o.rooms?.()[0] ?? 'locker_room') : roomId;
+    if (!this.rooms.has(room)) return { ok: false, reason: 'unknown_code', detail: 'room' };
+    for (const m of this.matches.values()) {
+      if (m.isPrivate || m.phase !== 'waiting' || m.roomId !== room || m.players.length >= MAX_PLAYERS || m.locked) continue;
+      if (m.players.some((p) => p.userId && this.o.policy?.avoid(u.userId, p.userId))) continue;
+      const p = this.place(m, u, now);
+      if (p) return { ok: true, matchId: m.id };
+    }
+    const m = this.spawnMatch(room, {});
+    if (!m) return { ok: false, reason: 'busy' };
+    const p = this.place(m, u, now);
+    return p ? { ok: true, matchId: m.id } : { ok: false, reason: 'full' };
+  }
+
+  joinMatchById(u: CamoUser, matchId: string, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    const m = this.matches.get(matchId);
+    if (!m) return { ok: false, reason: 'unknown_code' };
+    return this.joinExisting(m, u, now);
+  }
+
+  private joinExisting(m: CamoMatch, u: CamoUser, now: number): JoinResult {
+    if (m.banned.has(u.userId)) return { ok: false, reason: 'banned' };
+    if (m.locked) return { ok: false, reason: 'locked' };
+    if (m.players.filter((p) => !p.isBot).length >= MAX_PLAYERS) return { ok: false, reason: 'full' };
+    // bots give way to humans
+    if (m.players.length >= MAX_PLAYERS) {
+      const bot = m.players.find((p) => p.isBot && p.role !== 'seeker');
+      if (!bot) return { ok: false, reason: 'full' };
+      m.players.splice(m.players.indexOf(bot), 1);
+    }
+    const p = this.place(m, u, now);
+    return p ? { ok: true, matchId: m.id, code: m.code ?? undefined } : { ok: false, reason: 'full' };
+  }
+
+  createPrivate(u: CamoUser, opts: { roomId?: string; mode?: 'classic' | 'contagion'; prepSeconds?: number; huntSeconds?: number; bots?: number } = {}, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    const roomId = this.rooms.has(opts.roomId ?? '') ? opts.roomId! : 'locker_room';
+    const bots = Math.min(MAX_PLAYERS - 1, Math.max(0, Math.floor(opts.bots ?? 5)));
+    const m = this.spawnMatch(roomId, {
+      isPrivate: true,
+      hostId: u.userId,
+      mode: opts.mode,
+      timers: { prepMs: (opts.prepSeconds ?? 60) * 1000, huntMs: (opts.huntSeconds ?? 180) * 1000 },
+      botsAllowed: bots > 0,
+      botTarget: bots + 1,
+    });
+    if (!m) return { ok: false, reason: 'busy' };
+    m.phaseEndsAt = Number.MAX_SAFE_INTEGER; // a private room waits for the host
+    const p = this.place(m, u, now);
+    return p ? { ok: true, matchId: m.id, code: m.code ?? undefined } : { ok: false, reason: 'full' };
+  }
+
+  joinPrivate(u: CamoUser, code: string, now = this.now): JoinResult {
+    const denied = this.denyJoin(u, now);
+    if (denied) return denied;
+    const id = this.byCode.get(String(code ?? '').trim().toUpperCase());
+    const m = id ? this.matches.get(id) : undefined;
+    if (!m) return { ok: false, reason: 'unknown_code' };
+    return this.joinExisting(m, u, now);
+  }
+
+  /** Host of a private room presses «ابدأ»: bots fill, the first round begins. */
+  hostStart(userId: string, now = this.now): boolean {
+    const m = this.matchOf(userId);
+    if (!m || !m.isPrivate || m.hostId !== userId || m.phase !== 'waiting') return false;
+    this.beginMatch(m, now);
+    return true;
+  }
+
+  hostLock(userId: string, locked: boolean): boolean {
+    const m = this.matchOf(userId);
+    if (!m || m.hostId !== userId) return false;
+    m.locked = locked;
+    this.broadcastState(m, this.now);
+    return true;
+  }
+
+  hostRotateCode(userId: string): string | null {
+    const m = this.matchOf(userId);
+    if (!m || !m.isPrivate || m.hostId !== userId || !m.code) return null;
+    this.byCode.delete(m.code);
+    m.code = this.newCode();
+    this.byCode.set(m.code, m.id);
+    this.broadcastState(m, this.now);
+    return m.code;
+  }
+
+  private beginMatch(m: CamoMatch, now: number): void {
+    const room = this.rooms.get(m.roomId)!.room;
+    if (m.botsAllowed) fillWithBots(m, now, (i) => BOT_NAMES_AR[(i * 7 + Math.floor(m.rng() * 40)) % BOT_NAMES_AR.length], ['potato', 'banana', 'penguin', 'camel', 'keeper', 'referee', 'dino', 'robot', 'ultra', 'gamer', 'cactus', 'ghost', 'taameya', 'classic']);
+    if (m.players.length < MIN_PLAYERS) {
+      // too few people and no bots: wait for more
+      m.phaseEndsAt = now + 5_000;
+      return;
+    }
+    startRound(m, room, now);
+    this.afterOutbox(m, now);
+  }
+
+  // ── leaving ───────────────────────────────────────────────────────────────
+
+  leave(userId: string, now = this.now, voluntary = true): void {
+    const m = this.matchOf(userId);
+    if (!m) return;
+    const p = playerByUser(m, userId);
+    this.byUser.delete(userId);
+    if (!p) return;
+    p.connected = false;
+    p.heldUntil = now; // a bot takes over at the next tick
+    if (voluntary && m.phase !== 'waiting' && !m.isPrivate) {
+      const list = (this.leaves.get(userId) ?? []).filter((t) => now - t < LEAVE_WINDOW_MS);
+      list.push(now);
+      this.leaves.set(userId, list);
+    }
+    if (m.phase === 'waiting') m.players.splice(m.players.indexOf(p), 1);
+    if (m.hostId === userId) this.transferHost(m);
+    this.broadcastRoster(m);
+  }
+
+  /** The socket dropped: hold the seat for 20 s (section 20c), a bot plays meanwhile after that. */
+  disconnect(userId: string, now = this.now): void {
+    const m = this.matchOf(userId);
+    if (!m) return;
+    const p = playerByUser(m, userId);
+    if (!p) return;
+    if (m.phase === 'waiting') {
+      this.leave(userId, now, false);
+      return;
+    }
+    p.connected = false;
+    p.heldUntil = now + TIMERS.reconnectHoldMs;
+  }
+
+  /** Same user, new socket: back into the same round with the whole picture. */
+  reconnect(userId: string): boolean {
+    const m = this.matchOf(userId);
+    if (!m) return false;
+    const p = playerByUser(m, userId);
+    if (!p) return false;
+    p.connected = true;
+    p.heldUntil = 0;
+    p.botCover = false;
+    p.lastInputAt = this.now;
+    this.sendSnapshot(m, p);
+    return true;
+  }
+
+  private transferHost(m: CamoMatch): void {
+    const next = m.players.filter((p) => !p.isBot && p.connected).sort((a, b) => a.eid.localeCompare(b.eid))[0];
+    m.hostId = next?.userId ?? null;
+    if (!next && m.isPrivate) this.emptySince.set(m.id, this.now);
+  }
+
+  // ── inputs (called by the gateway with the user id from the socket) ─────────
+
+  private ctx(userId: string, kind: string, now: number): { m: CamoMatch; p: CamoPlayer; room: CamoRoomData } | null {
+    if (!this.rate(userId, kind, now)) return null;
+    const m = this.matchOf(userId);
+    if (!m) return null;
+    const p = playerByUser(m, userId);
+    if (!p) return null;
+    // A human who acts takes the seat back from the bot that covered for them.
+    if (p.botCover && p.connected) p.botCover = false;
+    return { m, p, room: this.rooms.get(m.roomId)!.room };
+  }
+
+  move(userId: string, mv: { x: number; z: number; yaw: number; vx: number; vz: number; seq: number; run?: boolean }, now = this.now) {
+    const c = this.ctx(userId, 'move', now);
+    if (!c) return null;
+    c.p.loaded = true;
+    return acceptMove(c.m, c.room, c.p.eid, mv, now);
+  }
+
+  pose(userId: string, pose: string, now = this.now): boolean {
+    const c = this.ctx(userId, 'pose', now);
+    if (!c) return false;
+    const ok = setPose(c.m, c.p.eid, pose, now);
+    if (ok) this.fanPose(c.m, c.p);
+    return ok;
+  }
+
+  freeze(userId: string, on: boolean, now = this.now): boolean {
+    const c = this.ctx(userId, 'freeze', now);
+    return c ? setFreeze(c.m, c.room, c.p.eid, on, now) : false;
+  }
+
+  paint(userId: string, bytes: unknown, now = this.now): { accepted: number; rejected: number } | null {
+    const c = this.ctx(userId, 'paint', now);
+    if (!c) return null;
+    const raw = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : Array.isArray(bytes) ? Uint8Array.from(bytes as number[]) : null;
+    const strokes = raw ? decodeStrokes(raw) : null;
+    if (!strokes) return null;
+    const v = acceptPaint(c.m, c.p.eid, strokes, now);
+    if (!v) return null;
+    if (v.accepted.length) this.fanPaint(c.m, c.p, v.accepted, now);
+    return { accepted: v.accepted.length, rejected: v.rejected };
+  }
+
+  touchUp(userId: string, now = this.now): boolean {
+    const c = this.ctx(userId, 'paint', now);
+    return c ? beginTouchUp(c.m, c.p.eid, now) : false;
+  }
+
+  kick(userId: string, k: { origin: { x: number; y: number; z: number }; dir: [number, number, number]; power: number; lob: boolean; seq: number }, now = this.now) {
+    const c = this.ctx(userId, 'kick', now);
+    if (!c) return null;
+    const r = acceptKick(c.m, c.room, c.p.eid, k, now);
+    this.afterOutbox(c.m, now);
+    return r;
+  }
+
+  tag(userId: string, now = this.now) {
+    const c = this.ctx(userId, 'tag', now);
+    if (!c) return null;
+    const r = acceptTag(c.m, c.p.eid, now);
+    this.afterOutbox(c.m, now);
+    return r;
+  }
+
+  whistle(userId: string, now = this.now): boolean {
+    const c = this.ctx(userId, 'whistle', now);
+    if (!c) return false;
+    const ok = acceptWhistle(c.m, c.p.eid, now);
+    this.afterOutbox(c.m, now);
+    return ok;
+  }
+
+  scan(userId: string, now = this.now, enabled = true): boolean {
+    const c = this.ctx(userId, 'scan', now);
+    if (!c) return false;
+    const ok = acceptScan(c.m, c.p.eid, now, enabled);
+    this.afterOutbox(c.m, now);
+    return ok;
+  }
+
+  taunt(userId: string, now = this.now): boolean {
+    const c = this.ctx(userId, 'taunt', now);
+    if (!c) return false;
+    const ok = acceptTaunt(c.m, c.p.eid, now);
+    this.afterOutbox(c.m, now);
+    return ok;
+  }
+
+  varSkip(userId: string): void {
+    const m = this.matchOf(userId);
+    if (m) voteVarSkip(m, userId);
+  }
+
+  /** «كمان ماتش»: same room and people, a fresh 3-round match. */
+  rematch(userId: string, now = this.now): boolean {
+    const m = this.matchOf(userId);
+    if (!m || m.phase !== 'ended') return false;
+    const room = this.rooms.get(m.roomId)!.room;
+    for (const p of m.players) {
+      p.total = 0;
+      p.seekerRounds = 0;
+    }
+    m.round = 0;
+    m.rounds = [];
+    m.phase = 'waiting';
+    m.endedAt = null;
+    startRound(m, room, now);
+    this.afterOutbox(m, now);
+    return true;
+  }
+
+  // ── the tick ──────────────────────────────────────────────────────────────
+
+  tick(now = this.now): void {
+    for (const m of [...this.matches.values()]) {
+      const entry = this.rooms.get(m.roomId);
+      if (!entry) continue;
+      if (m.phase === 'waiting' && !m.isPrivate) {
+        const humansIn = m.players.filter((p) => !p.isBot).length;
+        if (now >= m.phaseEndsAt || humansIn >= (m.botTarget || 8)) this.beginMatch(m, now);
+        this.dropIfEmpty(m, now);
+        continue;
+      }
+      if (m.phase === 'waiting') {
+        if (m.hostId === null) this.dropIfEmpty(m, now);
+        continue;
+      }
+      if (m.phase === 'ended') continue;
+      this.watchAfk(m, now);
+      this.brains.get(m.id)?.tick(m, now);
+      const alive = step(m, entry.room, now);
+      this.afterOutbox(m, now);
+      if ((m.phase as string) !== 'ended') this.broadcastPositions(m, entry.room, now);
+      if (!alive) this.finish(m, now);
+      else this.dropIfEmpty(m, now);
+    }
+  }
+
+  private dropIfEmpty(m: CamoMatch, now: number): void {
+    const humans = m.players.filter((p) => !p.isBot && (p.connected || p.heldUntil > now));
+    if (humans.length) {
+      this.emptySince.delete(m.id);
+      return;
+    }
+    // Nobody left: a public lobby goes at once; a running match or a private room waits a little for people to return.
+    const grace = m.phase === 'waiting' && !m.isPrivate ? 0 : m.phase === 'waiting' ? EMPTY_CLOSE_MS : 120_000;
+    const since = this.emptySince.get(m.id) ?? now;
+    this.emptySince.set(m.id, since);
+    if (now - since >= grace) this.closeMatch(m);
+  }
+
+  private watchAfk(m: CamoMatch, now: number): void {
+    if (m.phase !== 'hunt') return;
+    for (const p of m.players) {
+      if (p.isBot || p.botCover || p.role !== 'seeker' || !p.connected || !p.userId) continue;
+      const idle = now - p.lastInputAt;
+      if (idle >= AFK_COVER_MS) {
+        p.botCover = true;
+        this.o.sink.emit(p.userId, 'camo.afk', { state: 'covered' });
+      } else if (idle >= AFK_WARN_MS && !this.afkWarned.has(p.eid)) {
+        this.afkWarned.add(p.eid);
+        this.o.sink.emit(p.userId, 'camo.afk', { state: 'warn', inMs: AFK_COVER_MS - idle });
+      } else if (idle < AFK_WARN_MS) this.afkWarned.delete(p.eid);
+    }
+  }
+
+  private finish(m: CamoMatch, now: number): void {
+    const board = ranking(m);
+    const names = new Map(m.players.map((p) => [p.eid, p]));
+    const payload = {
+      matchId: m.id,
+      ranking: board.map((r) => ({ ...r, name: names.get(r.eid)?.name, userId: names.get(r.eid)?.userId ?? null, isBot: names.get(r.eid)?.isBot ?? false, morphId: names.get(r.eid)?.morphId })),
+      rounds: m.rounds.map((r) => ({ round: r.round, winner: r.winner, awards: r.awards })),
+    };
+    for (const p of m.players) if (p.userId && !p.isBot && p.connected) this.o.sink.emit(p.userId, 'camo.match.result', payload);
+    this.o.onMatchEnd?.(m);
+    // keep the finished match for «كمان ماتش» for a minute; then it goes
+    setTimeout(() => {
+      if (m.phase === 'ended') this.closeMatch(m);
+    }, 60_000).unref?.();
+    void now;
+  }
+
+  closeMatch(m: CamoMatch): void {
+    for (const p of m.players) if (p.userId && this.byUser.get(p.userId) === m.id) this.byUser.delete(p.userId);
+    if (m.code) this.byCode.delete(m.code);
+    this.matches.delete(m.id);
+    this.brains.delete(m.id);
+    this.emptySince.delete(m.id);
+  }
+
+  dispose(): void {
+    this.stop();
+    this.matches.clear();
+    this.byUser.clear();
+    this.byCode.clear();
+    this.brains.clear();
+  }
+
+  // ── fan-out ───────────────────────────────────────────────────────────────
+
+  private humans(m: CamoMatch): CamoPlayer[] {
+    return m.players.filter((p) => !p.isBot && p.userId && p.connected);
+  }
+
+  private broadcastState(m: CamoMatch, now: number): void {
+    for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.match.state', stateFor(m, viewerOf(p), now));
+  }
+
+  private broadcastRoster(m: CamoMatch): void {
+    for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.players', playersFor(m, viewerOf(p)));
+    this.broadcastState(m, this.now);
+  }
+
+  sendSnapshot(m: CamoMatch, p: CamoPlayer): void {
+    if (!p.userId) return;
+    const room = this.rooms.get(m.roomId)!.room;
+    const now = this.now;
+    const v = viewerOf(p);
+    this.o.sink.emit(p.userId, 'camo.match.state', stateFor(m, v, now));
+    this.o.sink.emit(p.userId, 'camo.players', playersFor(m, v));
+    this.o.sink.emit(p.userId, 'camo.positions', { t: now, p: positionsFor(m, room, v, now) }, true);
+    for (const h of paintTargets(m, v)) this.sendPaint(p.userId, h);
+  }
+
+  private sendPaint(userId: string, h: CamoPlayer): void {
+    const list = h.paint.strokes;
+    for (let i = 0; i < list.length; i += 60) {
+      this.o.sink.emit(userId, 'camo.paint.delta', { eid: h.eid, snapshot: i === 0, bytes: encodeStrokes(list.slice(i, i + 60)) });
+    }
+    if (!list.length) this.o.sink.emit(userId, 'camo.paint.delta', { eid: h.eid, snapshot: true, bytes: encodeStrokes([]) });
+  }
+
+  private fanPaint(m: CamoMatch, h: CamoPlayer, accepted: readonly import('./camo-paint').WireStroke[], now: number): void {
+    const bytes = encodeStrokes(accepted);
+    for (const p of this.humans(m)) {
+      const v = viewerOf(p);
+      if (!paintTargets(m, v).includes(h)) continue;
+      this.o.sink.emit(p.userId!, 'camo.paint.delta', { eid: h.eid, bytes });
+    }
+    void now;
+  }
+
+  private fanPose(m: CamoMatch, h: CamoPlayer): void {
+    for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.pose.state', { eid: h.eid, pose: h.pose });
+  }
+
+  private broadcastPositions(m: CamoMatch, room: CamoRoomData, now: number): void {
+    const last = this.lastBroadcast.get(m.id) ?? 0;
+    if (now - last < TICK_MS - 1) return;
+    this.lastBroadcast.set(m.id, now);
+    for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.positions', { t: now, p: positionsFor(m, room, viewerOf(p), now) }, true);
+  }
+
+  /** Turns everything the rules queued into the events each client may receive. */
+  afterOutbox(m: CamoMatch, now: number): void {
+    if (!m.outbox.length) return;
+    const events = m.outbox.splice(0);
+    let phaseChanged = false;
+    for (const e of events) {
+      if (e.t === 'phase') phaseChanged = true;
+      this.route(m, e, now);
+    }
+    if (phaseChanged) {
+      this.broadcastRoster(m);
+      if (m.phase === 'hunt') for (const p of this.humans(m)) for (const h of paintTargets(m, viewerOf(p))) this.sendPaint(p.userId!, h);
+      if (m.phase === 'var' && m.rounds.length) {
+        const payload = varPayload(m, m.rounds[m.rounds.length - 1]);
+        for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.var', payload);
+      }
+      // every hider's pose is part of the picture from the whistle on
+      if (m.phase === 'whistle' || m.phase === 'hunt') for (const h of hidersAlive(m)) this.fanPose(m, h);
+    }
+  }
+
+  private route(m: CamoMatch, e: CamoEvent, now: number): void {
+    const send = (event: string, payload: unknown, filter?: (p: CamoPlayer) => boolean): void => {
+      for (const p of this.humans(m)) if (!filter || filter(p)) this.o.sink.emit(p.userId!, event, payload);
+    };
+    switch (e.t) {
+      case 'phase':
+        break; // state is re-sent by broadcastRoster
+      case 'role':
+        break;
+      case 'ball':
+        send('camo.ball', { by: e.by, seq: e.seq, keyframes: e.keyframes.map((k) => [k.t, k.x, k.y, k.z]), events: e.events, at: e.at });
+        break;
+      case 'card': {
+        const target = e.target ? playerById(m, e.target) : undefined;
+        send('camo.card.result', {
+          kind: e.kind,
+          by: e.by,
+          target: e.target,
+          name: target?.name,
+          morphId: target?.morphId,
+          ricochet: !!e.ricochet,
+          at: e.at,
+        });
+        break;
+      }
+      case 'caught': {
+        const t = playerById(m, e.eid);
+        send('camo.caught', { eid: e.eid, name: t?.name, morphId: t?.morphId, by: e.by, at: e.at });
+        break;
+      }
+      case 'suspend':
+        send('camo.suspend', { eid: e.eid, until: e.until });
+        break;
+      case 'whistle':
+        send('camo.whistle', { by: e.by, at: e.at });
+        break;
+      case 'whistle.noise':
+        send('camo.whistle.sound', { at: e.at, positions: e.positions.map((p) => [p.x, p.z]) });
+        break;
+      case 'taunt': {
+        const src = playerById(m, e.eid);
+        send('camo.taunt', { morphId: src?.morphId, x: e.x, z: e.z, at: e.at }, (p) => Math.hypot(p.x - e.x, p.z - e.z) <= TAUNT.range || p.eid === e.eid || p.role === 'spectator');
+        break;
+      }
+      case 'scan': {
+        const hs = e.flashed.map((id) => playerById(m, id)).filter((x): x is CamoPlayer => !!x);
+        send('camo.scan', { by: e.by, flashed: hs.map((h) => [h.x, h.z]), at: e.at }, (p) => p.role === 'seeker' || p.role === 'spectator');
+        break;
+      }
+      case 'stoppage':
+        send('camo.stoppage', { endsAt: e.endsAt });
+        break;
+      case 'infected':
+        send('camo.infected', { eid: e.eid, at: e.at });
+        break;
+      case 'round.end':
+        send('camo.round.end', { round: e.round, winner: e.winner });
+        break;
+      case 'match.end':
+        break;
+    }
+    void now;
+  }
+}

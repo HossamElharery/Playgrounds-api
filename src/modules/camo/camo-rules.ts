@@ -407,6 +407,7 @@ function resetForRound(m: CamoMatch, room: CamoRoomData, now: number): void {
     p.points = 0;
     p.stats = emptyStats();
     p.spotId = null;
+    if (!p.isBot && p.connected) p.botCover = false;
     p.vx = p.vz = 0;
     p.ballReadyAt = 0;
     p.tagReadyAt = 0;
