@@ -24,6 +24,8 @@ export interface CamoFeatures {
 export class CamoService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CamoService.name);
   readonly host: CamoHost;
+  /** Flags as the game reads them: admin overrides on top of the environment. */
+  readonly flags: { get<T = string>(key: string): T | undefined };
   private sink: HostSink | null = null;
   private readonly blocked = new Map<string, Set<string>>();
   private readonly denied = new Map<string, string | null>();
@@ -35,6 +37,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     private readonly settingsService: CamoSettingsService,
     readonly moderation: CamoModerationService,
   ) {
+    this.flags = this.settingsService.flagSource(this.config);
     const policy: HostPolicy = {
       avoid: (a, b) => !!(this.blocked.get(a)?.has(b) || this.blocked.get(b)?.has(a)),
       denied: (u) => this.denied.get(u) ?? null,
@@ -44,7 +47,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       now: () => Date.now(),
       sink: { emit: (u, e, p, v) => this.sink?.emit(u, e, p, v) },
       policy,
-      voiceOn: () => camoVoiceEnabled(this.config),
+      voiceOn: () => camoVoiceEnabled(this.flags),
       votes: () => this.settingsService.current,
       onModeration: (e) => this.moderation.record(e),
       onMatchEnd: (m) => void this.persist(m),
@@ -70,11 +73,11 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
 
   features(): CamoFeatures {
     return {
-      enabled: camoEnabled(this.config),
-      publicMatch: camoPublicMatchEnabled(this.config),
-      voice: camoVoiceEnabled(this.config),
-      daily: camoDailyEnabled(this.config),
-      drain: camoDraining(this.config),
+      enabled: camoEnabled(this.flags),
+      publicMatch: camoPublicMatchEnabled(this.flags),
+      voice: camoVoiceEnabled(this.flags),
+      daily: camoDailyEnabled(this.flags),
+      drain: camoDraining(this.flags),
       protocolVersion: CAMO_PROTOCOL_VERSION,
     };
   }
@@ -125,7 +128,7 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
   }
 
   drainResult(): JoinResult | null {
-    return camoDraining(this.config) ? { ok: false, reason: 'drain' } : null;
+    return camoDraining(this.flags) ? { ok: false, reason: 'drain' } : null;
   }
 
   /** Stores a finished match and the players' running stats. Bots earn nothing and are not counted as real players. */

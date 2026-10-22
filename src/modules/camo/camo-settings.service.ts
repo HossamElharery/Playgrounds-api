@@ -25,6 +25,8 @@ export const CAMO_DEFAULTS = Object.freeze({
   scanEnabled: true,
   maxMatches: 40,
   camoUnsupported: [] as string[],
+  /** Runtime flag overrides from the admin tab (CAMO_ENABLED etc. as 'true'/'false'); empty = the environment decides. */
+  flags: {} as Record<string, string>,
 });
 
 export type CamoSettings = typeof CAMO_DEFAULTS;
@@ -49,6 +51,11 @@ export class CamoSettingsService {
       this.cache = { at: now, values: this.cache.values };
     }
     return { ...CAMO_DEFAULTS, ...this.cache.values };
+  }
+
+  /** A `ConfigService`-shaped reader: the admin override wins, the environment is the fallback. */
+  flagSource(env: { get<T = string>(key: string): T | undefined }): { get<T = string>(key: string): T | undefined } {
+    return { get: <T = string>(key: string): T | undefined => (this.current.flags?.[key] as unknown as T | undefined) ?? env.get<T>(key) };
   }
 
   /** Sync read of the last loaded values (the gateway hot path never awaits a query). */

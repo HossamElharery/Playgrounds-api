@@ -93,7 +93,7 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     const ready = (client.data as { authReady?: Promise<void> }).authReady;
     if (ready) await ready.catch(() => undefined);
     const id = authedUserId(client);
-    if (!id || !camoEnabled(this.config)) return null;
+    if (!id || !camoEnabled(this.camo.flags)) return null;
     return id;
   }
 
@@ -131,7 +131,7 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   @SubscribeMessage('camo.queue.join')
   async queueJoin(@ConnectedSocket() client: Socket, @MessageBody() data: Body): Promise<unknown> {
-    if (!camoPublicMatchEnabled(this.config)) return { ok: false, reason: 'disabled' };
+    if (!camoPublicMatchEnabled(this.camo.flags)) return { ok: false, reason: 'disabled' };
     const roomId = str(data?.['roomId']) ?? 'any';
     const partyId = str(data?.['partyId']);
     return this.joinWith(client, (u) => this.camo.host.joinPublic({ ...u, partyId }, roomId));

@@ -52,9 +52,13 @@ export function voiceMapFor(m: CamoMatch, listener: CamoPlayer, now: number): Vo
     const d = Math.hypot(sp.x - listener.x, sp.z - listener.z);
     if (!open && !isSpectator(listener) && d > VOICE_RANGE_M) continue;
     near.push({ p: sp, d });
+    // an open channel has no positions, so listing a quiet person leaks nothing: they simply are audible
+    if (open) {
+      peers.push({ userId: sp.userId, gain: 1 });
+      continue;
+    }
     if (sp.speakingUntil <= now) continue;
-    if (open) peers.push({ userId: sp.userId, gain: 1 });
-    else if (isSpectator(listener) || isSpectator(sp)) peers.push({ userId: sp.userId, gain: 1, x: sp.x, z: sp.z });
+    if (isSpectator(listener) || isSpectator(sp)) peers.push({ userId: sp.userId, gain: 1, x: sp.x, z: sp.z });
     else peers.push({ userId: sp.userId, gain: Math.max(0, 1 - d / VOICE_RANGE_M), x: sp.x, z: sp.z });
   }
   near.sort((a, b) => a.d - b.d);

@@ -40,7 +40,7 @@ export class CamoGuestService {
 
   /** Creates the guest row; the caller issues the token pair. */
   async create(input: { name?: string; lang?: 'ar' | 'en'; turnstileToken?: string; deviceId?: string; ip?: string }, now = Date.now()): Promise<User> {
-    if (!camoEnabled(this.config)) throw new ApiException(HttpStatus.NOT_FOUND, 'CAMO_DISABLED', 'The game is not available');
+    if (!camoEnabled(this.settings.flagSource(this.config))) throw new ApiException(HttpStatus.NOT_FOUND, 'CAMO_DISABLED', 'The game is not available');
     if (this.turnstile.enabled) {
       const verdict = await this.turnstile.verify(input.turnstileToken ?? '', input.ip);
       if (verdict === 'failed') throw new ApiException(HttpStatus.FORBIDDEN, 'CHALLENGE_FAILED', 'Challenge failed');

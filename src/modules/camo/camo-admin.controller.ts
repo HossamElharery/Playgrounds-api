@@ -1,9 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
+import { CAMO_DEFAULTS, CamoSettingsService, type CamoSettings } from './camo-settings.service';
 import { CamoService } from './camo.service';
 
 const ACTIONS = ['ignore', 'warn', 'voice_restrict', 'force_rename', 'camo_ban'] as const;
@@ -15,7 +16,34 @@ const ACTIONS = ['ignore', 'warn', 'voice_restrict', 'force_rename', 'camo_ban']
 @UseGuards(AuthGuard)
 @Roles('admin')
 export class CamoAdminController {
-  constructor(private readonly camo: CamoService) {}
+  constructor(
+    private readonly camo: CamoService,
+    private readonly settings: CamoSettingsService,
+  ) {}
+
+  /** Live numbers, the flags as the game sees them and every tunable value. */
+  @Get('overview')
+  async overview() {
+    const rooms = this.camo.host.liveRooms();
+    const humans = rooms.reduce((n, r) => n + r.humans.length, 0);
+    const bots = rooms.reduce((n, r) => n + r.bots, 0);
+    return {
+      flags: this.camo.features(),
+      overrides: (await this.settings.load()).flags,
+      live: { matches: rooms.length, humans, bots, botRatio: humans + bots ? Math.round((bots / (humans + bots)) * 100) / 100 : 0 },
+      settings: await this.settings.load(),
+    };
+  }
+
+  @Put('settings/:key')
+  async setSetting(@CurrentUser() admin: AuthenticatedUser, @Param('key') key: string, @Body() body: { value?: unknown }) {
+    if (!(key in CAMO_DEFAULTS) || body?.value === undefined) return { ok: false, reason: 'unknown_key' };
+    const expected = typeof (CAMO_DEFAULTS as Record<string, unknown>)[key];
+    if (expected !== 'object' && typeof body.value !== expected) return { ok: false, reason: 'bad_type' };
+    await this.settings.set(key as keyof CamoSettings, body.value, admin.id);
+    await this.camo.moderation.logAdmin(admin.id, `setting.${key}`, null, { value: body.value as never });
+    return { ok: true };
+  }
 
   @Get('reports')
   reports(@Query('status') status?: string) {

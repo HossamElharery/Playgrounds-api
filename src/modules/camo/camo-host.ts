@@ -568,10 +568,12 @@ export class CamoHost {
         const humansIn = m.players.filter((p) => !p.isBot).length;
         if (now >= m.phaseEndsAt || humansIn >= (m.botTarget || 8)) this.beginMatch(m, now);
         this.dropIfEmpty(m, now);
+        this.broadcastVoice(m, now);
         continue;
       }
       if (m.phase === 'waiting') {
         if (m.hostId === null) this.dropIfEmpty(m, now);
+        this.broadcastVoice(m, now);
         continue;
       }
       if (m.phase === 'ended') continue;
