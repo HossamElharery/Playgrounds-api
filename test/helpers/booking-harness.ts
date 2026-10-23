@@ -62,7 +62,7 @@ export const bookings = new BookingsService(
   prisma,
   testConfig as never,
   provider as never,
-  { onBookingCompleted: jest.fn() } as never,
+  { onBookingCompleted: jest.fn(), payBookingCoins: jest.fn() } as never,
   { debit: jest.fn(), credit: jest.fn() } as never,
   notifications,
   commission,

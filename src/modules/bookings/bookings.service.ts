@@ -1245,7 +1245,7 @@ export class BookingsService {
     });
     const perHundred =
       venue?.country.coinsPerHundredMajor ?? setting?.coinsPerHundredEgp ?? 10;
-    let coins = Math.round((booking.totalAmount / 100 / 100) * perHundred);
+    const coins = Math.round((booking.totalAmount / 100 / 100) * perHundred);
 
     const priorCompleted = await this.prisma.booking.count({
       where: {
@@ -1255,24 +1255,20 @@ export class BookingsService {
       },
     });
     const isFirstBooking = priorCompleted === 0;
-    if (isFirstBooking && booking.totalAmount >= FIRST_BOOKING_MIN_TOTAL) {
-      coins += FIRST_BOOKING_BONUS_COINS;
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: booking.userId },
-        data: { coinsBalance: { increment: coins } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: {
-          userId: booking.userId,
-          amount: coins,
-          reason: 'booking_completed',
-          bookingId: booking.id,
-        },
-      }),
-    ]);
+    // Coins are paid through the rewards door: only for a booking that proves
+    // a real player (BookingQualificationService), once, inside the venue's and
+    // the player's daily budgets. The first-booking bonus is paid once per
+    // player, on their first booking that qualifies.
+    await this.rewards.payBookingCoins({
+      bookingId: booking.id,
+      userId: booking.userId,
+      venueId: booking.venueId,
+      coins,
+      firstBonus:
+        booking.totalAmount >= FIRST_BOOKING_MIN_TOTAL
+          ? FIRST_BOOKING_BONUS_COINS
+          : 0,
+    });
 
     return { isFirstBooking };
   }

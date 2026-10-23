@@ -1,5 +1,5 @@
 import { CoinGrantService } from './coin-grant.service';
-import { ENGAGEMENT_DAILY_CAP_COINS } from './coins-policy';
+import { ENGAGEMENT_DAILY_CAP_COINS, USER_BOOKING_COINS_PER_DAY, VENUE_DAILY_COIN_BUDGET } from './coins-policy';
 
 type GrantRow = {
   id: string;
@@ -11,10 +11,12 @@ type GrantRow = {
   dailyCapped: boolean;
   releaseAt: Date | null;
   bookingId: string | null;
-  user: { trustedAt: Date | null; status: string };
+  category: string;
+  venueId: string | null;
+  user: { trustedAt: Date | null; status: string; rewardsBlockedAt?: Date | null };
 };
 
-function make(row: Partial<GrantRow> = {}, paidToday = 0) {
+function make(row: Partial<GrantRow> = {}, paidToday = 0, venuePaid = 0) {
   const grant: GrantRow = {
     id: 'g1',
     userId: 'u1',
@@ -25,6 +27,8 @@ function make(row: Partial<GrantRow> = {}, paidToday = 0) {
     dailyCapped: false,
     releaseAt: null,
     bookingId: null,
+    category: 'engagement',
+    venueId: null,
     user: { trustedAt: new Date(), status: 'active' },
     ...row,
   };
@@ -32,7 +36,7 @@ function make(row: Partial<GrantRow> = {}, paidToday = 0) {
     $executeRaw: jest.fn(async () => 1),
     coinGrant: {
       findUnique: jest.fn(async () => grant),
-      aggregate: jest.fn(async () => ({ _sum: { amount: paidToday } })),
+      aggregate: jest.fn(async (args: any) => ({ _sum: { amount: args.where.venueId ? venuePaid : paidToday } })),
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
     user: { update: jest.fn(async () => undefined) },
@@ -134,5 +138,43 @@ describe('CoinGrantService', () => {
     prisma.coinGrant.updateMany.mockResolvedValueOnce({ count: 3 });
     prisma.coinGrant.findMany.mockResolvedValueOnce([{ id: 'g1' }]);
     expect(await svc.sweepNow()).toEqual({ paid: 1, voided: 3 });
+  });
+
+  it('pays nothing to an account an admin blocked from rewards', async () => {
+    const { svc, tx } = make({ user: { trustedAt: new Date(), status: 'active', rewardsBlockedAt: new Date() } });
+    expect((await svc.release('g1')).status).toBe('pending');
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+
+  describe('booking coin budgets', () => {
+    const booking = { category: 'booking', venueId: 'v1', amount: 100 };
+
+    it('pays booking coins inside both budgets, under a lock on the player and the venue', async () => {
+      const { svc, tx } = make(booking, 0, 0);
+      expect(await svc.release('g1')).toEqual({ status: 'paid', amount: 100 });
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('trims to what is left of the player\'s daily booking budget', async () => {
+      const { svc } = make(booking, USER_BOOKING_COINS_PER_DAY - 40, 0);
+      expect(await svc.release('g1')).toEqual({ status: 'paid', amount: 40 });
+    });
+
+    it('trims to what is left of the venue\'s daily budget, so a farm venue cannot print coins', async () => {
+      const { svc } = make(booking, 0, VENUE_DAILY_COIN_BUDGET - 25);
+      expect(await svc.release('g1')).toEqual({ status: 'paid', amount: 25 });
+    });
+
+    it('voids the coins once the venue budget is gone', async () => {
+      const { svc, tx } = make(booking, 0, VENUE_DAILY_COIN_BUDGET);
+      expect(await svc.release('g1')).toEqual({ status: 'void', amount: 0 });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('stores the venue and category on the grant', async () => {
+      const { svc, prisma } = make();
+      await svc.grant({ userId: 'u1', amount: 10, reason: 'booking_completed', refKey: 'booking:b', category: 'booking', venueId: 'v1' });
+      expect((prisma.coinGrant.create.mock.calls[0] as any[])[0].data).toMatchObject({ category: 'booking', venueId: 'v1' });
+    });
   });
 });

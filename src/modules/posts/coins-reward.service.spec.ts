@@ -9,6 +9,7 @@ describe('CoinsRewardService', () => {
     $queryRaw: jest.fn(),
   };
   const grants = { grant: jest.fn() };
+  const links = { linkedIds: jest.fn() };
   const notifications = { create: jest.fn() };
   const analytics = { emit: jest.fn() };
   const hashtags = { refreshTrendingScores: jest.fn() };
@@ -27,12 +28,14 @@ describe('CoinsRewardService', () => {
     prisma.post.findUnique.mockResolvedValue({ authorId: 'u1' });
     prisma.post.updateMany.mockResolvedValue({ count: 1 });
     grants.grant.mockResolvedValue({ status: 'paid', amount: 15 });
+    links.linkedIds.mockResolvedValue(new Set(['twin']));
     service = new CoinsRewardService(
       prisma as never,
       notifications as never,
       analytics as never,
       hashtags as never,
       grants as never,
+      links as never,
     );
   });
 
@@ -80,14 +83,15 @@ describe('CoinsRewardService', () => {
     expect(grants.grant).not.toHaveBeenCalled();
   });
 
-  it('ignores the author\'s own like and likes from guests or brand-new accounts', async () => {
+  it('counts likes only from trusted players, never the author\'s own accounts, guests or brand-new accounts', async () => {
     prisma.post.findMany.mockResolvedValueOnce([
       { id: 'p1', slug: 's', authorId: 'u1', likeCount: 4, author: { postingRestriction: null } },
     ]);
     await service.evaluate();
     const where = prisma.postLike.findMany.mock.calls[0][0].where;
-    expect(where.userId).toEqual({ not: 'u1' });
+    expect(where.userId).toEqual({ notIn: ['u1', 'twin'] });
     expect(where.user.isGuest).toBe(false);
     expect(where.user.status).toBe('active');
+    expect(where.user.trustedAt).toEqual({ not: null });
   });
 });

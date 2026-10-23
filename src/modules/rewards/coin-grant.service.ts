@@ -7,6 +7,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import {
   ENGAGEMENT_DAILY_CAP_COINS,
   PENDING_GRANT_TTL_MS,
+  USER_BOOKING_COINS_PER_DAY,
+  VENUE_DAILY_COIN_BUDGET,
 } from './coins-policy';
 
 export interface GrantInput {
@@ -23,6 +25,9 @@ export interface GrantInput {
   /** Keep the reward pending for this long before it can be paid. */
   holdMs?: number;
   bookingId?: string;
+  /** Booking-born rewards: counted against the venue's and the player's rolling 24h budgets. */
+  category?: 'engagement' | 'booking';
+  venueId?: string;
 }
 
 export type GrantOutcome =
@@ -78,6 +83,8 @@ export class CoinGrantService {
           dailyCapped: input.dailyCapped ?? false,
           releaseAt: input.holdMs ? new Date(Date.now() + input.holdMs) : null,
           bookingId: input.bookingId ?? null,
+          venueId: input.venueId ?? null,
+          category: input.category ?? 'engagement',
         },
         select: { id: true },
       });
@@ -96,7 +103,7 @@ export class CoinGrantService {
       async (tx) => {
         const grant = await tx.coinGrant.findUnique({
           where: { id: grantId },
-          include: { user: { select: { trustedAt: true, status: true } } },
+          include: { user: { select: { trustedAt: true, status: true, rewardsBlockedAt: true } } },
         });
         if (!grant) return { status: 'void', amount: 0 } as GrantOutcome;
         if (grant.status === 'paid')
@@ -107,7 +114,7 @@ export class CoinGrantService {
           return { status: 'pending', amount: grant.amount } as GrantOutcome;
         if (grant.requiresTrust && !grant.user.trustedAt)
           return { status: 'pending', amount: grant.amount } as GrantOutcome;
-        if (grant.user.status !== 'active')
+        if (grant.user.status !== 'active' || grant.user.rewardsBlockedAt)
           return { status: 'pending', amount: grant.amount } as GrantOutcome;
 
         let pay = grant.amount;
@@ -125,6 +132,34 @@ export class CoinGrantService {
             _sum: { amount: true },
           });
           const room = ENGAGEMENT_DAILY_CAP_COINS - (sum._sum.amount ?? 0);
+          if (room <= 0) {
+            await tx.coinGrant.updateMany({
+              where: { id: grant.id, status: 'pending' },
+              data: { status: 'void' },
+            });
+            return { status: 'void', amount: 0 } as GrantOutcome;
+          }
+          pay = Math.min(pay, room);
+        }
+
+        if (grant.category === 'booking') {
+          // Booking coins: one player's and one venue's totals are decided one at a time.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${grant.userId}))`;
+          if (grant.venueId)
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${grant.venueId}))`;
+          const since = new Date(Date.now() - 86_400_000);
+          const mine = await tx.coinGrant.aggregate({
+            where: { userId: grant.userId, category: 'booking', status: 'paid', paidAt: { gte: since } },
+            _sum: { amount: true },
+          });
+          let room = USER_BOOKING_COINS_PER_DAY - (mine._sum.amount ?? 0);
+          if (grant.venueId) {
+            const venue = await tx.coinGrant.aggregate({
+              where: { venueId: grant.venueId, category: 'booking', status: 'paid', paidAt: { gte: since } },
+              _sum: { amount: true },
+            });
+            room = Math.min(room, VENUE_DAILY_COIN_BUDGET - (venue._sum.amount ?? 0));
+          }
           if (room <= 0) {
             await tx.coinGrant.updateMany({
               where: { id: grant.id, status: 'pending' },

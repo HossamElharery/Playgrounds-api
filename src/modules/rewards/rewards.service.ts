@@ -14,13 +14,15 @@ import { UpdateBadgeDto } from './dto/update-badge.dto';
 import { UpdatePlatformSettingDto } from './dto/update-platform-setting.dto';
 import { AchievementsService } from './achievements.service';
 import { CoinGrantService } from './coin-grant.service';
+import { BookingQualificationService } from './risk/booking-qualification.service';
+import { DeviceLinksService } from './risk/device-links.service';
+import { TrustService } from './risk/trust.service';
 import {
   DAILY_CHECKIN_COINS,
   REFERRAL_BONUS_COINS,
   REFERRAL_HOLD_MS,
   REFERRAL_MONTHLY_CAP,
   REVIEW_PHOTO_BONUS_COINS,
-  TRUST_MIN_BOOKING_TOTAL,
   cairoDayKey,
 } from './coins-policy';
 
@@ -67,7 +69,15 @@ export class RewardsService {
     private readonly prisma: PrismaService,
     private readonly grants: CoinGrantService,
     private readonly achievements: AchievementsService,
-  ) {}
+    private readonly qualification: BookingQualificationService,
+    private readonly trust: TrustService,
+    private readonly links: DeviceLinksService,
+  ) {
+    // A player just became trusted: settle the referral that was waiting for it.
+    this.trust.onTrusted((userId, bookingId) =>
+      bookingId ? this.settleReferralIfAny(userId, bookingId) : Promise.resolve(),
+    );
+  }
 
   async wallet(userId: string) {
     const [user, ledger, pending] = await Promise.all([
@@ -595,27 +605,57 @@ export class RewardsService {
     });
   }
 
+  /** Coins for a finished booking: only for one that proves a real player, within the budgets. */
+  async payBookingCoins(params: {
+    bookingId: string;
+    userId: string;
+    venueId: string;
+    coins: number;
+    firstBonus: number;
+  }): Promise<void> {
+    const q = await this.qualification.assess(params.bookingId);
+    if (!q.ok) return;
+    if (params.coins > 0)
+      await this.grants.grant({
+        userId: params.userId,
+        amount: params.coins,
+        reason: 'booking_completed',
+        refKey: `booking:${params.bookingId}`,
+        category: 'booking',
+        venueId: params.venueId,
+        bookingId: params.bookingId,
+      });
+    if (params.firstBonus > 0)
+      await this.grants.grant({
+        userId: params.userId,
+        amount: params.firstBonus,
+        reason: 'first_booking_bonus',
+        refKey: 'first_booking',
+        category: 'booking',
+        venueId: params.venueId,
+        bookingId: params.bookingId,
+      });
+  }
+
   async onBookingCompleted(params: {
     bookingId: string;
     userId: string;
     courtId: string;
     isFirstBooking: boolean;
-    /** What the booking cost (minor units). Free / token bookings prove nothing. */
-    totalAmount: number;
+    /** Kept for callers; the booking itself is re-read and judged. */
+    totalAmount?: number;
     source?: string;
   }) {
-    const qualifying =
-      (params.source ?? 'platform') === 'platform' &&
-      params.totalAmount >= TRUST_MIN_BOOKING_TOTAL;
-    // The first paid booking checked in at a venue is what makes a player
-    // "real": it releases every reward that was waiting, and settles referrals.
-    const becameTrusted = qualifying
-      ? await this.grants.markTrusted(params.userId)
-      : false;
+    const q = await this.qualification.assess(params.bookingId);
+    if (!q.ok) return;
     if (params.isFirstBooking) {
       await this.awardBadgeIfExists(params.userId, 'first-timer');
     }
-    if (!qualifying) return;
+    // The booking proves a real player: start (or finish) their trust, and
+    // count it toward quests and achievements, a few a day at most.
+    await this.trust.considerCheckIn(params.userId, params.bookingId, q);
+    const counted = await this.achievements.bump(params.userId, 'booking.completed');
+    if (counted <= 0) return;
     const court = await this.prisma.court.findUnique({
       where: { id: params.courtId },
       include: { sport: true },
@@ -625,10 +665,6 @@ export class RewardsService {
       activityKind: court?.sport.activityKind,
     };
     await this.bumpQuestsForEvent(params.userId, 'booking.completed', ctx);
-    await this.achievements.bump(params.userId, 'booking.completed');
-    if (becameTrusted) {
-      await this.settleReferralIfAny(params.userId, params.bookingId);
-    }
   }
 
   private async settleReferralIfAny(userId: string, bookingId: string) {
@@ -638,6 +674,8 @@ export class RewardsService {
     });
     if (!user?.referredById || user.referredById === userId) return;
     const referrerId = user.referredById;
+    // Two accounts on one phone are one person: no reward for inviting yourself.
+    if (await this.links.areLinked(referrerId, userId)) return;
 
     // The new player is paid for the first paid booking; the inviter only
     // for a limited number of friends a month, and both after a hold.
@@ -680,6 +718,8 @@ export class RewardsService {
     hasPhoto: boolean,
     bookingId: string,
   ) {
+    // Only a review of a booking that proves a real player earns anything.
+    if (!(await this.qualification.assess(bookingId)).ok) return;
     await this.bumpQuestsForEvent(userId, 'review.submitted');
     if (!hasPhoto) return;
     await this.bumpQuestsForEvent(userId, 'review.photo');

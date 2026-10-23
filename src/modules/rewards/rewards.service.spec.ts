@@ -22,7 +22,15 @@ function make(user: Record<string, unknown> = {}) {
     pendingSummary: jest.fn(),
   };
   const achievements = { bump: jest.fn(async () => 1), setBest: jest.fn(async () => undefined) };
-  return { svc: new RewardsService(prisma, grants as any, achievements as any), prisma, grants, achievements };
+  const qualification = { assess: jest.fn(async (): Promise<any> => ({ ok: true, moneyVerified: false, venueId: 'v1', userId: 'u1' })) };
+  let trustedHandler: (u: string, b: string | null) => Promise<void> = async () => undefined;
+  const trust = {
+    onTrusted: jest.fn((h: any) => { trustedHandler = h; }),
+    considerCheckIn: jest.fn(async () => 'candidate'),
+  };
+  const links = { areLinked: jest.fn(async () => false) };
+  const svc = new RewardsService(prisma, grants as any, achievements as any, qualification as any, trust as any, links as any);
+  return { svc, prisma, grants, achievements, qualification, trust, links, trusted: (u: string, b: string | null) => trustedHandler(u, b) };
 }
 
 describe('RewardsService.dailyCheckIn', () => {
@@ -62,59 +70,83 @@ describe('RewardsService.dailyCheckIn', () => {
 });
 
 describe('RewardsService.onBookingCompleted', () => {
-  const booking = { bookingId: 'b1', userId: 'u1', courtId: 'c1', isFirstBooking: true, totalAmount: 20000 };
+  const booking = { bookingId: 'b1', userId: 'u1', courtId: 'c1', isFirstBooking: true };
 
-  it('a free or tiny booking proves nothing: no trust, no quest, no achievement', async () => {
-    const { svc, grants, achievements } = make({ referredById: 'ref' });
-    await svc.onBookingCompleted({ ...booking, totalAmount: 0 });
-    expect(grants.markTrusted).not.toHaveBeenCalled();
+  it('a booking that does not prove a real player counts for nothing', async () => {
+    const { svc, qualification, trust, achievements, grants } = make({ referredById: 'ref' });
+    qualification.assess.mockResolvedValue({ ok: false, reason: 'venue_insider' });
+    await svc.onBookingCompleted(booking);
+    expect(trust.considerCheckIn).not.toHaveBeenCalled();
     expect(achievements.bump).not.toHaveBeenCalled();
     expect(grants.grant).not.toHaveBeenCalled();
   });
 
-  it('an owner-entered (manual) booking never makes a player trusted', async () => {
-    const { svc, grants } = make();
-    await svc.onBookingCompleted({ ...booking, source: 'manual' });
-    expect(grants.markTrusted).not.toHaveBeenCalled();
+  it('a qualifying check-in starts the trust cool-off and counts toward achievements', async () => {
+    const { svc, trust, achievements } = make();
+    await svc.onBookingCompleted(booking);
+    expect(trust.considerCheckIn).toHaveBeenCalledWith('u1', 'b1', expect.objectContaining({ ok: true }));
+    expect(achievements.bump).toHaveBeenCalledWith('u1', 'booking.completed');
   });
 
-  it('the first paid check-in makes the player trusted and settles the referral with a hold', async () => {
-    const { svc, grants } = make({ referredById: 'ref' });
+  it('bookings past the daily counted limit do not advance quests', async () => {
+    const { svc, prisma, achievements } = make();
+    achievements.bump.mockResolvedValue(0);
     await svc.onBookingCompleted(booking);
-    expect(grants.markTrusted).toHaveBeenCalledWith('u1');
+    expect(prisma.court.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('pays booking coins and the first-booking bonus only for a qualifying booking, through the budgeted door', async () => {
+    const { svc, grants, qualification } = make();
+    await svc.payBookingCoins({ bookingId: 'b1', userId: 'u1', venueId: 'v1', coins: 30, firstBonus: 200 });
+    expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ reason: 'booking_completed', refKey: 'booking:b1', category: 'booking', venueId: 'v1', amount: 30 }));
+    expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ reason: 'first_booking_bonus', refKey: 'first_booking', category: 'booking', amount: 200 }));
+    grants.grant.mockClear();
+    qualification.assess.mockResolvedValue({ ok: false, reason: 'last_minute' });
+    await svc.payBookingCoins({ bookingId: 'b2', userId: 'u1', venueId: 'v1', coins: 30, firstBonus: 200 });
+    expect(grants.grant).not.toHaveBeenCalled();
+  });
+
+  it('the referral settles when the player becomes trusted, with a hold', async () => {
+    const { svc, grants, trusted } = make({ referredById: 'ref' });
+    void svc;
+    await trusted('u1', 'b1');
     expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', amount: REFERRAL_BONUS_COINS, refKey: 'referral:joined', holdMs: REFERRAL_HOLD_MS }));
     expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ userId: 'ref', amount: REFERRAL_BONUS_COINS, refKey: 'referral:invited:u1', holdMs: REFERRAL_HOLD_MS }));
   });
 
-  it('later bookings never pay the referral again', async () => {
-    const { svc, grants } = make({ referredById: 'ref' });
-    grants.markTrusted.mockResolvedValue(false);
-    await svc.onBookingCompleted({ ...booking, isFirstBooking: false });
-    expect(grants.grant).not.toHaveBeenCalled();
-  });
-
   it('an inviter over the monthly limit is not paid for more friends', async () => {
-    const { svc, prisma, grants } = make({ referredById: 'ref' });
+    const { prisma, grants, trusted } = make({ referredById: 'ref' });
     prisma.coinGrant.count.mockResolvedValue(REFERRAL_MONTHLY_CAP);
-    await svc.onBookingCompleted(booking);
+    await trusted('u1', 'b1');
     expect(grants.grant).toHaveBeenCalledTimes(1);
     expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1' }));
   });
 
-  it('nobody is paid for referring themselves', async () => {
-    const { svc, grants } = make({ referredById: 'u1' });
-    await svc.onBookingCompleted(booking);
-    expect(grants.grant).not.toHaveBeenCalled();
+  it('nobody is paid for referring themselves, or for inviting their own other account', async () => {
+    const own = make({ referredById: 'u1' });
+    await own.trusted('u1', 'b1');
+    expect(own.grants.grant).not.toHaveBeenCalled();
+    const twin = make({ referredById: 'ref' });
+    twin.links.areLinked.mockResolvedValue(true);
+    await twin.trusted('u1', 'b1');
+    expect(twin.grants.grant).not.toHaveBeenCalled();
   });
 
-  it('counts the booking toward the booking achievements', async () => {
-    const { svc, achievements } = make();
-    await svc.onBookingCompleted({ ...booking, isFirstBooking: false });
-    expect(achievements.bump).toHaveBeenCalledWith('u1', 'booking.completed');
+  it('a trust without a booking (admin override) settles no referral', async () => {
+    const { grants, trusted } = make({ referredById: 'ref' });
+    await trusted('u1', null);
+    expect(grants.grant).not.toHaveBeenCalled();
   });
 });
 
 describe('RewardsService reviews and MVP', () => {
+  it('a review of a booking that proves nothing earns nothing', async () => {
+    const { svc, grants, qualification } = make();
+    qualification.assess.mockResolvedValue({ ok: false, reason: 'venue_insider' });
+    await svc.onReviewSubmitted('u1', true, 'b1');
+    expect(grants.grant).not.toHaveBeenCalled();
+  });
+
   it('the photo bonus is one reward per booking, and only for a review with photos', async () => {
     const { svc, grants } = make();
     await svc.onReviewSubmitted('u1', false, 'b1');

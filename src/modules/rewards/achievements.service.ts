@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CoinGrantService } from './coin-grant.service';
-import { cairoDayKey, metricDailyMax } from './coins-policy';
+import { cairoDayKey, metricDailyMax, metricLifetimeMax } from './coins-policy';
 import type { CreateAchievementDto } from './dto/create-achievement.dto';
 import type { UpdateAchievementDto } from './dto/update-achievement.dto';
 
@@ -63,13 +63,16 @@ export class AchievementsService {
   ): Promise<{ added: number; value: number }> {
     const today = cairoDayKey();
     const max = metricDailyMax(metric);
+    const lifetimeMax = metricLifetimeMax(metric);
     for (let attempt = 0; attempt < 4; attempt++) {
       const row = await this.prisma.userMetric.findUnique({
         where: { userId_metric: { userId, metric } },
       });
       const dayCount = row && row.dayKey === today ? row.dayCount : 0;
-      const added =
+      let added =
         max == null ? amount : Math.max(0, Math.min(amount, max - dayCount));
+      if (lifetimeMax != null)
+        added = Math.max(0, Math.min(added, lifetimeMax - (row?.value ?? 0)));
       if (added <= 0) return { added: 0, value: row?.value ?? 0 };
       if (!row) {
         try {

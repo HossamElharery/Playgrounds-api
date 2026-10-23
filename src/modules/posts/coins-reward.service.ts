@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { withJobLock } from '../../common/utils/job-lock.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoinGrantService } from '../rewards/coin-grant.service';
+import { DeviceLinksService } from '../rewards/risk/device-links.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AnalyticsService } from './analytics.service';
 import { HashtagService } from './hashtag.service';
@@ -19,6 +20,7 @@ export class CoinsRewardService {
     private readonly analytics: AnalyticsService,
     private readonly hashtags: HashtagService,
     private readonly grants: CoinGrantService,
+    private readonly links: DeviceLinksService,
   ) {}
 
   @Cron('*/12 * * * *')
@@ -124,11 +126,18 @@ export class CoinsRewardService {
       where: { id: postId },
       select: { authorId: true },
     });
+    // Likes count only from trusted players who are not the author's own other accounts.
+    const mine = post ? await this.links.linkedIds(post.authorId) : new Set<string>();
     const likes = await this.prisma.postLike.findMany({
       where: {
         postId,
-        userId: { not: post?.authorId },
-        user: { createdAt: { lte: cutoff }, isGuest: false, status: 'active' },
+        userId: { notIn: [post?.authorId ?? '', ...mine] },
+        user: {
+          createdAt: { lte: cutoff },
+          isGuest: false,
+          status: 'active',
+          trustedAt: { not: null },
+        },
       },
       select: { createdAt: true },
       orderBy: { createdAt: 'asc' },

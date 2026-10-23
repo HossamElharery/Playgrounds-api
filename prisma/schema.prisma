@@ -81,6 +81,12 @@ model User {
   /// from engagement (check-ins, games, achievements...) stay pending until
   /// this is set: it separates real players from throw-away accounts.
   trustedAt         DateTime?
+  /// A qualifying check-in was seen; trust is confirmed after a cool-off if it still holds.
+  trustCandidateAt  DateTime?
+  trustBookingId    String?
+  trustVenueId      String?
+  /// Admin switch: this account earns no engagement coins and cannot become trusted.
+  rewardsBlockedAt  DateTime?
   /// Prepaid EGP wallet in minor units (piasters). Player bookings, bundles,
   /// and memberships debit this — they never charge a PSP directly. Top-up
   /// is the only player flow that uses card / Vodafone / InstaPay / Fawry.
@@ -143,6 +149,7 @@ model User {
   coinGrants                CoinGrant[]
   userMetrics               UserMetric[]
   userAchievements          UserAchievement[]
+  devices                   UserDevice[]
   walletLedger              WalletLedgerEntry[]
   paymentIntents            PaymentIntent[]
   walletWithdrawals         WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
@@ -212,6 +219,7 @@ model User {
 
   @@index([isGuest, createdAt])
   @@index([guestSource, createdAt])
+  @@index([trustVenueId, trustCandidateAt])
   @@index([status])
   @@index([countryCode])
   @@index([governorateId])
@@ -579,6 +587,8 @@ model Venue {
   approvedById             String?
   approvedBy               User?            @relation("VenueApprovedBy", fields: [approvedById], references: [id])
   approvedAt               DateTime?
+  /// Admin switch: bookings at this venue stop creating trusted players and coins.
+  rewardsFrozenAt          DateTime?
   ratingAvg                Float            @default(0)
   ratingCount              Int              @default(0)
   priceFromAmount          Int?
@@ -2676,12 +2686,31 @@ model CoinGrant {
   dailyCapped   Boolean   @default(false)
   releaseAt     DateTime?
   bookingId     String?
+  /// Venue whose booking produced this reward (for the venue's rolling coin budget).
+  venueId       String?
+  /// engagement | booking
+  category      String    @default("engagement")
   createdAt     DateTime  @default(now())
   paidAt        DateTime?
 
+  @@index([venueId, category, status, paidAt])
   @@unique([userId, refKey])
   @@index([status, releaseAt])
   @@index([userId, status])
+}
+
+/// A browser/app install an account was used from (header x-device-id, hashed).
+/// Accounts that share one are treated as the same person for rewards.
+model UserDevice {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceHash  String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([userId, deviceHash])
+  @@index([deviceHash])
 }
 
 /// Lifetime counter behind the achievements (games won, matches hosted...).

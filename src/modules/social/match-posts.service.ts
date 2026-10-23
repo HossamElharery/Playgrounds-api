@@ -13,6 +13,8 @@ import { elapsedLiveMatchWhere, matchHasKickedOff } from './match-lifecycle';
 import { AchievementsService } from '../rewards/achievements.service';
 import { CoinGrantService } from '../rewards/coin-grant.service';
 import { matchWasPlayedForReal } from '../rewards/match-proof';
+import { BookingQualificationService } from '../rewards/risk/booking-qualification.service';
+import { DeviceLinksService } from '../rewards/risk/device-links.service';
 import { MATCH_MIN_OTHER_PLAYERS, MATCH_PLAYED_COINS } from '../rewards/coins-policy';
 
 /** A match can be closed as "played" from a little before kickoff. */
@@ -26,6 +28,8 @@ export class MatchPostsService {
     private readonly notifications: NotificationsService,
     private readonly grants: CoinGrantService,
     private readonly achievements: AchievementsService,
+    private readonly qualification: BookingQualificationService,
+    private readonly links: DeviceLinksService,
   ) {}
 
   private async resolveSportId(key?: string) {
@@ -418,15 +422,26 @@ export class MatchPostsService {
   ): Promise<void> {
     try {
       if (playerIds.length < MATCH_MIN_OTHER_PLAYERS + 1) return;
-      if (!(await matchWasPlayedForReal(this.prisma, post, playerIds))) return;
+      if (!(await matchWasPlayedForReal(this.prisma, this.qualification, post, playerIds))) return;
       const real = await this.prisma.user.findMany({
-        where: { id: { in: playerIds }, isGuest: false, status: 'active', deletedAt: null },
-        select: { id: true },
+        where: {
+          id: { in: playerIds },
+          isGuest: false,
+          status: 'active',
+          deletedAt: null,
+          rewardsBlockedAt: null,
+        },
+        select: { id: true, trustedAt: true },
       });
-      const realIds = new Set(real.map((u) => u.id));
-      if (realIds.size < MATCH_MIN_OTHER_PLAYERS + 1) return;
-      if (realIds.has(post.authorId)) await this.achievements.bump(post.authorId, 'match.hosted');
-      for (const userId of realIds) {
+      const trusted = new Set(real.filter((u) => u.trustedAt).map((u) => u.id));
+      for (const { id: userId } of real) {
+        // A reward needs a trusted co-player who is not on the same device.
+        const linked = await this.links.linkedIds(userId);
+        const partners = real.filter(
+          (o) => o.id !== userId && trusted.has(o.id) && !linked.has(o.id),
+        );
+        if (partners.length < MATCH_MIN_OTHER_PLAYERS) continue;
+        if (userId === post.authorId) await this.achievements.bump(userId, 'match.hosted');
         await this.achievements.bump(userId, 'match.played');
         await this.grants.grant({
           userId,

@@ -58,7 +58,7 @@ describe('BookingsService', () => {
         },
         {
           provide: RewardsService,
-          useValue: { onBookingCompleted: jest.fn() },
+          useValue: { onBookingCompleted: jest.fn(), payBookingCoins: jest.fn() },
         },
         {
           provide: WalletService,

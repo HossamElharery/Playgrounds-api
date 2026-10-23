@@ -12,6 +12,8 @@ import { CreatePlayerRatingDto } from './dto/create-player-rating.dto';
 import { buildPagination } from '../../common/dto/page-query.dto';
 import { RewardsService } from '../rewards/rewards.service';
 import { CoinGrantService } from '../rewards/coin-grant.service';
+import { BookingQualificationService } from '../rewards/risk/booking-qualification.service';
+import { DeviceLinksService } from '../rewards/risk/device-links.service';
 import { matchWasPlayedForReal, realPhotoUrls } from '../rewards/match-proof';
 import { PLAYER_RATING_COINS } from '../rewards/coins-policy';
 
@@ -21,6 +23,8 @@ export class ReviewsService {
     private readonly prisma: PrismaService,
     private readonly rewards: RewardsService,
     private readonly grants: CoinGrantService,
+    private readonly qualification: BookingQualificationService,
+    private readonly links: DeviceLinksService,
   ) {}
 
 
@@ -145,7 +149,7 @@ export class ReviewsService {
         post.authorId,
         ...post.joinRequests.map((j) => j.userId),
       ]);
-      verified = await matchWasPlayedForReal(this.prisma, post, [...participants]);
+      verified = await matchWasPlayedForReal(this.prisma, this.qualification, post, [...participants]);
     } else {
       const booking = await this.prisma.booking.findUnique({
         where: { id: dto.bookingId },
@@ -156,6 +160,7 @@ export class ReviewsService {
           'Ratings are only available after a completed match',
         );
       participants = await this.eligibleParticipants(dto.bookingId!);
+      verified = (await this.qualification.assess(dto.bookingId!)).ok;
     }
 
     if (!participants.has(raterId) || !participants.has(dto.rateeId)) {
@@ -195,7 +200,8 @@ export class ReviewsService {
     }
 
     await this.recomputeReliability(dto.rateeId);
-    if (verified) {
+    // Rating yourself up through a second account is not a match.
+    if (verified && !(await this.links.areLinked(raterId, dto.rateeId))) {
       await this.grants.grant({
         userId: raterId,
         amount: PLAYER_RATING_COINS,

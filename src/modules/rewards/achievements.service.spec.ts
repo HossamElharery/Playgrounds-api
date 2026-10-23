@@ -87,4 +87,17 @@ describe('AchievementsService', () => {
     const [row] = await svc.listForUser('u1');
     expect(row).toMatchObject({ key: 'penalties_win_10', progress: 10, target: 10, rewardStatus: 'pending' });
   });
+
+  it('a pair of players can add only a few wins to each other, ever (lifetime cap)', async () => {
+    const { svc, prisma } = make({ metric: { id: 'm', value: 3, dayKey: '2000-01-01', dayCount: 0, updatedAt: new Date() } });
+    expect(await svc.bump('u1', 'pair.win:other')).toBe(0);
+    expect(prisma.userMetric.updateMany).not.toHaveBeenCalled();
+    const fresh = make({ metric: { id: 'm', value: 2, dayKey: '2000-01-01', dayCount: 0, updatedAt: new Date() } });
+    expect(await fresh.svc.bump('u1', 'pair.win:other')).toBe(1);
+  });
+
+  it('only a few bookings a day count toward booking achievements', async () => {
+    const { svc } = make({ metric: { id: 'm', value: 9, dayKey: today, dayCount: 2, updatedAt: new Date() } });
+    expect(await svc.bump('u1', 'booking.completed')).toBe(0);
+  });
 });
