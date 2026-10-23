@@ -27,8 +27,8 @@ import {
 } from './camo-constants';
 import { assistedDirection, canSee, inForbiddenZone, kickOriginOk, tagHits, travelBudget } from './camo-hit';
 import { launchVelocity, simulateShot, type BallEvent, type BallKeyframe } from './camo-ball-sim';
-import { emptyPaintBook, estimateCamo, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
-import { pushOut, type CamoRoomData } from './camo-room';
+import { emptyPaintBook, estimateCamo, estimateCamoBands, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
+import { pushOut, type CamoRoomData, type HideSpot } from './camo-room';
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -543,7 +543,6 @@ export function acceptMove(m: CamoMatch, room: CamoRoomData, eid: string, mv: Mo
   if (m.phase === 'reveal' || m.phase === 'var' || m.phase === 'results' || m.phase === 'waiting' || m.phase === 'ended') return null;
   if (p.role === 'seeker' && (m.phase === 'prep' || m.phase === 'whistle')) return null;
   if (p.suspendedUntil > now) return null;
-  p.lastInputAt = now;
   const dt = Math.max(0, now - p.lastMoveAt);
   p.budget = Math.min(travelBudget(1000, false) * 2, p.budget + (dt / 1000) * MOVE.walk * MOVE.slack);
   const wantsRun = !!mv.run && p.role === 'seeker' && now >= p.recoverUntil && p.stamina > 0;
@@ -562,6 +561,8 @@ export function acceptMove(m: CamoMatch, room: CamoRoomData, eid: string, mv: Mo
   }
   const safe = pushOut(room, x, z);
   if (safe.x !== x || safe.z !== z) corrected = true;
+  // only a body that really moved (or turned) counts as «awake»: a client that merely keeps sending its position does not
+  if (Math.hypot(safe.x - p.x, safe.z - p.z) > 0.02 || Math.abs(mv.yaw - p.yaw) > 0.05) p.lastInputAt = now;
   p.x = safe.x;
   p.z = safe.z;
   p.yaw = mv.yaw;
@@ -862,7 +863,7 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
     case 'whistle':
       if (now >= m.phaseEndsAt) {
         m.huntStartedAt = now;
-        for (const p of m.players) if (p.role === 'hider') p.stats.camo = estimateCamo(p.paint, spotColor(room, p));
+        for (const p of m.players) if (p.role === 'hider') p.stats.camo = camoOf(room, p);
         setPhase(m, 'hunt', now, m.timers.huntMs);
       }
       return true;
@@ -923,15 +924,22 @@ function nearestSpot(room: CamoRoomData, p: CamoPlayer): string | null {
   return bd < 4 ? best : null;
 }
 
-function spotColor(room: CamoRoomData, p: CamoPlayer): number {
-  const spot = room.hideSpots.reduce<{ d: number; c: number }>(
-    (best, s) => {
-      const d = (s.x - p.x) ** 2 + (s.z - p.z) ** 2;
-      return d < best.d ? { d, c: s.color } : best;
-    },
-    { d: Infinity, c: 0x808080 },
-  );
-  return spot.c;
+/** How well this hider's paint matches what is behind it: the baked colours of the nearest hide spot, worse when it is not at one. */
+function camoOf(room: CamoRoomData, p: CamoPlayer): number {
+  let best: HideSpot | null = null;
+  let bd = Infinity;
+  for (const s of room.hideSpots) {
+    const d = Math.hypot(s.x - p.x, s.z - p.z);
+    if (d < bd) {
+      bd = d;
+      best = s;
+    }
+  }
+  if (!best) return estimateCamo(p.paint, 0x808080);
+  const bands = best.bands?.length === 6 ? best.bands : Array<number>(6).fill(best.color);
+  const base = estimateCamoBands(p.paint, bands);
+  // standing in the open (not at any spot) is never well hidden, whatever the paint
+  return Math.round(base * (bd <= 1.2 ? 1 : Math.max(0.25, 1.6 - bd * 0.5)) * 100) / 100;
 }
 
 /** Seekers wait in the referees' room while the others paint: put back anybody who drifted. */

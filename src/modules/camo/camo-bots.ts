@@ -21,13 +21,16 @@ import {
   type CamoPlayer,
 } from './camo-rules';
 import { buildWalkGrid, findPath, type CamoRoomData, type HideSpot, type WalkGrid } from './camo-room';
-import type { WireStroke } from './camo-paint';
+import { BAND_Y_MM, type WireStroke } from './camo-paint';
 
 interface Mem {
   path: Array<{ x: number; z: number }>;
   step: number;
   spot: HideSpot | null;
   painted: boolean;
+  startAt: number;
+  visited: Set<string>;
+  paintAt: number;
   settled: boolean;
   target: string | null;
   nextWaypointAt: number;
@@ -38,6 +41,9 @@ interface Mem {
 }
 
 const WALK_STEP_S = 0.1;
+
+/** How quickly a referee bot notices a hider it can see (per second, before distance and camouflage). Tuned so a real player hiding well wins about half the rounds. */
+export const NOTICE = { base: 0.24, perSkill: 0.6, camoEffect: 0.72 };
 
 export class BotBrain {
   private readonly mem = new Map<string, Mem>();
@@ -50,7 +56,7 @@ export class BotBrain {
   private memOf(p: CamoPlayer): Mem {
     let m = this.mem.get(p.eid);
     if (!m) {
-      m = { path: [], step: 0, spot: null, painted: false, settled: false, target: null, nextWaypointAt: 0, lastPlanAt: 0, panicUntil: 0, seq: 1, aimUntil: 0 };
+      m = { path: [], step: 0, spot: null, painted: false, startAt: 0, visited: new Set<string>(), paintAt: 0, settled: false, target: null, nextWaypointAt: 0, lastPlanAt: 0, panicUntil: 0, seq: 1, aimUntil: 0 };
       this.mem.set(p.eid, m);
     }
     return m;
@@ -104,68 +110,94 @@ export class BotBrain {
 
   // ── hider ───────────────────────────────────────────────────────────────
 
+  /** A spot nobody else is at or next to; better bots lean towards the harder (more tucked-away) ones. */
   private pickSpot(match: CamoMatch, p: CamoPlayer): HideSpot {
-    const taken = new Set(match.players.filter((q) => q !== p && q.spotId).map((q) => q.spotId));
-    const maxDiff = 1 + Math.round(p.botSkill * 2);
-    const pool = this.room.hideSpots.filter((s) => s.difficulty <= maxDiff && !taken.has(s.id));
-    const list = pool.length ? pool : this.room.hideSpots;
-    return list[Math.floor(match.rng() * list.length)];
+    const taken = match.players.filter((q) => q !== p && q.spotId).map((q) => this.room.hideSpots.find((s) => s.id === q.spotId)).filter((s): s is HideSpot => !!s);
+    const free = this.room.hideSpots.filter((s) => !taken.some((t) => Math.hypot(t.x - s.x, t.z - s.z) < 1.4));
+    const list = free.length ? free : this.room.hideSpots;
+    const weights = list.map((s) => 1 + (s.difficulty - 1) * p.botSkill * 2.2);
+    let r = match.rng() * weights.reduce((t, w) => t + w, 0);
+    for (let i = 0; i < list.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return list[i];
+    }
+    return list[list.length - 1];
   }
 
-  /** Paint of a bot: the colour of the background, off by an error that shrinks with skill (section 12). */
+  /**
+   * A bot's paint: the baked colours behind its spot at six heights, off by an error that shrinks with skill (section 12).
+   * A careless bot (low skill) sometimes just fills one colour, which leaves a visible seam, exactly like a hurried player.
+   */
   private paintFor(match: CamoMatch, p: CamoPlayer, spot: HideSpot): WireStroke[] {
-    const err = (1 - p.botSkill) * 110;
-    const jitter = (v: number): number => Math.max(0, Math.min(255, Math.round(v + (match.rng() - 0.5) * err)));
-    const r = jitter((spot.color >> 16) & 255);
-    const g = jitter((spot.color >> 8) & 255);
-    const b = jitter(spot.color & 255);
-    const fill: WireStroke = { kind: 'fill', x: 0, y: 0, z: 0, r: 1, rgb: (r << 16) | (g << 8) | b, rough: 200, hard: 255, nx: 0, ny: 0, nz: 0, seed: 0 };
-    const strokes: WireStroke[] = [fill];
-    const n = 4 + Math.floor(p.botSkill * 8);
+    const skill = p.botSkill;
+    const bands = spot.bands?.length === 6 ? spot.bands : Array<number>(6).fill(spot.color);
+    const err = (1 - skill) * 56;
+    const jit = (c: number, k = 1): number => Math.max(0, Math.min(255, Math.round(c + (match.rng() - 0.5) * err * k)));
+    const tint = (rgb: number, k = 1): number => (jit((rgb >> 16) & 255, k) << 16) | (jit((rgb >> 8) & 255, k) << 8) | jit(rgb & 255, k);
+    const mean = bands.reduce((t, c) => t + c, 0) / 6;
+    void mean;
+    const avg = (sh: number): number => Math.round(bands.reduce((t, c) => t + ((c >> sh) & 255), 0) / 6);
+    const base = tint((avg(16) << 16) | (avg(8) << 8) | avg(0), 0.6);
+    const strokes: WireStroke[] = [{ kind: 'fill', x: 0, y: 0, z: 0, r: 1, rgb: base, rough: 200, hard: 255, nx: 0, ny: 0, nz: 0, seed: 0 }];
+    const careless = skill < 0.45 && match.rng() < 0.5;
+    if (!careless) {
+      bands.forEach((rgb, i) => {
+        const col = tint(rgb);
+        for (const [bx, bz] of [[0, -120], [0, 120], [-200, 0], [200, 0], [0, 0]] as const) {
+          strokes.push({ kind: 'brush', x: bx, y: BAND_Y_MM[i], z: bz, r: 255, rgb: col, rough: 200, hard: 150, nx: 0, ny: 0, nz: 0, seed: i + 1 });
+        }
+      });
+    }
+    // a little texture: small dabs of the local colour, more of them the better the bot
+    const n = Math.floor(skill * 8);
     for (let i = 0; i < n; i++) {
-      const y = 200 + Math.floor(match.rng() * 1200);
-      const k = (match.rng() - 0.5) * 30;
-      const col = (jitter(((spot.color >> 16) & 255) + k) << 16) | (jitter(((spot.color >> 8) & 255) + k) << 8) | jitter((spot.color & 255) + k);
-      strokes.push({ kind: 'spray', x: Math.round((match.rng() - 0.5) * 400), y, z: Math.round((match.rng() - 0.5) * 300), r: 60, rgb: col, rough: 190, hard: 120, nx: 0, ny: 0, nz: 0, seed: Math.floor(match.rng() * 65535) });
+      const band = Math.floor(match.rng() * 6);
+      strokes.push({ kind: 'spray', x: Math.round((match.rng() - 0.5) * 400), y: BAND_Y_MM[band], z: Math.round((match.rng() - 0.5) * 300), r: 60, rgb: tint(bands[band], 0.5), rough: 190, hard: 120, nx: 0, ny: 0, nz: 0, seed: Math.floor(match.rng() * 65535) });
     }
     return strokes;
   }
 
   private hider(match: CamoMatch, p: CamoPlayer, now: number): void {
     const m = this.memOf(p);
-    if (match.phase === 'prep' || match.phase === 'whistle' || match.phase === 'hunt') {
-      if (!m.spot) {
-        m.spot = this.pickSpot(match, p);
-        p.spotId = m.spot.id;
-        this.plan(m, p, m.spot, now);
+    if (match.phase !== 'prep' && match.phase !== 'whistle' && match.phase !== 'hunt') return;
+    // once settled a hider never moves again: not after the whistle, not when a referee comes close
+    if (m.settled) {
+      if (match.phase === 'prep' && !m.painted && m.spot && now >= m.paintAt) {
+        acceptPaint(match, p.eid, this.paintFor(match, p, m.spot), now);
+        m.painted = true;
       }
-      if (!m.settled) {
-        const arrived = this.follow(match, p, m, now);
-        if (arrived) {
-          m.settled = true;
-          setPose(match, p.eid, m.spot.poses[Math.floor(match.rng() * m.spot.poses.length)], now);
-          if (match.phase === 'prep' && !m.painted) {
-            acceptPaint(match, p.eid, this.paintFor(match, p, m.spot), now);
-            m.painted = true;
-          }
-          setFreeze(match, this.room, p.eid, true, now);
-        }
-        return;
-      }
+      if (match.phase === 'hunt' && p.botSkill < 0.4 && match.rng() < 0.0005) acceptTaunt(match, p.eid, now);
+      return;
     }
-    if (match.phase !== 'hunt') return;
-    // A real hider taunts when nobody is close, and a nervous one bolts when a seeker comes too near.
-    const near = seekers(match).reduce((d, s) => Math.min(d, Math.hypot(s.x - p.x, s.z - p.z)), Infinity);
-    if (near > TAUNT.range * 0.6 && match.rng() < 0.002 + (1 - p.botSkill) * 0.002) acceptTaunt(match, p.eid, now);
-    if (near < 3.2 && p.frozen && now > m.panicUntil && match.rng() < 0.03 * (1 - p.botSkill)) {
-      setFreeze(match, this.room, p.eid, false, now);
+    if (!m.spot) {
       m.spot = this.pickSpot(match, p);
       p.spotId = m.spot.id;
       this.plan(m, p, m.spot, now);
-      m.settled = false;
-      m.painted = true;
-      m.panicUntil = now + 8_000;
+      // a human-looking pause before setting off, a share of the preparation time
+      const prep = Math.max(1000, match.phaseEndsAt - now);
+      m.startAt = now + match.rng() * Math.min(4000, prep * 0.12);
+      m.paintAt = 0;
     }
+    if (now < m.startAt) return;
+    const arrived = this.follow(match, p, m, now);
+    if (!arrived) {
+      // late for the whistle: stop where it stands rather than walk through the hunt
+      if (match.phase !== 'prep') {
+        m.settled = true;
+        m.painted = true;
+        setFreeze(match, this.room, p.eid, true, now);
+      }
+      return;
+    }
+    m.settled = true;
+    // back to the surface, facing out like a person leaning on it
+    p.yaw = Math.atan2(m.spot.nx, m.spot.nz);
+    const poses = m.spot.poses.length ? m.spot.poses : ['stand'];
+    setPose(match, p.eid, poses[Math.floor(match.rng() * poses.length)], now);
+    const left = Math.max(0, match.phaseEndsAt - now);
+    m.paintAt = match.phase === 'prep' ? now + Math.min(left * 0.5, 1500 + match.rng() * 4500) : now;
+    if (match.phase !== 'prep') m.painted = true;
+    setFreeze(match, this.room, p.eid, true, now);
   }
 
   // ── seeker ──────────────────────────────────────────────────────────────
@@ -182,8 +214,8 @@ export class BotBrain {
         if (!canSee(room, p, h, 16, 110)) continue;
         const d = Math.hypot(h.x - p.x, h.z - p.z);
         const moving = !h.frozen;
-        const base = 0.18 + 0.55 * skill;
-        const rate = base * (1 - h.stats.camo * 0.85) * Math.max(0.05, 1 - d / 16) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
+        const base = NOTICE.base + NOTICE.perSkill * skill;
+        const rate = base * (1 - h.stats.camo * NOTICE.camoEffect) * Math.max(0.05, 1 - d / 16) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
         if (match.rng() < 1 - Math.exp(-rate * dt)) {
           m.target = h.eid;
           m.aimUntil = now + 600 + (1 - skill) * 900;
@@ -221,11 +253,18 @@ export class BotBrain {
       this.follow(match, p, m, now, true);
       return;
     }
-    // patrol: visit hide spots in a random order, blow the whistle when it is ready and nobody is in sight
-    if (now >= p.whistleReadyAt && match.rng() < 0.01 + skill * 0.01) acceptWhistle(match, p.eid, now);
+    // patrol: sweep the hide spots nearest-first (each looked at once), blow the whistle when it is ready and nobody is in sight
+    if (now >= p.whistleReadyAt && match.rng() < 0.004) acceptWhistle(match, p.eid, now);
+    for (const sp of room.hideSpots) if (!m.visited.has(sp.id) && Math.hypot(sp.x - p.x, sp.z - p.z) < 3) m.visited.add(sp.id);
     if (!m.path.length || m.step >= m.path.length || now > m.nextWaypointAt) {
-      const s = room.hideSpots[Math.floor(match.rng() * room.hideSpots.length)];
-      this.plan(m, p, s, now);
+      let pool = room.hideSpots.filter((sp) => !m.visited.has(sp.id));
+      if (!pool.length) {
+        m.visited.clear();
+        pool = room.hideSpots;
+      }
+      pool = pool.map((sp) => ({ sp, d: Math.hypot(sp.x - p.x, sp.z - p.z) + match.rng() * 6 })).sort((a, b) => a.d - b.d).slice(0, 4).map((x) => x.sp);
+      const s2 = pool[Math.floor(match.rng() * pool.length)];
+      this.plan(m, p, s2, now);
       m.nextWaypointAt = now + 9_000;
     }
     this.follow(match, p, m, now, false);

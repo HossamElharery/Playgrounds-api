@@ -220,6 +220,8 @@ describe('camo cards', () => {
 
   it('aim assist turns a human shot onto a visible hider within 6 degrees, and never helps a bot', () => {
     const { m, t, s, hs } = hunt();
+    s.x = -2.5;
+    s.z = 9;
     hs.forEach((h, i) => { h.x = 14 + i; h.z = 12; }); // everybody far away
     const h = hs[0];
     h.x = s.x;
@@ -230,6 +232,8 @@ describe('camo cards', () => {
     expect(r.hit).toBe(1);
     // the same shot from a bot misses
     const m2 = hunt();
+    m2.s.x = -2.5;
+    m2.s.z = 9;
     m2.hs.forEach((x, i) => { x.x = 14 + i; x.z = 12; });
     m2.hs[0].x = m2.s.x;
     m2.hs[0].z = m2.s.z - 6;
@@ -237,6 +241,8 @@ describe('camo cards', () => {
     expect(acceptKick(m2.m, room, m2.s.eid, shot(m2.s, [Math.sin(a), 0, -Math.cos(a)]), m2.t + 100)!.hit).toBe(0);
     // 10 degrees off: no help
     const m3 = hunt();
+    m3.s.x = -2.5;
+    m3.s.z = 9;
     m3.hs.forEach((x, i) => { x.x = 14 + i; x.z = 12; });
     m3.hs[0].x = m3.s.x;
     m3.hs[0].z = m3.s.z - 6;
