@@ -181,6 +181,83 @@ export function acceptStrokes(book: PaintBook, incoming: readonly WireStroke[]):
   return { accepted, rejected };
 }
 
+/** Heights (mm, body space) at which a body takes the colour of what is behind it: the bake, the bots and the estimate agree. */
+export const BAND_Y_MM = [120, 400, 700, 1000, 1300, 1550] as const;
+/** The unpainted body (clay): what a band looks like before any stroke touches it. */
+export const BASE_BODY_RGB = 0xc9c2b4;
+
+const lin = (c: number): number => {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+};
+const labOf = (rgb: number): [number, number, number] => {
+  const r = lin((rgb >> 16) & 255);
+  const g = lin((rgb >> 8) & 255);
+  const b = lin(rgb & 255);
+  const x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+  const y = r * 0.2126729 + g * 0.7151522 + b * 0.072175;
+  const z = (r * 0.0193339 + g * 0.119192 + b * 0.9503041) / 1.08883;
+  const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+};
+/** CIE76 colour distance: plenty for a gameplay estimate (about 2.3 = just visible, 10+ = clearly different). */
+export function deltaE76(a: number, b: number): number {
+  const [l1, a1, b1] = labOf(a);
+  const [l2, a2, b2] = labOf(b);
+  return Math.sqrt((l1 - l2) ** 2 + (a1 - a2) ** 2 + (b1 - b2) ** 2);
+}
+
+/**
+ * How well a painted body vanishes into the colours behind it, replaying its strokes at the six band heights and
+ * comparing with the baked backdrop (0 = a white statue, 1 = invisible). Stamps count as their mean colour.
+ */
+export function estimateCamoBands(book: PaintBook, backdrop: readonly number[]): number {
+  if (!book.strokes.length) return 0;
+  let total = 0;
+  BAND_Y_MM.forEach((y, i) => {
+    let r = (BASE_BODY_RGB >> 16) & 255;
+    let g = (BASE_BODY_RGB >> 8) & 255;
+    let b = BASE_BODY_RGB & 255;
+    for (const s of book.strokes) {
+      let w = 0;
+      let cr = (s.rgb >> 16) & 255;
+      let cg = (s.rgb >> 8) & 255;
+      let cb = s.rgb & 255;
+      if (s.kind === 'fill') w = 1;
+      else if (s.kind === 'stamp' && s.patch) {
+        if (Math.abs(s.y - y) > 170) continue;
+        let sr = 0;
+        let sg = 0;
+        let sb = 0;
+        const t = s.patch.texels;
+        for (let k = 0; k < t.length; k += 4) {
+          sr += t[k];
+          sg += t[k + 1];
+          sb += t[k + 2];
+        }
+        const n = t.length / 4;
+        cr = sr / n;
+        cg = sg / n;
+        cb = sb / n;
+        w = 0.9;
+      } else {
+        const dist = Math.abs(s.y - y) / Math.max(1, s.r);
+        if (dist >= 1) continue;
+        const hard = s.hard / 255;
+        const t = dist <= hard ? 0 : (dist - hard) / (1 - hard);
+        w = (1 - t * t * (3 - 2 * t)) * (s.kind === 'spray' ? 0.55 : 1);
+      }
+      r += (cr - r) * w;
+      g += (cg - g) * w;
+      b += (cb - b) * w;
+    }
+    total += deltaE76((Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b), backdrop[i] ?? backdrop[backdrop.length - 1]);
+  });
+  const mean = total / BAND_Y_MM.length;
+  // ΔE 0 -> 1.0, 6 -> 0.78, 12 -> 0.37, 20 -> 0.06
+  return Math.round(Math.exp(-((mean / 12) ** 2)) * 100) / 100;
+}
+
 /** Rough camouflage estimate for the bots: how close the painted colour is to the background (0..1). */
 export function estimateCamo(book: PaintBook, background: number): number {
   if (!book.strokes.length) return 0;

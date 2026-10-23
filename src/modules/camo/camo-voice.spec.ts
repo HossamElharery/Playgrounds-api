@@ -1,5 +1,5 @@
 import { channelOpen, opaqueVoice, userOfVid, voiceMapFor, VOICE_MAX_LINKS } from './camo-voice';
-import { generateLockerRoom } from './camo-room';
+import { generateLockerRoom } from './camo-room-locker';
 import { addPlayer, createMatch, type CamoMatch, type CamoPlayer } from './camo-rules';
 
 function match(n: number): CamoMatch {

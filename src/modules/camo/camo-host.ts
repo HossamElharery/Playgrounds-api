@@ -6,7 +6,8 @@
 import { CAMO_PROTOCOL_VERSION, MAX_PLAYERS, MIN_PLAYERS, TIMERS, TAUNT, TICK_MS } from './camo-constants';
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
 import { M2_ROOMS } from './camo-rooms-m2';
-import { findPath, isWalkable, pushOut, buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
+import { findPath, isWalkable, pushOut, buildWalkGrid, type CamoRoomData, type WalkGrid } from './camo-room';
+import { generateLockerRoom } from './camo-room-locker';
 import { MAX_STROKES_PER_PLAYER, decodeStrokes, encodeStrokes } from './camo-paint';
 import {
   acceptKick,

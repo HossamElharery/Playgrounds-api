@@ -1,24 +1,25 @@
 import {
   buildWalkGrid,
   findPath,
-  generateLockerRoom,
   insideAabb2d,
   isWalkable,
   lineBlocked,
   pushOut,
   roomHash,
 } from './camo-room';
+import { generateLockerRoom } from './camo-room-locker';
 
 describe('camo locker room', () => {
   const room = generateLockerRoom();
   const grid = buildWalkGrid(room);
 
-  it('is a 600-1200 m2 hall with at least 50 hide spots', () => {
+  it('is a 600-1200 m2 hall with at least 120 hide spots of every difficulty', () => {
     const b = room.bounds;
     const area = (b.maxX - b.minX) * (b.maxZ - b.minZ);
     expect(area).toBeGreaterThanOrEqual(600);
     expect(area).toBeLessThanOrEqual(1200);
-    expect(room.hideSpots.length).toBeGreaterThanOrEqual(50);
+    expect(room.hideSpots.length).toBeGreaterThanOrEqual(120);
+    for (const d of [1, 2, 3]) expect(room.hideSpots.filter((s) => s.difficulty === d).length).toBeGreaterThanOrEqual(20);
   });
 
   it('is generated the same way every time (stable hash)', () => {

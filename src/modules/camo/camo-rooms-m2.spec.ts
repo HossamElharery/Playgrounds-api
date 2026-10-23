@@ -3,8 +3,9 @@ import { M2_ROOMS } from './camo-rooms-m2';
 
 describe.each(M2_ROOMS.map((g) => [g().id, g] as const))('M2 room %s', (_id, gen) => {
   const room = gen();
-  it('has 40+ reachable hide spots, none in the referees zone', () => {
-    expect(room.hideSpots.length).toBeGreaterThanOrEqual(40);
+  it('has 120+ reachable hide spots of every difficulty, none in the referees zone', () => {
+    expect(room.hideSpots.length).toBeGreaterThanOrEqual(120);
+    for (const d of [1, 2, 3]) expect(room.hideSpots.filter((s) => s.difficulty === d).length).toBeGreaterThanOrEqual(20);
     const grid = buildWalkGrid(room);
     for (const s of room.hideSpots) {
       expect(findPath(grid, room.spawns.hiders[0], s)).not.toBeNull();

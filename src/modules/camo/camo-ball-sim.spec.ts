@@ -1,10 +1,16 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import type { CamoRoomData } from './camo-room';
+import { generateLockerRoom } from './camo-room-locker';
 import { BALL_RADIUS, launchVelocity, simulateShot, type ShotResult } from './camo-ball-sim';
-import { generateLockerRoom } from './camo-room';
 import { inForbiddenZone, kickOriginOk, tagHits, travelBudget } from './camo-hit';
 
-const room = generateLockerRoom();
+/**
+ * The physics is checked in a frozen copy of the old locker room (stored in the shared fixture), so redesigning the room
+ * never changes these numbers: the client replays the very same colliders from the same file.
+ */
+const fixtureFile = join(__dirname, 'camo-ball-sim.fixture.json');
+const room = (JSON.parse(readFileSync(fixtureFile, 'utf8')) as { room: { bounds: CamoRoomData['bounds']; colliders: CamoRoomData['colliders'] } }).room;
 
 interface Scenario {
   name: string;
@@ -42,7 +48,7 @@ describe('camo ball sim', () => {
   });
 
   it('matches the shared fixture the client also checks (to 1e-6)', () => {
-    const file = join(__dirname, 'camo-ball-sim.fixture.json');
+    const file = fixtureFile;
     const current = Object.fromEntries(SCENARIOS.map((s) => [s.name, summary(run(s))]));
     if (!existsSync(file)) writeFileSync(file, JSON.stringify({ room: { bounds: room.bounds, colliders: room.colliders }, scenarios: SCENARIOS, expected: current }, null, 1));
     const fixture = JSON.parse(readFileSync(file, 'utf8')) as { expected: typeof current };
@@ -116,8 +122,9 @@ describe('camo hit geometry', () => {
   });
 
   it('knows the forbidden zones and the speed budget', () => {
-    expect(inForbiddenZone(room, { x: -15, z: 11 })).toBe(true);
-    expect(inForbiddenZone(room, { x: 0, z: 0 })).toBe(false);
+    const live = generateLockerRoom();
+    expect(inForbiddenZone(live, { x: live.refereeRoom.door.x, z: live.refereeRoom.door.z + 1 })).toBe(true);
+    expect(inForbiddenZone(live, { x: 0, z: 0 })).toBe(false);
     expect(travelBudget(100, false)).toBeGreaterThan(0.5);
     expect(travelBudget(5000, true)).toBeLessThan(10);
   });

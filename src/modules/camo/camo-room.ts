@@ -45,6 +45,11 @@ export interface HideSpot {
   /** Colour (0xRRGGBB) of the background around the spot: what a bot paints itself with. */
   color: number;
   kind: 'locker' | 'bench' | 'wall' | 'corner' | 'floor' | 'shower' | 'prop';
+  /**
+   * What is really behind a body standing here, as six colours (0xRRGGBB) at 12, 40, 70, 100, 130 and 155 cm: baked from
+   * the drawn room by `tools/camo/camo-bake-palettes.mjs`, so a bot paints itself with the true albedo of the wall.
+   */
+  bands?: number[];
 }
 
 export interface Seat {
@@ -76,6 +81,8 @@ export interface Prop {
 export interface CamoRoomData {
   id: string;
   version: number;
+  /** `roomShapeHash` of the room without baked colours; the palette bake stores it so a stale bake is caught. */
+  shape?: string;
   /** Walkable rectangle (inside the walls). */
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   colliders: Collider[];
@@ -98,9 +105,10 @@ export const SURFACE_COLOR: Readonly<Record<SurfaceMaterial, number>> = Object.f
   concrete: 0x9a968c,
 });
 
+export const round = (n: number): number => Math.round(n * 1000) / 1000;
+
 export const WALL_H = 4;
 export const WALL_T = 0.4;
-let uid = 0;
 
 export const FNV = (text: string): number => {
   let h = 0x811c9dc5;
@@ -161,187 +169,6 @@ export function pushOut(room: CamoRoomData, x: number, z: number, radius = 0.3):
     if (!moved) break;
   }
   return { x: px, z: pz };
-}
-
-// ── generator ────────────────────────────────────────────────────────────────
-
-export const round = (n: number): number => Math.round(n * 1000) / 1000;
-
-/** The locker room (`locker_room`): 36 x 26 m, lockers on three walls, benches, showers, the referees' room. */
-export function generateLockerRoom(): CamoRoomData {
-  uid = 0;
-  const minX = -18;
-  const maxX = 18;
-  const minZ = -13;
-  const maxZ = 13;
-  const colliders: Collider[] = [];
-  const props: Prop[] = [];
-  const spots: HideSpot[] = [];
-  const seats: Seat[] = [];
-  const id = (p: string): string => `${p}${++uid}`;
-
-  const solid = (cid: string, a: Aabb, material: SurfaceMaterial): void => {
-    colliders.push({ id: cid, ...a, material });
-  };
-  const prop = (type: string, cx: number, cz: number, w: number, h: number, d: number, material: SurfaceMaterial, ry = 0, label?: string, y = h / 2): void => {
-    props.push({ id: id(type), type, x: round(cx), y: round(y), z: round(cz), w, h, d, ry, material, ...(label ? { label } : {}) });
-  };
-
-  // Walls (outside the bounds so the walkable rectangle is the room).
-  solid('wall-n', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: minZ - WALL_T, maxZ: minZ, minY: 0, maxY: WALL_H }, 'concrete');
-  solid('wall-s', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: maxZ, maxZ: maxZ + WALL_T, minY: 0, maxY: WALL_H }, 'concrete');
-  solid('wall-w', { minX: minX - WALL_T, maxX: minX, minZ, maxZ, minY: 0, maxY: WALL_H }, 'concrete');
-  solid('wall-e', { minX: maxX, maxX: maxX + WALL_T, minZ, maxZ, minY: 0, maxY: WALL_H }, 'concrete');
-  prop('walls', 0, 0, maxX - minX, WALL_H, maxZ - minZ, 'concrete');
-
-  // Locker banks: north wall (2 banks), west wall, east wall. Locker 0.6 x 2.0 x 0.5.
-  const lockerW = 0.6;
-  const lockerD = 0.5;
-  const lockerH = 2.0;
-  let lockerNo = 1;
-  const bank = (cid: string, x0: number, z0: number, dir: 'x' | 'z', count: number, facing: { x: number; z: number }): void => {
-    const first = lockerNo;
-    for (let i = 0; i < count; i++) {
-      const cx = dir === 'x' ? x0 + i * lockerW + lockerW / 2 : x0;
-      const cz = dir === 'z' ? z0 + i * lockerW + lockerW / 2 : z0;
-      const w = dir === 'x' ? lockerW : lockerD;
-      const d = dir === 'x' ? lockerD : lockerW;
-      solid(`${cid}-${i}`, boxOf(cx, cz, w, d, lockerH), 'metal');
-      prop('locker', cx, cz, w, lockerH, d, 'metal', Math.atan2(facing.x, facing.z), String(lockerNo));
-      lockerNo++;
-    }
-    void first;
-  };
-  bank('lk-n1', -15.6, minZ + lockerD / 2, 'x', 14, { x: 0, z: 1 });
-  bank('lk-n2', 4.2, minZ + lockerD / 2, 'x', 14, { x: 0, z: 1 });
-  bank('lk-w', minX + lockerD / 2, -9, 'z', 12, { x: 1, z: 0 });
-  bank('lk-e', maxX - lockerD / 2, -9, 'z', 12, { x: -1, z: 0 });
-
-  // Benches in front of the locker banks (sit spots) and rows in the middle.
-  const benchH = 0.45;
-  const bench = (cx: number, cz: number, w: number, d: number, rot: 0 | 1): void => {
-    const bw = rot ? d : w;
-    const bd = rot ? w : d;
-    solid(id('bench'), boxOf(cx, cz, bw, bd, benchH), 'wood');
-    prop('bench', cx, cz, bw, benchH, bd, 'wood');
-    seats.push({ id: id('seat'), x: round(cx), z: round(cz), y: benchH, nx: 0, nz: 1 });
-  };
-  for (const x of [-12, -6, 0, 6, 12]) bench(x, -9, 2.6, 0.5, 0);
-  for (const z of [-5, -1, 3]) {
-    bench(-15, z, 2.6, 0.5, 1);
-    bench(15, z, 2.6, 0.5, 1);
-  }
-  for (const [cx, cz] of [[-9, 2], [-9, 5.5], [9, 2], [9, 5.5], [0, 6.5]] as const) bench(cx, cz, 3.0, 0.5, 0);
-
-  // Tactics table and board, ice tub, ball nets, crates, cones: solid scenery spread through the middle.
-  solid('tactics-table', boxOf(0, -1, 2.6, 1.2, 0.9), 'wood');
-  prop('tactics-table', 0, -1, 2.6, 0.9, 1.2, 'wood');
-  solid('tactics-board', boxOf(0, -4.2, 2.4, 0.15, 1.8), 'metal');
-  prop('tactics-board', 0, -4.2, 2.4, 1.8, 0.15, 'metal');
-  solid('ice-tub', boxOf(-8, 11.5, 1.8, 0.9, 0.9), 'metal');
-  prop('ice-tub', -8, 11.5, 1.8, 0.9, 0.9, 'metal');
-  solid('ball-net-1', boxOf(13.5, 10, 1.0, 1.0, 1.1), 'cloth');
-  prop('ball-net', 13.5, 10, 1.0, 1.1, 1.0, 'cloth');
-  solid('ball-net-2', boxOf(15, 7.8, 1.0, 1.0, 1.1), 'cloth');
-  prop('ball-net', 15, 7.8, 1.0, 1.1, 1.0, 'cloth');
-  for (const [cx, cz] of [[-5, 10], [-3, 10.8], [3, 10], [5, 10.8], [8, 9]] as const) {
-    solid(id('crate'), boxOf(cx, cz, 0.7, 0.5, 0.5), 'wood');
-    prop('water-crate', cx, cz, 0.7, 0.5, 0.5, 'wood');
-  }
-  for (let i = 0; i < 8; i++) {
-    const cx = -7 + i * 0.9;
-    solid(id('cone'), boxOf(cx, 11.2, 0.3, 0.3, 0.4), 'cloth');
-    prop('cone', cx, 11.2, 0.3, 0.4, 0.3, 'cloth');
-  }
-
-  // Showers (south-east): tiled stalls with thin partitions.
-  for (let i = 0; i < 5; i++) {
-    const cx = 9.5 + i * 1.6;
-    solid(id('shower-wall'), boxOf(cx + 0.8, 10.5, 0.1, 2.4, 2.0), 'tile');
-    prop('shower-wall', cx + 0.8, 10.5, 0.1, 2.0, 2.4, 'tile');
-  }
-  solid('shower-back', boxOf(13.3, 12.2, 8.2, 0.2, 2.4), 'tile');
-  prop('shower-back', 13.3, 12.2, 8.2, 2.4, 0.2, 'tile');
-
-  // Referees' room (south-west): 5 x 4, door facing north-east into the hall.
-  const rr: CamoRoomData['refereeRoom'] = { ...boxOf(-15.3, 10.5, 5, 4, WALL_H), door: { x: -13.8, z: 8.5 } };
-  solid('ref-n', { minX: rr.minX, maxX: -14.4, minZ: rr.minZ, maxZ: rr.minZ + 0.2, minY: 0, maxY: 2.6 }, 'wood');
-  solid('ref-n2', { minX: -13.2, maxX: rr.maxX, minZ: rr.minZ, maxZ: rr.minZ + 0.2, minY: 0, maxY: 2.6 }, 'wood');
-  solid('ref-e', { minX: rr.maxX - 0.2, maxX: rr.maxX, minZ: rr.minZ, maxZ: rr.maxZ, minY: 0, maxY: 2.6 }, 'wood');
-  prop('ref-room', -15.3, 10.5, 5, 2.6, 4, 'wood');
-  const forbidden: Aabb[] = [
-    { minX: rr.minX, maxX: rr.maxX, minZ: rr.minZ, maxZ: rr.maxZ, minY: 0, maxY: WALL_H },
-    { minX: rr.door.x - 5, maxX: rr.door.x + 5, minZ: rr.door.z - 5, maxZ: rr.door.z + 5, minY: 0, maxY: WALL_H },
-  ];
-
-  // Decor that does not block: posters, jerseys, the tunnel to the pitch.
-  prop('poster-book', -9, minZ + 0.05, 3.2, 2.2, 0.05, 'concrete', 0, 'احجز ملعبك على ماتشينا', 2.0);
-  prop('tunnel', maxX - 0.05, 2, 0.1, 3, 4, 'concrete', Math.PI / 2, 'النفق', 1.5);
-  for (let i = 0; i < 10; i++) prop('jersey', -13 + i * 2.7, minZ + 1.1, 0.5, 0.7, 0.05, 'cloth', 0, String((i % 11) + 1), 1.9);
-  prop('flicker-lamp', -16, -11, 0.4, 0.1, 0.4, 'metal', 0, 'flicker', 3.9);
-
-  // ── hide spots (≥ 50): every second locker front, bench sits, wall gaps, corners, showers, props ──
-  let n = 0;
-  const spot = (x: number, z: number, nx: number, nz: number, surface: SurfaceMaterial, poses: string[], difficulty: 1 | 2 | 3, kind: HideSpot['kind']): void => {
-    spots.push({ id: `hs${++n}`, x: round(x), z: round(z), nx, nz, surface, poses, difficulty, kind, color: SURFACE_COLOR[surface] });
-  };
-  for (const c of colliders) {
-    if (c.id.startsWith('lk-n') && Number(c.id.split('-')[2]) % 2 === 0)
-      spot((c.minX + c.maxX) / 2, c.maxZ + 0.42, 0, 1, 'metal', ['stand', 'wall', 'lean_l', 'lean_r'], 2, 'locker');
-    else if (c.id.startsWith('lk-w') && Number(c.id.split('-')[2]) % 2 === 0)
-      spot(c.maxX + 0.42, (c.minZ + c.maxZ) / 2, 1, 0, 'metal', ['stand', 'wall', 'lean_l'], 2, 'locker');
-    else if (c.id.startsWith('lk-e') && Number(c.id.split('-')[2]) % 2 === 0)
-      spot(c.minX - 0.42, (c.minZ + c.maxZ) / 2, -1, 0, 'metal', ['stand', 'wall', 'lean_r'], 2, 'locker');
-  }
-  for (const s of seats) spot(s.x + 0.4, s.z + 0.55, 0, 1, 'wood', ['sit', 'crouch', 'ball'], 1, 'bench');
-  spot(minX + 0.5, minZ + 1.6, 1, 1, 'concrete', ['crouch', 'ball', 'flat'], 3, 'corner');
-  spot(maxX - 0.5, minZ + 1.6, -1, 1, 'concrete', ['crouch', 'ball', 'flat'], 3, 'corner');
-  spot(minX + 0.5, 0, 1, 0, 'concrete', ['wall', 'stand', 'lean_l'], 2, 'wall');
-  spot(maxX - 0.5, 0, -1, 0, 'concrete', ['wall', 'stand', 'lean_r'], 2, 'wall');
-  spot(minX + 0.5, 4, 1, 0, 'concrete', ['wall', 'stand'], 2, 'wall');
-  spot(maxX - 0.5, 5, -1, 0, 'concrete', ['wall', 'stand'], 2, 'wall');
-  spot(0, maxZ - 0.5, 0, -1, 'concrete', ['wall', 'stand', 'bend'], 2, 'wall');
-  spot(-6, maxZ - 0.5, 0, -1, 'concrete', ['wall', 'stand'], 2, 'wall');
-  spot(6, maxZ - 0.5, 0, -1, 'concrete', ['wall', 'stand'], 2, 'wall');
-  spot(-1.8, -1, -1, 0, 'wood', ['crouch', 'bend', 'ball'], 2, 'prop');
-  spot(1.8, -1, 1, 0, 'wood', ['crouch', 'bend', 'ball'], 2, 'prop');
-  spot(0, 0.2, 0, 1, 'wood', ['crouch', 'flat'], 3, 'prop');
-  spot(-8, 10.5, 0, -1, 'metal', ['crouch', 'ball'], 3, 'prop');
-  spot(-6.7, 11.5, 1, 0, 'metal', ['stand', 'lean_l'], 2, 'prop');
-  spot(13.5, 8.9, 0, -1, 'cloth', ['ball', 'crouch'], 3, 'prop');
-  for (let i = 0; i < 5; i++) {
-    spot(9.5 + i * 1.6 + 0.4, 10.5, 1, 0, 'tile', ['wall', 'stand', 'crouch'], 3, 'shower');
-    spot(9.5 + i * 1.6 + 0.4, 11.9, 0, -1, 'tile', ['wall', 'stand'], 2, 'shower');
-  }
-
-  const hiders: Array<{ x: number; z: number }> = [];
-  for (let i = 0; i < 10; i++) hiders.push({ x: round(-4.5 + i * 1.0), z: 4.2 });
-  // the referees wait just inside the door, facing out of it
-  const seekers: Array<{ x: number; z: number }> = [-0.3, 0, 0.3].map((dx, i) => ({ x: round(rr.door.x + dx), z: round(rr.door.z + 1.3 + (i === 2 ? 0.7 : 0)) }));
-
-  const draft: CamoRoomData = {
-    id: 'locker_room',
-    version: 1,
-    bounds: { minX, maxX, minZ, maxZ },
-    colliders,
-    hideSpots: [],
-    seats,
-    spawns: { hiders, seekers },
-    refereeRoom: rr,
-    forbidden,
-    props,
-  };
-  // Candidates are nudged onto free floor and dropped when they sit in a forbidden zone or cannot be reached.
-  const grid = buildWalkGrid(draft);
-  const kept: HideSpot[] = [];
-  for (const c of spots) {
-    const p = pushOut(draft, c.x, c.z);
-    if (forbidden.some((f) => insideAabb2d(p.x, p.z, f))) continue;
-    if (!findPath(grid, hiders[0], p) || !findPath(grid, seekers[0], p)) continue;
-    kept.push({ ...c, id: `hs${kept.length + 1}`, x: round(p.x), z: round(p.z) });
-  }
-  draft.hideSpots = kept;
-  return draft;
 }
 
 // ── walk grid + path finding (bots, eviction checks, reachability tests) ─────────────────────
@@ -480,4 +307,43 @@ function segmentHitsRect(ax: number, az: number, bx: number, bz: number, x0: num
     return true;
   };
   return clip(-dx, ax - x0) && clip(dx, x1 - ax) && clip(-dz, az - z0) && clip(dz, z1 - az);
+}
+
+/** Flood fill once from a point; the returned test says whether a point's nearest free cell can be walked to from there. */
+export function reachableFrom(g: WalkGrid, from: { x: number; z: number }): (p: { x: number; z: number }) => boolean {
+  const start = nearestFree(g, from.x, from.z);
+  const seen = new Uint8Array(g.cols * g.rows);
+  if (start) {
+    const stack: number[] = [start[1] * g.cols + start[0]];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const cc = cur % g.cols;
+      const cr = Math.floor(cur / g.cols);
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (!dc && !dr) continue;
+          const c = cc + dc;
+          const r = cr + dr;
+          if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) continue;
+          const ni = r * g.cols + c;
+          if (g.blocked[ni] || seen[ni]) continue;
+          if (dc && dr && (g.blocked[cr * g.cols + (cc + dc)] || g.blocked[(cr + dr) * g.cols + cc])) continue;
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+    }
+  }
+  return (p) => {
+    const cell = nearestFree(g, p.x, p.z);
+    return !!cell && seen[cell[1] * g.cols + cell[0]] === 1;
+  };
+}
+
+/** Hash of everything that decides where a hide spot is: the room without the baked colours (the bake checks it is current). */
+export function roomShapeHash(room: CamoRoomData): string {
+  const { shape, ...body } = room;
+  void shape;
+  return FNV(JSON.stringify({ ...body, hideSpots: room.hideSpots.map(({ bands, ...rest }) => (void bands, rest)) })).toString(16);
 }

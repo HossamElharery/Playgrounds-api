@@ -1,6 +1,7 @@
 /** Headless match driver: used by the simulation spec and the load script. No sockets, a fake clock. */
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
-import { buildWalkGrid, generateLockerRoom, type CamoRoomData, type WalkGrid } from './camo-room';
+import { buildWalkGrid, type CamoRoomData, type WalkGrid } from './camo-room';
+import { generateLockerRoom } from './camo-room-locker';
 import { createMatch, fillWithBots, step, type CamoMatch, type CamoEvent } from './camo-rules';
 
 let roomCache: { room: CamoRoomData; grid: WalkGrid } | null = null;
