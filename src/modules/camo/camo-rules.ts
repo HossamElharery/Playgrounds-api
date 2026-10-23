@@ -30,6 +30,8 @@ import { launchVelocity, simulateShot, type BallEvent, type BallKeyframe } from 
 import { emptyPaintBook, estimateCamo, estimateCamoBands, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
 import { pushOut, type CamoRoomData, type HideSpot } from './camo-room';
 
+const DEV_SEEKER_FIRST = process.env['NODE_ENV'] !== 'production' && process.env['CAMO_DEV_SEEKER_FIRST'] === '1';
+
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -428,7 +430,8 @@ export function fillWithBots(m: CamoMatch, now: number, names: (i: number) => st
 export function assignRoles(m: CamoMatch): void {
   const eligible = m.players.filter((p) => p.connected || p.botCover || p.isBot);
   const order = eligible
-    .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 }))
+    // dev/test only (never in production): `CAMO_DEV_SEEKER_FIRST=1` makes real people the referees of round 1, for e2e runs
+    .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 - (DEV_SEEKER_FIRST && !p.isBot ? 100 : 0) }))
     .sort((a, b) => a.k - b.k)
     .map((x) => x.p);
   const n = seekerCount(eligible.length);
@@ -863,6 +866,8 @@ export function step(m: CamoMatch, room: CamoRoomData, now: number): boolean {
     case 'whistle':
       if (now >= m.phaseEndsAt) {
         m.huntStartedAt = now;
+        // everybody starts the hunt «awake»: a referee who waited through the preparation is not idle
+        for (const p of m.players) p.lastInputAt = now;
         for (const p of m.players) if (p.role === 'hider') p.stats.camo = camoOf(room, p);
         setPhase(m, 'hunt', now, m.timers.huntMs);
       }

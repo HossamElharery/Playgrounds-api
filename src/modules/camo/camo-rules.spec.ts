@@ -355,6 +355,11 @@ describe('camo cards', () => {
     expect(playerById(m, gold.eid)?.stats.camo).toBe(0.4);
   });
 
+  it('a referee who waited through the preparation starts the hunt awake (no instant bot cover)', () => {
+    const { m, t, s } = hunt();
+    expect(s.lastInputAt).toBe(t);
+  });
+
   it('a seeded rng replays the same roles', () => {
     const a = lobby(8, 'classic', 77);
     const b = lobby(8, 'classic', 77);

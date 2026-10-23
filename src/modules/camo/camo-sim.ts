@@ -34,6 +34,8 @@ export function playBotMatch(seed: number, opts: { players?: number; mode?: 'cla
   const { startRound } = require('./camo-rules') as typeof import('./camo-rules');
   startRound(m, room, now);
   const redSeen = new Set<string>();
+  /** Where each hider stood when the hunt began: a bot that settled never walks again (the owner's «بوت يتحرك بعد الصافرة = مرفوض»). */
+  const huntStart = new Map<string, [number, number]>();
   let ticks = 0;
   const maxTicks = opts.maxTicks ?? 40_000;
   let lastRound = m.round;
@@ -43,6 +45,7 @@ export function playBotMatch(seed: number, opts: { players?: number; mode?: 'cla
     if (m.round !== lastRound) {
       brain.reset();
       redSeen.clear();
+      huntStart.clear();
       lastRound = m.round;
     }
     brain.tick(m, now);
@@ -55,6 +58,14 @@ export function playBotMatch(seed: number, opts: { players?: number; mode?: 'cla
         redSeen.add(key);
       }
     }
+    if (m.phase === 'hunt') {
+      for (const p of m.players) {
+        if (p.role !== 'hider' || !p.alive) continue;
+        const at = huntStart.get(p.eid);
+        if (!at) huntStart.set(p.eid, [p.x, p.z]);
+        else if (Math.hypot(p.x - at[0], p.z - at[1]) > 0.05) violations.push(`a hider moved during the hunt (${p.name})`);
+      }
+    } else huntStart.clear();
     for (const p of m.players) {
       if (p.suspendedUntil > now) violations.push('a player was suspended');
       if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) violations.push('NaN position');
