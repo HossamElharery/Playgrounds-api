@@ -8,7 +8,7 @@ import { canSee } from './camo-hit';
 import {
   acceptKick,
   acceptMove,
-  acceptPaint,
+  acceptDisguise,
   acceptTag,
   acceptTaunt,
   acceptWhistle,
@@ -21,7 +21,7 @@ import {
   type CamoPlayer,
 } from './camo-rules';
 import { buildWalkGrid, findPath, type CamoRoomData, type HideSpot, type WalkGrid } from './camo-room';
-import { BAND_Y_MM, type WireStroke } from './camo-paint';
+import { copyable } from './camo-disguise';
 
 interface Mem {
   path: Array<{ x: number; z: number }>;
@@ -120,12 +120,35 @@ export class BotBrain {
 
   // ── hider ───────────────────────────────────────────────────────────────
 
+  private readonly crowdCache = new Map<string, number>();
+
+  /** How many more of the same kind stand around the best copyable object at a spot (0 when there is nothing to copy). */
+  private crowdAt(s: HideSpot): number {
+    let v = this.crowdCache.get(s.id);
+    if (v === undefined) {
+      v = 0;
+      for (const [i] of copyable(this.room, s.x, s.z).slice(0, 6)) {
+        const t = this.room.props[i];
+        let n = 0;
+        for (let j = 0; j < this.room.props.length; j++) {
+          const q = this.room.props[j];
+          if (j !== i && q.type === t.type && Math.hypot(q.x - s.x, q.z - s.z) < 7) n++;
+        }
+        v = Math.max(v, Math.min(n, 8));
+      }
+      this.crowdCache.set(s.id, v);
+    }
+    return v;
+  }
+
   /** A spot nobody else is at or next to; better bots lean towards the harder (more tucked-away) ones. */
   private pickSpot(match: CamoMatch, p: CamoPlayer): HideSpot {
     const taken = match.players.filter((q) => q !== p && q.spotId).map((q) => this.room.hideSpots.find((s) => s.id === q.spotId)).filter((s): s is HideSpot => !!s);
     const free = this.room.hideSpots.filter((s) => !taken.some((t) => Math.hypot(t.x - s.x, t.z - s.z) < 1.4));
-    const list = free.length ? free : this.room.hideSpots;
-    const weights = list.map((s) => 1 + (s.difficulty - 1) * p.botSkill * 2.2);
+    // a spot is only worth walking to when there is something to copy within reach of it
+    const copyableFree = free.filter((s) => this.crowdAt(s) >= 0 && copyable(this.room, s.x, s.z).length > 0);
+    const list = copyableFree.length ? copyableFree : free.length ? free : this.room.hideSpots;
+    const weights = list.map((s) => 1 + (s.difficulty - 1) * p.botSkill * 2.2 + this.crowdAt(s) * 0.5 * p.botSkill);
     let r = match.rng() * weights.reduce((t, w) => t + w, 0);
     for (let i = 0; i < list.length; i++) {
       r -= weights[i];
@@ -134,37 +157,23 @@ export class BotBrain {
     return list[list.length - 1];
   }
 
-  /**
-   * A bot's paint: the baked colours behind its spot at six heights, off by an error that shrinks with skill (section 12).
-   * A careless bot (low skill) sometimes just fills one colour, which leaves a visible seam, exactly like a hurried player.
-   */
-  private paintFor(match: CamoMatch, p: CamoPlayer, spot: HideSpot): WireStroke[] {
-    const skill = p.botSkill;
-    const bands = spot.bands?.length === 6 ? spot.bands : Array<number>(6).fill(spot.color);
-    const err = (1 - skill) * 56;
-    const jit = (c: number, k = 1): number => Math.max(0, Math.min(255, Math.round(c + (match.rng() - 0.5) * err * k)));
-    const tint = (rgb: number, k = 1): number => (jit((rgb >> 16) & 255, k) << 16) | (jit((rgb >> 8) & 255, k) << 8) | jit(rgb & 255, k);
-    const mean = bands.reduce((t, c) => t + c, 0) / 6;
-    void mean;
-    const avg = (sh: number): number => Math.round(bands.reduce((t, c) => t + ((c >> sh) & 255), 0) / 6);
-    const base = tint((avg(16) << 16) | (avg(8) << 8) | avg(0), 0.6);
-    const strokes: WireStroke[] = [{ kind: 'fill', x: 0, y: 0, z: 0, r: 1, rgb: base, rough: 200, hard: 255, nx: 0, ny: 0, nz: 0, seed: 0 }];
-    const careless = skill < 0.45 && match.rng() < 0.5;
-    if (!careless) {
-      bands.forEach((rgb, i) => {
-        const col = tint(rgb);
-        for (const [bx, bz] of [[0, -120], [0, 120], [-200, 0], [200, 0], [0, 0]] as const) {
-          strokes.push({ kind: 'brush', x: bx, y: BAND_Y_MM[i], z: bz, r: 255, rgb: col, rough: 200, hard: 150, nx: 0, ny: 0, nz: 0, seed: i + 1 });
-        }
-      });
-    }
-    // a little texture: small dabs of the local colour, more of them the better the bot
-    const n = Math.floor(skill * 8);
-    for (let i = 0; i < n; i++) {
-      const band = Math.floor(match.rng() * 6);
-      strokes.push({ kind: 'spray', x: Math.round((match.rng() - 0.5) * 400), y: BAND_Y_MM[band], z: Math.round((match.rng() - 0.5) * 300), r: 60, rgb: tint(bands[band], 0.5), rough: 190, hard: 120, nx: 0, ny: 0, nz: 0, seed: Math.floor(match.rng() * 65535) });
-    }
-    return strokes;
+  /** The object a bot copies from where it stands: the type with most more of its kind around, never a lone one. */
+  private bestCopy(match: CamoMatch, p: CamoPlayer): number {
+    const near = copyable(this.room, p.x, p.z);
+    if (!near.length) return -1;
+    const crowd = (i: number): number => {
+      const t = this.room.props[i];
+      let n = 0;
+      for (let j = 0; j < this.room.props.length; j++) {
+        const q = this.room.props[j];
+        if (j !== i && q.type === t.type && Math.hypot(q.x - p.x, q.z - p.z) < 7) n++;
+      }
+      return n;
+    };
+    // a sharper bot copies from the biggest crowd; a careless one takes whatever is nearest
+    const scored = near.slice(0, 8).map(([i, d]) => ({ i, s: crowd(i) * (0.4 + p.botSkill) - d * 0.35 + match.rng() * (1.2 - p.botSkill) * 2 }));
+    scored.sort((a, b) => b.s - a.s);
+    return scored[0].i;
   }
 
   private hider(match: CamoMatch, p: CamoPlayer, now: number): void {
@@ -172,8 +181,9 @@ export class BotBrain {
     if (match.phase !== 'prep' && match.phase !== 'whistle' && match.phase !== 'hunt') return;
     // once settled a hider never moves again: not after the whistle, not when a referee comes close
     if (m.settled) {
-      if (match.phase === 'prep' && !m.painted && m.spot && now >= m.paintAt) {
-        acceptPaint(match, p.eid, this.paintFor(match, p, m.spot), now);
+      if (!m.painted && m.spot && now >= m.paintAt) {
+        const i = this.bestCopy(match, p);
+        if (i >= 0) acceptDisguise(match, this.room, p.eid, i, now);
         m.painted = true;
       }
       if (match.phase === 'hunt' && p.botSkill < 0.4 && match.rng() < 0.0005) acceptTaunt(match, p.eid, now);
@@ -206,7 +216,6 @@ export class BotBrain {
     setPose(match, p.eid, poses[Math.floor(match.rng() * poses.length)], now);
     const left = Math.max(0, match.phaseEndsAt - now);
     m.paintAt = match.phase === 'prep' ? now + Math.min(left * 0.5, 1500 + match.rng() * 4500) : now;
-    if (match.phase !== 'prep') m.painted = true;
     setFreeze(match, this.room, p.eid, true, now);
   }
 

@@ -6,6 +6,7 @@
  */
 import { round, type CamoRoomData } from './camo-room';
 import { RoomKit, type Side } from './camo-room-kit';
+import { CLUTTER } from './camo-room-clutter';
 import { applyPalettes } from './camo-room-palettes';
 
 export function generateLockerRoom(): CamoRoomData {
@@ -140,5 +141,6 @@ export function generateLockerRoom(): CamoRoomData {
 
   const hiders: Array<{ x: number; z: number }> = [];
   for (let i = 0; i < 10; i++) hiders.push({ x: round(-4.5 + i), z: 4.2 });
+  k.clutter(rr, CLUTTER['locker_room'].defs, CLUTTER['locker_room'].clumps, CLUTTER['locker_room'].seed, hiders);
   return applyPalettes(k.finish('locker_room', rr, hiders));
 }

@@ -4,7 +4,7 @@
  */
 
 /** Bump when an event payload or a rule changes in a way an old client cannot follow (`camo.hello`). */
-export const CAMO_PROTOCOL_VERSION = 1;
+export const CAMO_PROTOCOL_VERSION = 2;
 
 export type CamoPhase =
   | 'waiting'
@@ -132,3 +132,22 @@ export type CamoPoseId = (typeof POSE_IDS)[number];
 
 /** Event rate limits (per user, events per second), section 17. */
 export const RATE = Object.freeze({ move: 20, paint: 6, pose: 4, kick: 3, tag: 3, whistle: 1, emoji: 0.5 });
+
+/**
+ * The prop disguise (the owner's «تحوّل»): a hider walks up to any object of the room and becomes a copy of it, then
+ * can walk it to wherever it blends in. Mirrored on the client and checked by the shared `camo-disguise` fixture.
+ */
+export const DISGUISE = Object.freeze({
+  /** How close (m, to the object's box) a hider must stand to copy it. */
+  reachM: 2.4,
+  cooldownMs: 600,
+  /** Only things a person could carry or push around: the longest side and the height limits (m). */
+  maxFootprint: 1.5,
+  maxHeight: 1.9,
+  minHeight: 0.25,
+  /** A disguised hider that keeps walking moves at this share of the walking speed (the client scales its input). */
+  speedFactor: 0.72,
+  /** The body of the disguise never gets smaller/bigger than this when it is hit (radius, height in m). */
+  hitRadius: Object.freeze({ min: 0.26, max: 0.55 }),
+  hitHeight: Object.freeze({ min: 0.4, max: 1.7 }),
+});

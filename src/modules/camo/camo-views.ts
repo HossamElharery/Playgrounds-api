@@ -82,7 +82,7 @@ export function playersFor(m: CamoMatch, v: Viewer): PlayersPayload {
 }
 
 /** Packed per-entity state. Flags: 1 frozen, 2 running, 4 suspended, 8 alive. */
-export type PosTuple = [eid: string, x: number, z: number, yaw: number, vx: number, vz: number, flags: number, pose: number];
+export type PosTuple = [eid: string, x: number, z: number, yaw: number, vx: number, vz: number, flags: number, pose: number, dg: number];
 
 export function flagsOf(p: CamoPlayer, now: number): number {
   return (p.frozen ? 1 : 0) | (p.running ? 2 : 0) | (p.suspendedUntil > now ? 4 : 0) | (p.alive ? 8 : 0);
@@ -92,8 +92,12 @@ const SIGHT_RANGE = 45;
 const NEAR_RANGE = 2.5;
 
 /** Interest management: hunters and hiders only hear about bodies they could see, which also defeats wall-hacks. */
+/** Test rigs only (never in production): every body is always sent, so a camera can be put next to anybody. */
+const DEV_REVEAL = process.env['NODE_ENV'] !== 'production' && process.env['CAMO_DEV_REVEAL'] === '1';
+
 export function visibleTo(m: CamoMatch, room: CamoRoomData, v: Viewer, other: CamoPlayer): boolean {
   if (other.eid === v.eid) return true;
+  if (DEV_REVEAL && m.phase !== 'prep' && m.phase !== 'whistle') return true;
   if (v.spectator) return true;
   if (m.phase === 'waiting' || m.phase === 'reveal' || m.phase === 'var' || m.phase === 'results' || m.phase === 'ended') return true;
   if (other.role === 'seeker' && v.role === 'seeker') return true;
@@ -121,6 +125,7 @@ export function positionsFor(m: CamoMatch, room: CamoRoomData, v: Viewer, now: n
       Math.round(p.vz * 10) / 10,
       flagsOf(p, now),
       Math.max(0, (POSE_IDS as readonly string[]).indexOf(p.pose)),
+      p.role === 'hider' ? p.disguise : -1,
     ]);
   }
   return out;

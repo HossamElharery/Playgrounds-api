@@ -27,10 +27,14 @@ import {
 } from './camo-constants';
 import { assistedDirection, canSee, inForbiddenZone, kickOriginOk, tagHits, travelBudget } from './camo-hit';
 import { launchVelocity, simulateShot, type BallEvent, type BallKeyframe } from './camo-ball-sim';
-import { emptyPaintBook, estimateCamo, estimateCamoBands, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
+import { emptyPaintBook, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
 import { pushOut, type CamoRoomData, type HideSpot } from './camo-room';
+import { copyable, disguiseBody } from './camo-disguise';
+import { DISGUISE } from './camo-constants';
 
 const DEV_SEEKER_FIRST = process.env['NODE_ENV'] !== 'production' && process.env['CAMO_DEV_SEEKER_FIRST'] === '1';
+/** Test rigs only: real people are never the referee of round 1 (hider-side e2e runs). */
+const DEV_HIDER_FIRST = process.env['NODE_ENV'] !== 'production' && process.env['CAMO_DEV_HIDER_FIRST'] === '1';
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -100,6 +104,9 @@ export interface CamoPlayer {
   recoverUntil: number;
   paint: PaintBook;
   paintStartedAt: number;
+  /** Index into `room.props` of the object this hider has become (-1: still itself). */
+  disguise: number;
+  disguiseAt: number;
   touchUpUntil: number;
   touchUpUsed: boolean;
   ballReadyAt: number;
@@ -173,6 +180,8 @@ export interface VarEntry {
   caughtBy: string | null;
   spotId: string | null;
   pose: CamoPoseId;
+  /** The object this hider was disguised as when the round ended (-1: none). */
+  dg: number;
   x: number;
   z: number;
   camo: number;
@@ -366,6 +375,8 @@ export function addPlayer(m: CamoMatch, np: NewPlayer, now: number): CamoPlayer 
     recoverUntil: 0,
     paint: emptyPaintBook(),
     paintStartedAt: 0,
+    disguise: -1,
+    disguiseAt: 0,
     touchUpUntil: 0,
     touchUpUsed: false,
     ballReadyAt: 0,
@@ -431,7 +442,7 @@ export function assignRoles(m: CamoMatch, extraSeekers = 0): void {
   const eligible = m.players.filter((p) => p.connected || p.botCover || p.isBot);
   const order = eligible
     // dev/test only (never in production): `CAMO_DEV_SEEKER_FIRST=1` makes real people the referees of round 1, for e2e runs
-    .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 - (DEV_SEEKER_FIRST && !p.isBot ? 100 : 0) }))
+    .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 - (DEV_SEEKER_FIRST && !p.isBot ? 100 : 0) + (DEV_HIDER_FIRST && !p.isBot ? 100 : 0) }))
     .sort((a, b) => a.k - b.k)
     .map((x) => x.p);
   const n = Math.min(seekerCount(eligible.length) + extraSeekers, Math.max(1, eligible.length - 3));
@@ -462,6 +473,8 @@ function resetForRound(m: CamoMatch, room: CamoRoomData, now: number): void {
     p.touchUpUsed = false;
     p.touchUpUntil = 0;
     p.pose = 'stand';
+    p.disguise = -1;
+    p.disguiseAt = 0;
     p.frozen = false;
     p.points = 0;
     p.stats = emptyStats();
@@ -606,6 +619,36 @@ export function setFreeze(m: CamoMatch, room: CamoRoomData, eid: string, on: boo
   return true;
 }
 
+/**
+ * A hider copies an object of the room (`prop` is an index into `room.props`; -1 turns back into the player). The object
+ * must be copyable and within reach, the hider must be a living hider outside the referees' zone, and a short cooldown
+ * keeps a hider from flickering through the whole room to scout it.
+ */
+export function acceptDisguise(m: CamoMatch, room: CamoRoomData, eid: string, prop: number, now: number): { ok: boolean; dg: number } {
+  const p = playerById(m, eid);
+  const fail = { ok: false, dg: p?.disguise ?? -1 };
+  if (!p || p.role !== 'hider' || !p.alive || (m.phase !== 'prep' && m.phase !== 'whistle' && m.phase !== 'hunt')) return fail;
+  if (!Number.isInteger(prop) || prop < -1 || prop >= room.props.length) return fail;
+  if (now - p.disguiseAt < DISGUISE.cooldownMs) return fail;
+  if (prop >= 0) {
+    if (inForbiddenZone(room, p)) return fail;
+    if (!disguiseBody(room.props[prop])) return fail;
+    if (!copyable(room, p.x, p.z).some(([i]) => i === prop)) return fail;
+  }
+  p.disguise = prop;
+  p.disguiseAt = now;
+  p.frozen = false;
+  p.lastInputAt = now;
+  return { ok: true, dg: prop };
+}
+
+/** The body a ball or a lunge meets: the player's own box, or the box of the object they have become. */
+export function hitBody(room: Pick<CamoRoomData, 'props'>, p: Pick<CamoPlayer, 'disguise'>): { r: number; h: number } {
+  const b = p.disguise >= 0 ? disguiseBody(room.props[p.disguise]) : null;
+  return b ?? { r: HIT_VOLUME_DEFAULT.radius, h: HIT_VOLUME_DEFAULT.height };
+}
+const HIT_VOLUME_DEFAULT = { radius: 0.3, height: 1.6 };
+
 export function acceptPaint(m: CamoMatch, eid: string, strokes: readonly WireStroke[], now: number): { accepted: WireStroke[]; rejected: number } | null {
   const p = playerById(m, eid);
   if (!p || p.role !== 'hider' || !p.alive) return null;
@@ -700,9 +743,9 @@ export function acceptKick(m: CamoMatch, room: CamoRoomData, eid: string, k: Kic
   const oy = Math.min(2, Math.max(0.3, k.origin.y));
   const list = hidersAlive(m);
   // a human's direct shot is helped onto a visible hider near the line of fire (never for bots, a lob or a puzzle)
-  const helped = !s.isBot && !s.botCover && !k.lob && !m.puzzle ? assistedDirection(room, { x: k.origin.x, y: oy, z: k.origin.z }, k.dir, list) : k.dir;
+  const helped = !s.isBot && !s.botCover && !k.lob && !m.puzzle ? assistedDirection(room, { x: k.origin.x, y: oy, z: k.origin.z }, k.dir, list.filter((h) => h.disguise < 0)) : k.dir;
   const v = launchVelocity(helped[0], helped[1], helped[2], k.power, k.lob, CARD.shotSpeed, CARD.lobMaxSpeed);
-  const targets = list.map((h, i) => ({ id: i, x: h.x, z: h.z }));
+  const targets = list.map((h, i) => ({ id: i, x: h.x, z: h.z, ...hitBody(room, h) }));
   s.lastInputAt = now;
   const shot = simulateShot(room, { x: k.origin.x, y: oy, z: k.origin.z }, v, targets);
   m.ballSeq++;
@@ -929,22 +972,25 @@ function nearestSpot(room: CamoRoomData, p: CamoPlayer): string | null {
   return bd < 4 ? best : null;
 }
 
-/** How well this hider's paint matches what is behind it: the baked colours of the nearest hide spot, worse when it is not at one. */
+/**
+ * How well hidden this hider is, 0..1, as a referee bot's eye sees it. A hider who is still a person is plain to see; one who
+ * has become an object blends in by how many more of that object stand around (a chair among chairs, not a lone barrel) and
+ * by not standing on top of the original.
+ */
 function camoOf(room: CamoRoomData, p: CamoPlayer): number {
-  let best: HideSpot | null = null;
-  let bd = Infinity;
-  for (const s of room.hideSpots) {
-    const d = Math.hypot(s.x - p.x, s.z - p.z);
-    if (d < bd) {
-      bd = d;
-      best = s;
-    }
+  const prop = p.disguise >= 0 ? room.props[p.disguise] : undefined;
+  if (!prop) return 0.04;
+  let same = 0;
+  let onTop = false;
+  for (let i = 0; i < room.props.length; i++) {
+    const q = room.props[i];
+    if (i === p.disguise || q.type !== prop.type) continue;
+    const d = Math.hypot(q.x - p.x, q.z - p.z);
+    if (d < 7) same++;
+    if (d < Math.max(0.5, (Math.max(q.w, q.d) + Math.max(prop.w, prop.d)) / 2 - 0.1)) onTop = true;
   }
-  if (!best) return estimateCamo(p.paint, 0x808080);
-  const bands = best.bands?.length === 6 ? best.bands : Array<number>(6).fill(best.color);
-  const base = estimateCamoBands(p.paint, bands);
-  // standing in the open (not at any spot) is never well hidden, whatever the paint
-  return Math.round(base * (bd <= 1.2 ? 1 : Math.max(0.25, 1.6 - bd * 0.5)) * 100) / 100;
+  const crowd = Math.min(0.42, same * 0.07);
+  return Math.round(Math.max(0.12, Math.min(0.95, 0.5 + crowd - (onTop ? 0.3 : 0))) * 100) / 100;
 }
 
 /** Seekers wait in the referees' room while the others paint: put back anybody who drifted. */
@@ -1062,6 +1108,7 @@ export function buildVar(m: CamoMatch, awards: RoundAward[], now: number): VarEn
       caughtBy: h.caughtBy,
       spotId: h.spotId,
       pose: h.pose,
+      dg: h.disguise,
       x: Math.round(h.x * 100) / 100,
       z: Math.round(h.z * 100) / 100,
       camo: h.stats.camo,

@@ -5,6 +5,7 @@
  */
 import { round, type CamoRoomData } from './camo-room';
 import { RoomKit } from './camo-room-kit';
+import { CLUTTER } from './camo-room-clutter';
 import { applyPalettes } from './camo-room-palettes';
 
 export const WAREHOUSE_HEIGHT = 12;
@@ -63,5 +64,6 @@ export function generateWarehouse(): CamoRoomData {
   k.decor('booking-banner', 0, minZ + 0.1, 12, 3, 0.1, 'cloth', { label: 'احجز ملعبك على ماتشينا', y: 6 });
 
   const hiders = Array.from({ length: 10 }, (_, i) => ({ x: round(-4.5 + i), z: 0.5 }));
+  k.clutter(rr, CLUTTER['warehouse'].defs, CLUTTER['warehouse'].clumps, CLUTTER['warehouse'].seed, hiders);
   return applyPalettes(k.finish('warehouse', rr, hiders));
 }

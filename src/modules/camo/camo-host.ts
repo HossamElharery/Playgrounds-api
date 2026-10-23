@@ -28,6 +28,7 @@ import {
   ranking,
   setFreeze,
   setPose,
+  acceptDisguise,
   startRound,
   step,
   voteVarSkip,
@@ -115,6 +116,7 @@ export const INPUT_RATES: Readonly<Record<string, [number, number]>> = Object.fr
   move: [20, 30],
   paint: [6, 10],
   pose: [4, 6],
+  disguise: [3, 5],
   freeze: [4, 6],
   kick: [3, 4],
   tag: [3, 4],
@@ -582,6 +584,11 @@ export class CamoHost {
     const ok = setPose(c.m, c.p.eid, pose, now);
     if (ok) this.fanPose(c.m, c.p);
     return ok;
+  }
+
+  disguise(userId: string, prop: number, now = this.now): { ok: boolean; dg: number } {
+    const c = this.ctx(userId, 'disguise', now);
+    return c ? acceptDisguise(c.m, c.room, c.p.eid, prop, now) : { ok: false, dg: -1 };
   }
 
   freeze(userId: string, on: boolean, now = this.now): boolean {

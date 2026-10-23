@@ -396,6 +396,13 @@ export class CamoGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return { ok: !!pose && !!(await this.input(client, (u) => this.camo.host.pose(u, pose))) };
   }
 
+  @SubscribeMessage('camo.disguise')
+  async disguise(@ConnectedSocket() client: Socket, @MessageBody() d: Body): Promise<unknown> {
+    const prop = num(d?.['p']);
+    if (prop === null) return { ok: false, dg: -1 };
+    return (await this.input(client, (u) => this.camo.host.disguise(u, Math.trunc(prop)))) ?? { ok: false, dg: -1 };
+  }
+
   @SubscribeMessage('camo.freeze')
   async freeze(@ConnectedSocket() client: Socket, @MessageBody() d: Body): Promise<unknown> {
     return { ok: !!(await this.input(client, (u) => this.camo.host.freeze(u, d?.['on'] === true))) };

@@ -25,6 +25,16 @@ import {
   type SurfaceMaterial,
 } from './camo-room';
 
+export interface ClutterDef {
+  type: string;
+  w: number;
+  d: number;
+  h: number;
+  material: SurfaceMaterial;
+  /** Relative frequency among the room's defs. */
+  weight?: number;
+}
+
 export type Side = 'n' | 's' | 'e' | 'w';
 const ALL_SIDES: readonly Side[] = ['n', 's', 'e', 'w'];
 
@@ -142,6 +152,75 @@ export class RoomKit {
       if (s === 'w') along(box.minZ, box.maxZ).forEach((z, i) => keep(i) && this.spot(box.minX - offset, z, -1, 0, surface, poses, kind, tall ? 2 : 3));
       if (s === 'e') along(box.minZ, box.maxZ).forEach((z, i) => keep(i) && this.spot(box.maxX + offset, z, 1, 0, surface, poses, kind, tall ? 2 : 3));
     }
+  }
+
+  /**
+   * Scatters small things a person could become (crates, barrels, chairs ...) in clumps: each clump is a ring of the same
+   * object with one place left empty, and that gap is a hiding place, so a hider who steps into it and copies its
+   * neighbours completes the ring. Placement is deterministic from `seed`, keeps clear of everything already solid and of
+   * the referees' door, and leaves lanes open.
+   */
+  clutter(rr: CamoRoomData['refereeRoom'], defs: readonly ClutterDef[], clumps: number, seed: number, avoid: ReadonlyArray<{ x: number; z: number }> = []): void {
+    let st = seed >>> 0;
+    const rnd = (): number => {
+      st = (st + 0x6d2b79f5) >>> 0;
+      let t = st;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const { minX, maxX, minZ, maxZ } = this.bounds;
+    const total = defs.reduce((t, d) => t + (d.weight ?? 1), 0);
+    const taken: Aabb[] = [];
+    const free = (a: Aabb): boolean => {
+      if (a.minX < minX + 1.4 || a.maxX > maxX - 1.4 || a.minZ < minZ + 1.4 || a.maxZ > maxZ - 1.4) return false;
+      if (a.maxX > rr.minX - 1.5 && a.minX < rr.maxX + 1.5 && a.maxZ > rr.minZ - 1.5 && a.minZ < rr.maxZ + 1.5) return false;
+      if (Math.abs((a.minX + a.maxX) / 2 - rr.door.x) < 6 && Math.abs((a.minZ + a.maxZ) / 2 - rr.door.z) < 6) return false;
+      if (avoid.some((v) => v.x > a.minX - 1.6 && v.x < a.maxX + 1.6 && v.z > a.minZ - 1.6 && v.z < a.maxZ + 1.6)) return false;
+      const hit = (b: Aabb, m: number): boolean => a.maxX > b.minX - m && a.minX < b.maxX + m && a.maxZ > b.minZ - m && a.minZ < b.maxZ + m;
+      return !this.colliders.some((c) => c.maxY > 0.3 && hit(c, 0.55)) && !taken.some((b) => hit(b, 0.18));
+    };
+    let placed = 0;
+    for (let c = 0; c < clumps; c++) {
+      let r = rnd() * total;
+      let def = defs[0];
+      for (const d of defs) {
+        r -= d.weight ?? 1;
+        if (r <= 0) {
+          def = d;
+          break;
+        }
+      }
+      const slots = 4 + Math.floor(rnd() * 3);
+      const size = Math.max(def.w, def.d);
+      const ring = Math.max(size * 0.95, (size + 0.2) / (2 * Math.sin(Math.PI / slots)));
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const cx = minX + 2 + rnd() * (maxX - minX - 4);
+        const cz = minZ + 2 + rnd() * (maxZ - minZ - 4);
+        const gap = Math.floor(rnd() * slots);
+        const a0 = rnd() * Math.PI * 2;
+        const boxes: Array<{ x: number; z: number; a: number; box: Aabb }> = [];
+        for (let i = 0; i < slots; i++) {
+          const a = a0 + (i / slots) * Math.PI * 2;
+          const x = cx + Math.sin(a) * ring;
+          const z = cz + Math.cos(a) * ring;
+          boxes.push({ x, z, a, box: boxOf(x, z, size, size, def.h) });
+        }
+        if (!boxes.every((b) => free(b.box))) continue;
+        boxes.forEach((b, i) => {
+          if (i === gap) {
+            this.spot(b.x, b.z, Math.sin(b.a), Math.cos(b.a), def.material, i % 2 ? LOW : TALL, 'prop', 3);
+            return;
+          }
+          this.item(def.type, b.x, b.z, def.w, def.d, def.h, def.material, { ry: b.a + Math.PI / 2 * Math.round(rnd() * 3) });
+          taken.push(b.box);
+        });
+        taken.push(boxOf(boxes[gap].x, boxes[gap].z, size, size, def.h));
+        placed++;
+        break;
+      }
+    }
+    void placed;
   }
 
   /** The four corners of the hall: a body folded into the angle between two walls. */

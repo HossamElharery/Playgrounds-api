@@ -1,5 +1,6 @@
 import { round, type CamoRoomData } from './camo-room';
 import { RoomKit } from './camo-room-kit';
+import { CLUTTER } from './camo-room-clutter';
 import { applyPalettes } from './camo-room-palettes';
 
 /**
@@ -66,7 +67,9 @@ export function generateFiveASide(): CamoRoomData {
   k.wallRun('e', -13, 6, 1.6);
   k.wallRun('n', -20, 20, 2.2, 'concrete');
   k.wallRun('s', -4, 20, 2.2, 'concrete');
-  return applyPalettes(k.finish('five_a_side', rr, hidersRow(10, -5, 0.5)));
+  const hiders = hidersRow(10, -5, 0.5);
+  k.clutter(rr, CLUTTER['five_a_side'].defs, CLUTTER['five_a_side'].clumps, CLUTTER['five_a_side'].seed, hiders);
+  return applyPalettes(k.finish('five_a_side', rr, hiders));
 }
 
 /** The traditional ahwa during a match: wicker chairs, marble tables, shisha, TV, backgammon, curtain, columns, sofas. */
@@ -111,7 +114,9 @@ export function generateAhwa(): CamoRoomData {
   k.wallRun('n', -14, 8, 1.8, 'tile');
   k.wallRun('s', -14, 14, 2.2, 'tile');
   k.wallRun('e', -1, 9, 1.6, 'tile');
-  return applyPalettes(k.finish('ahwa', rr, hidersRow(10, -4.5, 3)));
+  const hiders = hidersRow(10, -4.5, 3);
+  k.clutter(rr, CLUTTER['ahwa'].defs, CLUTTER['ahwa'].clumps, CLUTTER['ahwa'].seed, hiders);
+  return applyPalettes(k.finish('ahwa', rr, hiders));
 }
 
 /** Ramadan alley at night: lanterns, tent bunting, string lights, foul carts, cartons, stalls, balconies, the mesaharaty. */
@@ -154,7 +159,9 @@ export function generateRamadanAlley(): CamoRoomData {
   k.corners();
   k.spot(maxX - 0.6, -6, -1, 0, 'concrete', ['wall', 'crouch'], 'corner', 3);
   k.spot(maxX - 0.6, 6, -1, 0, 'concrete', ['wall', 'crouch'], 'corner', 3);
-  return applyPalettes(k.finish('ramadan_alley', rr, hidersRow(10, -4.5, 0)));
+  const hiders = hidersRow(10, -4.5, 0);
+  k.clutter(rr, CLUTTER['ramadan_alley'].defs, CLUTTER['ramadan_alley'].clumps, CLUTTER['ramadan_alley'].seed, hiders);
+  return applyPalettes(k.finish('ramadan_alley', rr, hiders));
 }
 
 import { generateWarehouse } from './camo-room-warehouse';

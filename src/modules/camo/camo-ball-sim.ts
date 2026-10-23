@@ -36,6 +36,9 @@ export interface CylinderTarget {
   id: number;
   x: number;
   z: number;
+  /** The body's radius and height when it is not the standard hider (a hider disguised as a prop). */
+  r?: number;
+  h?: number;
 }
 
 export type BallEventKind = 'bounce' | 'hit' | 'stop';
@@ -103,10 +106,10 @@ export function launchVelocity(
 function touchesCylinder(b: BallState, c: CylinderTarget): { nx: number; nz: number } | null {
   const dx = b.x - c.x;
   const dz = b.z - c.z;
-  const r = HIT_VOLUME.radius + BALL_RADIUS;
+  const r = (c.r ?? HIT_VOLUME.radius) + BALL_RADIUS;
   const d2 = dx * dx + dz * dz;
   if (d2 > r * r) return null;
-  if (b.y < -BALL_RADIUS || b.y > HIT_VOLUME.height + BALL_RADIUS) return null;
+  if (b.y < -BALL_RADIUS || b.y > (c.h ?? HIT_VOLUME.height) + BALL_RADIUS) return null;
   const d = Math.sqrt(d2);
   return d > 1e-6 ? { nx: dx / d, nz: dz / d } : { nx: 1, nz: 0 };
 }
