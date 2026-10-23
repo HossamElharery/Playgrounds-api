@@ -326,7 +326,7 @@ export class CamoHost {
       isPrivate: true,
       hostId: u.userId,
       mode: opts.mode,
-      timers: { prepMs: (opts.prepSeconds ?? 60) * 1000, huntMs: (opts.huntSeconds ?? 180) * 1000 },
+      timers: { prepMs: (opts.prepSeconds ?? 30) * 1000, huntMs: (opts.huntSeconds ?? 180) * 1000 },
       botsAllowed: bots > 0,
       botTarget: bots + 1,
     });

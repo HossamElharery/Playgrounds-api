@@ -97,6 +97,32 @@ describe('camo views', () => {
     expect(paintTargets(m, viewerOf(seeker)).length).toBeGreaterThan(0);
   });
 
+  it('a seeker waiting in the referees room is told about no hider at all, even one standing at its door', () => {
+    const prep = createMatch({ id: 'prep', room, seed: 8, now: NOW });
+    for (let i = 0; i < 8; i++) addPlayer(prep, { userId: `u${i}`, name: `N${i}`, isBot: false, morphId: 'potato' }, NOW);
+    startRound(prep, room, NOW);
+    step(prep, room, prep.phaseEndsAt); // reveal -> prep
+    expect(prep.phase).toBe('prep');
+    const s = seekers(prep)[0];
+    const hs = prep.players.filter((p) => p.role === 'hider');
+    hs[0].x = room.refereeRoom.door.x;
+    hs[0].z = room.refereeRoom.door.z; // right at the door
+    hs[1].x = s.x + 0.5;
+    hs[1].z = s.z; // even inside the room with it
+    for (const phase of ['prep', 'whistle'] as const) {
+      prep.phase = phase;
+      const ids = positionsFor(prep, room, viewerOf(s), NOW).map((t) => t[0]);
+      expect(ids).toEqual(prep.players.filter((p) => p.role === 'seeker').map((p) => p.eid).filter((e) => ids.includes(e)));
+      for (const h of hs) expect(ids.includes(h.eid)).toBe(false);
+    }
+    // the hiders themselves still see each other while they prepare
+    const hv = viewerOf(hs[2]);
+    prep.phase = 'prep';
+    hs[3].x = hs[2].x + 1;
+    hs[3].z = hs[2].z;
+    expect(positionsFor(prep, room, hv, NOW).some((t) => t[0] === hs[3].eid)).toBe(true);
+  });
+
   it('state never leaks the private room code to public matches', () => {
     expect(stateFor(m, viewerOf(seeker), NOW).code).toBeNull();
     const priv = createMatch({ id: 'p', room, isPrivate: true, code: 'ABCDE', seed: 1, now: NOW });

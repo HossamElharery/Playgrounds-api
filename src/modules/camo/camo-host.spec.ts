@@ -31,12 +31,12 @@ describe('camo host', () => {
     expect(host.hello('x').ok).toBe(false);
   });
 
-  it('puts two people in one public match, fills with bots at 12 s and reveals roles at ~16 s', () => {
+  it('puts two people in one public match, fills with bots at 6 s and reveals roles at ~7 s', () => {
     const { host, sent, advance } = harness();
     const a = host.joinPublic(user(1));
     const b = host.joinPublic(user(2));
     expect(a.ok && b.ok && a.matchId === b.matchId).toBe(true);
-    advance(11_000);
+    advance(5_000);
     expect(host.matchOf('u1')!.phase).toBe('waiting');
     advance(2_000);
     const m = host.matchOf('u1')!;
@@ -44,7 +44,7 @@ describe('camo host', () => {
     expect(m.players.length).toBe(8);
     expect(m.players.filter((p) => p.isBot).length).toBe(6);
     expect(sent.some((s) => s.userId === 'u1' && s.event === 'camo.match.state' && s.payload.phase === 'reveal')).toBe(true);
-    advance(4_000);
+    advance(3_000);
     expect(host.matchOf('u1')!.phase).toBe('prep');
   });
 

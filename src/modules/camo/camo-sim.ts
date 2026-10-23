@@ -55,7 +55,7 @@ export function playBotMatch(seed: number, opts: { players?: number; mode?: 'cla
       }
     }
     for (const p of m.players) {
-      if (p.yellows >= 3) violations.push(`yellows ${p.yellows}`);
+      if (p.suspendedUntil > now) violations.push('a player was suspended');
       if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) violations.push('NaN position');
     }
   }

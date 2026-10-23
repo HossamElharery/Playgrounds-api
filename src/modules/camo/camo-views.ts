@@ -97,6 +97,8 @@ export function visibleTo(m: CamoMatch, room: CamoRoomData, v: Viewer, other: Ca
   if (v.spectator) return true;
   if (m.phase === 'waiting' || m.phase === 'reveal' || m.phase === 'var' || m.phase === 'results' || m.phase === 'ended') return true;
   if (other.role === 'seeker' && v.role === 'seeker') return true;
+  // A seeker waiting in the referees' room learns nothing about the hiding: not a position, not a shadow, not a name.
+  if (v.role === 'seeker' && (m.phase === 'prep' || m.phase === 'whistle')) return false;
   const me = m.players.find((p) => p.eid === v.eid);
   if (!me) return false;
   const dx = other.x - me.x;

@@ -25,7 +25,7 @@ import {
   type CamoRole,
   POSE_IDS,
 } from './camo-constants';
-import { canSee, inForbiddenZone, kickOriginOk, tagHits, travelBudget } from './camo-hit';
+import { assistedDirection, canSee, inForbiddenZone, kickOriginOk, tagHits, travelBudget } from './camo-hit';
 import { launchVelocity, simulateShot, type BallEvent, type BallKeyframe } from './camo-ball-sim';
 import { emptyPaintBook, estimateCamo, acceptStrokes, type PaintBook, type WireStroke } from './camo-paint';
 import { pushOut, type CamoRoomData } from './camo-room';
@@ -647,7 +647,7 @@ function giveYellow(m: CamoMatch, s: CamoPlayer, now: number): void {
   s.stats.yellowCards++;
   s.points += POINTS.yellowCard;
   m.outbox.push({ t: 'card', kind: 'yellow', target: null, by: s.eid, at: now });
-  if (s.yellows >= CARD.yellowsForSuspension) {
+  if (CARD.yellowsForSuspension > 0 && s.yellows >= CARD.yellowsForSuspension) {
     s.yellows = 0;
     s.suspendedUntil = now + CARD.suspensionMs;
     m.outbox.push({ t: 'suspend', eid: s.eid, until: s.suspendedUntil });
@@ -694,9 +694,11 @@ export function acceptKick(m: CamoMatch, room: CamoRoomData, eid: string, k: Kic
   if (!k.origin || !finite(k.origin.x) || !finite(k.origin.y) || !finite(k.origin.z) || !k.dir || k.dir.length !== 3 || !k.dir.every(finite)) return null;
   if (!kickOriginOk(s, k.origin)) return null;
   const oy = Math.min(2, Math.max(0.3, k.origin.y));
-  const v = launchVelocity(k.dir[0], k.dir[1], k.dir[2], k.power, k.lob, CARD.shotSpeed, CARD.lobMaxSpeed);
-  const targets = hidersAlive(m).map((h, i) => ({ id: i, x: h.x, z: h.z }));
   const list = hidersAlive(m);
+  // a human's direct shot is helped onto a visible hider near the line of fire (never for bots, a lob or a puzzle)
+  const helped = !s.isBot && !s.botCover && !k.lob && !m.puzzle ? assistedDirection(room, { x: k.origin.x, y: oy, z: k.origin.z }, k.dir, list) : k.dir;
+  const v = launchVelocity(helped[0], helped[1], helped[2], k.power, k.lob, CARD.shotSpeed, CARD.lobMaxSpeed);
+  const targets = list.map((h, i) => ({ id: i, x: h.x, z: h.z }));
   s.lastInputAt = now;
   const shot = simulateShot(room, { x: k.origin.x, y: oy, z: k.origin.z }, v, targets);
   m.ballSeq++;

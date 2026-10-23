@@ -201,20 +201,45 @@ describe('camo cards', () => {
     expect(s.stats.redCards).toBe(1);
   });
 
-  it('a miss is a yellow card; the third yellow suspends the seeker for 4 s and resets the count', () => {
+  it('a miss is a yellow card that costs points; nobody is ever frozen for a miss', () => {
     const { m, t, s } = hunt();
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       s.ballReadyAt = 0;
       acceptKick(m, room, s.eid, shot(s, [0, 0, 1]), t + 100 + i * 5000);
     }
-    expect(s.stats.yellowCards).toBe(3);
-    expect(s.yellows).toBe(0);
-    expect(s.suspendedUntil).toBeGreaterThan(t);
-    expect(s.points).toBe(-30);
-    expect(m.outbox.some((e) => e.t === 'suspend')).toBe(true);
-    // suspended: cannot shoot, tag or move
-    expect(acceptKick(m, room, s.eid, shot(s, [0, 0, 1]), s.suspendedUntil - 500)).toBeNull();
-    expect(acceptTag(m, s.eid, s.suspendedUntil - 500)).toBeNull();
+    expect(s.stats.yellowCards).toBe(4);
+    expect(s.points).toBe(-40);
+    expect(s.suspendedUntil).toBe(0);
+    expect(m.outbox.some((e) => e.t === 'suspend')).toBe(false);
+    // right after the fourth miss the seeker can still tag and walk (the ball itself is on its short return)
+    expect(acceptTag(m, s.eid, t + 100 + 3 * 5000 + 10)).not.toBeNull();
+    expect(acceptMove(m, room, s.eid, { x: s.x + 0.1, z: s.z, yaw: 0, vx: 0, vz: 0, seq: 999 }, t + 100 + 3 * 5000 + 200)).not.toBeNull();
+  });
+
+  it('aim assist turns a human shot onto a visible hider within 6 degrees, and never helps a bot', () => {
+    const { m, t, s, hs } = hunt();
+    hs.forEach((h, i) => { h.x = 14 + i; h.z = 12; }); // everybody far away
+    const h = hs[0];
+    h.x = s.x;
+    h.z = s.z - 6; // straight ahead (-z) ...
+    // ... but the crosshair is 5.5 degrees off to the side (a plain ball misses at 6 m)
+    const a = (5.5 * Math.PI) / 180;
+    const r = acceptKick(m, room, s.eid, shot(s, [Math.sin(a), 0, -Math.cos(a)]), t + 100)!;
+    expect(r.hit).toBe(1);
+    // the same shot from a bot misses
+    const m2 = hunt();
+    m2.hs.forEach((x, i) => { x.x = 14 + i; x.z = 12; });
+    m2.hs[0].x = m2.s.x;
+    m2.hs[0].z = m2.s.z - 6;
+    m2.s.isBot = true;
+    expect(acceptKick(m2.m, room, m2.s.eid, shot(m2.s, [Math.sin(a), 0, -Math.cos(a)]), m2.t + 100)!.hit).toBe(0);
+    // 10 degrees off: no help
+    const m3 = hunt();
+    m3.hs.forEach((x, i) => { x.x = 14 + i; x.z = 12; });
+    m3.hs[0].x = m3.s.x;
+    m3.hs[0].z = m3.s.z - 6;
+    const b = (10 * Math.PI) / 180;
+    expect(acceptKick(m3.m, room, m3.s.eid, shot(m3.s, [Math.sin(b), 0, -Math.cos(b)]), m3.t + 100)!.hit).toBe(0);
   });
 
   it('one ball in the air per seeker: it is back 1.5 s after it stops or first hits', () => {
