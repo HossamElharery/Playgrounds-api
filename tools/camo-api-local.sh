@@ -4,7 +4,8 @@
 set -e
 cd "$(dirname "$0")/.."
 export PATH=$HOME/.nvm/versions/node/v24.22.0/bin:$PATH
-pkill -f "node --enable-source-maps dist/src/main" 2>/dev/null || true
+# stop only what listens on THIS script's port (:3050); never a developer's own API on :3000
+lsof -tiTCP:3050 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
 npm run build >/tmp/camo-api-build.log 2>&1 || { tail -20 /tmp/camo-api-build.log; exit 1; }
 set -a; source ../back-end/matchena-api/.env; set +a
 export DATABASE_URL="postgresql://hossamelharery@localhost:5432/${CAMO_DB:-camo_scratch_20261022}?schema=public"
