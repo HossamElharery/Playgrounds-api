@@ -103,7 +103,7 @@ describe('camo room votes (section 17a)', () => {
 
   it('no votes in the last 20 s of a round, and a late kick waits for the round to end', () => {
     const { host, advance } = room(6);
-    advance(60_000 + 2_000); // prep -> whistle
+    advance(30_000 + 2_000); // prep -> whistle
     advance(150_000); // 30 s left in the hunt
     const t = eidOf(host, 'u1', 'u6');
     const early = host.voteStart('u1', t, 'kick');
@@ -116,7 +116,7 @@ describe('camo room votes (section 17a)', () => {
     // passed with 30 s left: applied at once
     expect(m).toBeNull();
     const h2 = room(6);
-    h2.advance(60_000 + 2_000 + 165_000); // 15 s left
+    h2.advance(30_000 + 2_000 + 165_000); // 15 s left
     const late = h2.host.voteStart('u1', eidOf(h2.host, 'u1', 'u6'), 'mute');
     expect(!late.ok && late.reason).toBe('late');
   });

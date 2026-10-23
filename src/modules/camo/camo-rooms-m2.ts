@@ -77,7 +77,7 @@ function finish(id: string, b: Builder, bounds: CamoRoomData['bounds'], rr: Camo
     { minX: rr.minX, maxX: rr.maxX, minZ: rr.minZ, maxZ: rr.maxZ, minY: 0, maxY: WALL_H },
     { minX: rr.door.x - 5, maxX: rr.door.x + 5, minZ: rr.door.z - 5, maxZ: rr.door.z + 5, minY: 0, maxY: WALL_H },
   ];
-  const seekers = [0, 1, 2].map((i) => ({ x: round(rr.minX + 1 + i), z: round(rr.maxZ - 1) }));
+  const seekers = [-0.3, 0, 0.3].map((dx, i) => ({ x: round(rr.door.x + dx), z: round(rr.door.z + 1.3 + (i === 2 ? 0.7 : 0)) }));
   const draft: CamoRoomData = { id, version: 1, bounds, colliders: b.colliders, hideSpots: [], seats: b.seats, spawns: { hiders, seekers }, refereeRoom: rr, forbidden, props: b.props };
   const grid = buildWalkGrid(draft);
   const kept: HideSpot[] = [];

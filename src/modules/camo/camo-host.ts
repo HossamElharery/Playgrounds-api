@@ -1052,7 +1052,7 @@ export class CamoHost {
         send('camo.ball', { by: e.by, seq: e.seq, keyframes: e.keyframes.map((k) => [k.t, k.x, k.y, k.z]), events: e.events, at: e.at });
         break;
       case 'card': {
-        if (m.puzzle) this.broadcastState(m, now); // the miss counter
+        if (m.puzzle || e.kind === 'yellow') this.broadcastState(m, now); // the miss counter and the seeker's yellow count
         const target = e.target ? playerById(m, e.target) : undefined;
         send('camo.card.result', {
           kind: e.kind,

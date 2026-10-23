@@ -316,11 +316,8 @@ export function generateLockerRoom(): CamoRoomData {
 
   const hiders: Array<{ x: number; z: number }> = [];
   for (let i = 0; i < 10; i++) hiders.push({ x: round(-4.5 + i * 1.0), z: 4.2 });
-  const seekers: Array<{ x: number; z: number }> = [
-    { x: -16.2, z: 11.2 },
-    { x: -15.2, z: 11.2 },
-    { x: -14.2, z: 11.2 },
-  ];
+  // the referees wait just inside the door, facing out of it
+  const seekers: Array<{ x: number; z: number }> = [-0.3, 0, 0.3].map((dx, i) => ({ x: round(rr.door.x + dx), z: round(rr.door.z + 1.3 + (i === 2 ? 0.7 : 0)) }));
 
   const draft: CamoRoomData = {
     id: 'locker_room',

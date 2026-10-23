@@ -178,6 +178,8 @@ describe('camo cards', () => {
     s.z = 8;
     s.yaw = Math.PI; // faces -z
     s.ballReadyAt = 0;
+    // the other referees stand in the referees' room looking at its wall, so only `s` takes part in a test
+    for (const o of seekers(m)) if (o !== s) { o.x = -17; o.z = 12; o.yaw = 0; }
     const hs = hidersAlive(m);
     hs.forEach((h, i) => {
       h.x = -16 + i; // out of the line

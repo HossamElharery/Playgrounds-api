@@ -483,7 +483,7 @@ function resetForRound(m: CamoMatch, room: CamoRoomData, now: number): void {
       p.x = sp.x;
       p.z = sp.z;
     }
-    p.yaw = p.role === 'seeker' ? Math.PI / 2 : 0;
+    p.yaw = p.role === 'seeker' ? Math.PI : 0; // a referee faces the door (north), a hider the lockers
   }
   m.closest = new Map();
   m.history = [];
