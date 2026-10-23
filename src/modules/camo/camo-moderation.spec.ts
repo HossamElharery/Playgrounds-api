@@ -1,5 +1,6 @@
 import { CamoHost, type CamoUser, type HostSink, type ModerationEvent } from './camo-host';
 import { playerByUser } from './camo-rules';
+import { NOTICE } from './camo-bots';
 
 function harness() {
   let t = 10_000_000;
@@ -30,6 +31,10 @@ function room(n: number, partyOf: (i: number) => string | null = () => null) {
 }
 
 describe('camo room votes (section 17a)', () => {
+  // the vote timing depends on the round lasting its whole 180 s: referee bots that notice nobody keep it from ending early
+  const saved = { ...NOTICE };
+  beforeAll(() => Object.assign(NOTICE, { base: 0, perSkill: 0 }));
+  afterAll(() => Object.assign(NOTICE, saved));
   afterEach(() => jest.clearAllTimers());
 
   it('a mute needs a simple majority of the real people and at least two yes', () => {
