@@ -43,14 +43,24 @@ interface Mem {
 const WALK_STEP_S = 0.1;
 
 /** How quickly a referee bot notices a hider it can see (per second, before distance and camouflage). Tuned so a real player hiding well wins about half the rounds. */
+/** Share of patrol legs that head for a part of the room where a hider really is (keeps the hunt lively in a big hall). */
+export const HUNCH = 0.3;
 export const NOTICE = { base: 0.24, perSkill: 0.6, camoEffect: 0.72 };
 
 export class BotBrain {
   private readonly mem = new Map<string, Mem>();
   readonly grid: WalkGrid;
 
+  /** A big hall needs a keener referee: it feels where people are more often and sees further (a small room is left as is). */
+  private readonly hunch: number;
+  private readonly sight: number;
+
   constructor(private readonly room: CamoRoomData, grid?: WalkGrid) {
     this.grid = grid ?? buildWalkGrid(room);
+    const area = (room.bounds.maxX - room.bounds.minX) * (room.bounds.maxZ - room.bounds.minZ);
+    const big = Math.max(0, Math.min(1, (area - 900) / 1000));
+    this.hunch = HUNCH + big * 0.4;
+    this.sight = 16 + big * 8;
   }
 
   private memOf(p: CamoPlayer): Mem {
@@ -211,11 +221,11 @@ export class BotBrain {
     // noticing: only hiders that could be seen at all, harder when well camouflaged and still
     if (!m.target) {
       for (const h of hidersAlive(match)) {
-        if (!canSee(room, p, h, 16, 110)) continue;
+        if (!canSee(room, p, h, this.sight, 110)) continue;
         const d = Math.hypot(h.x - p.x, h.z - p.z);
         const moving = !h.frozen;
         const base = NOTICE.base + NOTICE.perSkill * skill;
-        const rate = base * (1 - h.stats.camo * NOTICE.camoEffect) * Math.max(0.05, 1 - d / 16) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
+        const rate = base * (1 - h.stats.camo * NOTICE.camoEffect) * Math.max(0.05, 1 - d / this.sight) * (moving ? 3 : 1) * (d < 2.5 ? 2.5 : 1);
         if (match.rng() < 1 - Math.exp(-rate * dt)) {
           m.target = h.eid;
           m.aimUntil = now + 600 + (1 - skill) * 900;
@@ -262,12 +272,22 @@ export class BotBrain {
         m.visited.clear();
         pool = room.hideSpots;
       }
+      // a hunch: now and then a referee heads for a part of the room where somebody really is (a good referee «feels» it);
+      // otherwise it sweeps the nearest places. Either way it only walks, it never aims at what it cannot see.
+      const prey = hidersAlive(match);
+      if (prey.length && match.rng() < this.hunch) {
+        const h = prey[Math.floor(match.rng() * prey.length)];
+        const near = pool.filter((sp) => Math.hypot(sp.x - h.x, sp.z - h.z) < 9);
+        if (near.length) pool = near;
+      }
       pool = pool.map((sp) => ({ sp, d: Math.hypot(sp.x - p.x, sp.z - p.z) + match.rng() * 6 })).sort((a, b) => a.d - b.d).slice(0, 4).map((x) => x.sp);
       const s2 = pool[Math.floor(match.rng() * pool.length)];
       this.plan(m, p, s2, now);
       m.nextWaypointAt = now + 9_000;
     }
-    this.follow(match, p, m, now, false);
+    // long legs are run (the stamina rule still applies), short ones walked so the referee can look about
+    const leg = m.path.length ? Math.hypot(m.path[m.path.length - 1].x - p.x, m.path[m.path.length - 1].z - p.z) : 0;
+    this.follow(match, p, m, now, leg > 7);
   }
 
   forget(eid: string): void {

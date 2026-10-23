@@ -125,6 +125,8 @@ export const INPUT_RATES: Readonly<Record<string, [number, number]>> = Object.fr
   speaking: [4, 8],
 });
 
+/** A hider feels a referee from this far (metres); inside it the danger rises towards 1. */
+const DANGER_RANGE = 14;
 const AFK_WARN_MS = 25_000;
 const AFK_COVER_MS = 35_000;
 const EMPTY_CLOSE_MS = 5 * 60_000;
@@ -1015,7 +1017,17 @@ export class CamoHost {
     const last = this.lastBroadcast.get(m.id) ?? 0;
     if (now - last < TICK_MS - 1) return;
     this.lastBroadcast.set(m.id, now);
-    for (const p of this.humans(m)) this.o.sink.emit(p.userId!, 'camo.positions', { t: now, p: positionsFor(m, room, viewerOf(p), now) }, true);
+    for (const p of this.humans(m)) {
+      const payload: { t: number; p: unknown; d?: number } = { t: now, p: positionsFor(m, room, viewerOf(p), now) };
+      // a hider in the hunt is told how close the nearest referee is (0 = far, 1 = on top of you), never where: the heartbeat of the game
+      if (m.phase === 'hunt' && p.role === 'hider' && p.alive) {
+        let near = Infinity;
+        for (const s of m.players) if (s.role === 'seeker') near = Math.min(near, Math.hypot(s.x - p.x, s.z - p.z));
+        const d = Math.round(Math.max(0, 1 - near / DANGER_RANGE) * 100) / 100;
+        if (d > 0) payload.d = d;
+      }
+      this.o.sink.emit(p.userId!, 'camo.positions', payload, true);
+    }
   }
 
   /** Turns everything the rules queued into the events each client may receive. */

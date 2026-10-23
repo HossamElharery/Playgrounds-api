@@ -9,7 +9,7 @@ let problems = [], rounds = 0, reds = 0, yellows = 0, hidersWon = 0, seekersWon 
 const perRoom = {};
 for (let seed = 1; seed <= N; seed++) {
   const mode = seed % 5 === 0 ? 'contagion' : 'classic';
-  const r = playBotMatch(seed, { players: 4 + (seed % 7), mode });
+  const r = playBotMatch(seed, { players: 4 + (seed % 7), mode, roomId: process.env.ROOM });
   for (const v of r.violations) problems.push(`seed ${seed}: ${v}`);
   if (r.match.rounds.length !== 3) problems.push(`seed ${seed}: ${r.match.rounds.length} rounds`);
   rounds += r.match.rounds.length;

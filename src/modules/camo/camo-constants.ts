@@ -23,7 +23,7 @@ export const TIMERS = Object.freeze({
   /** A public lobby waits this long for real people, then bots fill the empty seats (the owner: «ليه أستنى دقيقة؟»). */
   waitingMaxMs: 6_000,
   revealMs: 3_000,
-  prepMs: 30_000,
+  prepMs: 40_000,
   prepMinMs: 20_000,
   prepMaxMs: 90_000,
   whistleMs: 2_000,

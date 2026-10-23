@@ -427,14 +427,14 @@ export function fillWithBots(m: CamoMatch, now: number, names: (i: number) => st
 }
 
 /** Roles of a round: the ones who were not a seeker yet go first, ties by the seeded draw (bots and humans alike). */
-export function assignRoles(m: CamoMatch): void {
+export function assignRoles(m: CamoMatch, extraSeekers = 0): void {
   const eligible = m.players.filter((p) => p.connected || p.botCover || p.isBot);
   const order = eligible
     // dev/test only (never in production): `CAMO_DEV_SEEKER_FIRST=1` makes real people the referees of round 1, for e2e runs
     .map((p) => ({ p, k: p.seekerRounds * 10 + m.rng() * 5 - (DEV_SEEKER_FIRST && !p.isBot ? 100 : 0) }))
     .sort((a, b) => a.k - b.k)
     .map((x) => x.p);
-  const n = seekerCount(eligible.length);
+  const n = Math.min(seekerCount(eligible.length) + extraSeekers, Math.max(1, eligible.length - 3));
   const seekerSet = new Set(order.slice(0, n).map((p) => p.eid));
   for (const p of m.players) {
     p.role = !eligible.includes(p) ? 'spectator' : seekerSet.has(p.eid) ? 'seeker' : 'hider';
@@ -517,7 +517,7 @@ export function startRound(m: CamoMatch, room: CamoRoomData, now: number): void 
     for (const p of m.players) p.role = p.isBot ? 'seeker' : 'hider';
   } else if (m.creator) {
     for (const p of m.players) p.role = 'hider';
-  } else assignRoles(m);
+  } else assignRoles(m, (room.bounds.maxX - room.bounds.minX) * (room.bounds.maxZ - room.bounds.minZ) > 1500 ? 1 : 0); // a big hall gets one more referee
   resetForRound(m, room, now);
   if (m.puzzle) placePuzzleHider(m);
   for (const p of m.players) m.outbox.push({ t: 'role', eid: p.eid, role: p.role, round: m.round });

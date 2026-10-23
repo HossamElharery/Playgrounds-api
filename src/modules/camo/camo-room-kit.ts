@@ -62,7 +62,11 @@ export class RoomKit {
   private readonly candidates: HideSpot[] = [];
   private uid = 0;
 
-  constructor(readonly bounds: CamoRoomData['bounds']) {}
+  /** Wall height: a locker room is 4 m, a warehouse 12 m (the client reads it from the «walls» prop). */
+  constructor(
+    readonly bounds: CamoRoomData['bounds'],
+    readonly height: number = WALL_H,
+  ) {}
 
   private id(p: string): string {
     return `${p}${++this.uid}`;
@@ -81,11 +85,11 @@ export class RoomKit {
   /** The four outer walls (colliders just outside the walkable rectangle, plus the one «walls» prop the client reads). */
   walls(): void {
     const { minX, maxX, minZ, maxZ } = this.bounds;
-    this.solid('wall-n', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: minZ - WALL_T, maxZ: minZ, minY: 0, maxY: WALL_H }, 'concrete');
-    this.solid('wall-s', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: maxZ, maxZ: maxZ + WALL_T, minY: 0, maxY: WALL_H }, 'concrete');
-    this.solid('wall-w', { minX: minX - WALL_T, maxX: minX, minZ, maxZ, minY: 0, maxY: WALL_H }, 'concrete');
-    this.solid('wall-e', { minX: maxX, maxX: maxX + WALL_T, minZ, maxZ, minY: 0, maxY: WALL_H }, 'concrete');
-    this.prop('walls', 0, 0, maxX - minX, WALL_H, maxZ - minZ, 'concrete');
+    this.solid('wall-n', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: minZ - WALL_T, maxZ: minZ, minY: 0, maxY: this.height }, 'concrete');
+    this.solid('wall-s', { minX: minX - WALL_T, maxX: maxX + WALL_T, minZ: maxZ, maxZ: maxZ + WALL_T, minY: 0, maxY: this.height }, 'concrete');
+    this.solid('wall-w', { minX: minX - WALL_T, maxX: minX, minZ, maxZ, minY: 0, maxY: this.height }, 'concrete');
+    this.solid('wall-e', { minX: maxX, maxX: maxX + WALL_T, minZ, maxZ, minY: 0, maxY: this.height }, 'concrete');
+    this.prop('walls', 0, 0, maxX - minX, this.height, maxZ - minZ, 'concrete');
   }
 
   /** A solid box (collider + drawn prop), optionally with hiding places around it. */

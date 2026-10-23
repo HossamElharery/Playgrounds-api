@@ -35,7 +35,7 @@ export const CAMO_DEFAULTS = Object.freeze({
   maxMatches: 40,
   camoUnsupported: [] as string[],
   /** Rooms players can be matched into (the admin tab turns the M2 rooms on). */
-  enabledRooms: ['locker_room'] as string[],
+  enabledRooms: ['warehouse', 'locker_room'] as string[],
   /** Runtime flag overrides from the admin tab (CAMO_ENABLED etc. as 'true'/'false'); empty = the environment decides. */
   flags: {} as Record<string, string>,
 });

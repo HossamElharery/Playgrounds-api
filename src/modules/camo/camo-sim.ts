@@ -2,15 +2,18 @@
 import { BotBrain, BOT_NAMES_AR } from './camo-bots';
 import { buildWalkGrid, type CamoRoomData, type WalkGrid } from './camo-room';
 import { generateLockerRoom } from './camo-room-locker';
+import { M2_ROOMS } from './camo-rooms-m2';
 import { createMatch, fillWithBots, step, type CamoMatch, type CamoEvent } from './camo-rules';
 
-let roomCache: { room: CamoRoomData; grid: WalkGrid } | null = null;
-export function sharedRoom(): { room: CamoRoomData; grid: WalkGrid } {
-  if (!roomCache) {
-    const room = generateLockerRoom();
-    roomCache = { room, grid: buildWalkGrid(room) };
+const roomCache = new Map<string, { room: CamoRoomData; grid: WalkGrid }>();
+export function sharedRoom(id = 'locker_room'): { room: CamoRoomData; grid: WalkGrid } {
+  let hit = roomCache.get(id);
+  if (!hit) {
+    const room = [generateLockerRoom, ...M2_ROOMS].map((g) => g()).find((r) => r.id === id) ?? generateLockerRoom();
+    hit = { room, grid: buildWalkGrid(room) };
+    roomCache.set(id, hit);
   }
-  return roomCache;
+  return hit;
 }
 
 export const MORPHS = ['potato', 'banana', 'penguin', 'camel', 'keeper', 'referee', 'dino', 'robot', 'classic', 'guest'];
@@ -23,8 +26,8 @@ export interface SimResult {
 }
 
 /** Plays a full all-bot match; returns what happened and any invariant that broke on the way. */
-export function playBotMatch(seed: number, opts: { players?: number; mode?: 'classic' | 'contagion'; prepMs?: number; huntMs?: number; maxTicks?: number } = {}): SimResult {
-  const { room, grid } = sharedRoom();
+export function playBotMatch(seed: number, opts: { roomId?: string; players?: number; mode?: 'classic' | 'contagion'; prepMs?: number; huntMs?: number; maxTicks?: number } = {}): SimResult {
+  const { room, grid } = sharedRoom(opts.roomId);
   const brain = new BotBrain(room, grid);
   let now = 1_000_000;
   const m = createMatch({ id: `sim${seed}`, room, mode: opts.mode ?? 'classic', timers: { prepMs: opts.prepMs ?? 45_000, huntMs: opts.huntMs ?? 120_000 }, botTarget: opts.players ?? 8, seed, now });

@@ -157,4 +157,6 @@ export function generateRamadanAlley(): CamoRoomData {
   return applyPalettes(k.finish('ramadan_alley', rr, hidersRow(10, -4.5, 0)));
 }
 
-export const M2_ROOMS = [generateFiveASide, generateAhwa, generateRamadanAlley] as const;
+import { generateWarehouse } from './camo-room-warehouse';
+
+export const M2_ROOMS = [generateWarehouse, generateFiveASide, generateAhwa, generateRamadanAlley] as const;
