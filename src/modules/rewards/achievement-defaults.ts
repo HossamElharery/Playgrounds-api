@@ -1,0 +1,2 @@
+// Source of truth is the admin table; this list mirrors the seed migration for specs and docs.
+export const DEFAULT_ACHIEVEMENT_KEYS = ["penalties_win_10", "penalties_win_50", "thief_win_10", "thief_win_50", "camo_win_10", "camo_win_50", "games_win_25", "games_win_100", "games_played_50", "match_host_1", "match_host_5", "match_host_20", "match_play_1", "match_play_10", "match_play_50", "bookings_5", "bookings_20", "bookings_50", "review_photo_5", "mvp_5", "mvp_25", "streak_7", "streak_30", "streak_100"] as const;

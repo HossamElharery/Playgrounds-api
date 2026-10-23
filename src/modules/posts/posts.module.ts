@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { StorageModule } from '../storage/storage.module';
+import { RewardsModule } from '../rewards/rewards.module';
 import { AnalyticsService } from './analytics.service';
 import { CoinsRewardService } from './coins-reward.service';
 import { FollowService } from './follow.service';
@@ -13,7 +14,7 @@ import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 
 @Module({
-  imports: [NotificationsModule, StorageModule],
+  imports: [NotificationsModule, StorageModule, RewardsModule],
   controllers: [PostsController, MediaUploadController, PostModerationController],
   providers: [
     PostsService,

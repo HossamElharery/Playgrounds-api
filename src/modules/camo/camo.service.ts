@@ -197,9 +197,12 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
             streak: won ? { increment: 1 } : 0,
           },
         });
-        await this.progress.award(p, won);
+        await this.progress.award(p, won, m.id);
         await this.prisma.$executeRaw`UPDATE "CamoStats" SET "bestSurvivalMs" = GREATEST("bestSurvivalMs", ${p.match.bestSurvivalMs}) WHERE "userId" = ${p.userId}`;
       }
+      await this.progress.recordMatch(
+        m.players.filter((p) => !p.isBot && p.userId).map((p) => ({ userId: p.userId!, won: board.get(p.eid) === 1 })),
+      );
     } catch (err) {
       this.logger.error(`could not store match ${m.id}: ${err instanceof Error ? err.message : err}`);
     }

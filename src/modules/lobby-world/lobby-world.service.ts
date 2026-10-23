@@ -41,6 +41,7 @@ import {
 import { DakhlaHost } from './dakhla-host';
 import type { DakhlaChantId, DakhlaLevel, DakhlaReport, DakhlaView } from './dakhla-rules';
 import { ThiefHost } from './thief-host';
+import { THIEF_MIN_PLAYERS } from './thief-rules';
 import type { TackleOutcome, ThiefPos, ThiefView } from './thief-rules';
 import {
   LOBBY_MAX_CREDIT_S,
@@ -202,7 +203,19 @@ export class LobbyWorldService implements OnModuleDestroy {
     busy: (squadId) => this.penaltyLive(squadId) || this.dakhla.active(squadId),
     pos: (squadId, userId, now) => this.posOf(squadId, userId, now),
     ballHeld: (squadId, _held, at) => this.placeBallAt(squadId, at, Date.now()),
+    finished: (s) => {
+      // A round that ended because players walked out (fewer than the minimum left) is no win.
+      if (s.result && s.players.length >= THIEF_MIN_PLAYERS)
+        this.resultSink?.({ game: 'thief', participants: [...s.players], winners: [...s.result.winners] });
+    },
   });
+  private resultSink: ((r: { game: 'penalties' | 'thief'; participants: string[]; winners: string[] }) => void) | null = null;
+  private readonly reportedPens = new WeakSet<PenaltyState>();
+
+  /** Where finished lobby games are reported (achievements). Set once by the module. */
+  setGameResultSink(sink: ((r: { game: 'penalties' | 'thief'; participants: string[]; winners: string[] }) => void) | null): void {
+    this.resultSink = sink;
+  }
 
   acceptMove(
     move: LobbyMove,
@@ -958,6 +971,11 @@ export class LobbyWorldService implements OnModuleDestroy {
           }
           break;
         case 'ended':
+          if (!this.reportedPens.has(pen)) {
+            this.reportedPens.add(pen);
+            if (!pen.cancelled && !pen.walkover && pen.winners.length)
+              this.resultSink?.({ game: 'penalties', participants: [...pen.order], winners: [...pen.winners] });
+          }
           if (now >= pen.phaseUntil) {
             this.penalties.delete(squadId);
             this.penShot.delete(squadId);

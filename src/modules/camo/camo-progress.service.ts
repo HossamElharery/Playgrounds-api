@@ -4,6 +4,8 @@ import { cairoDay } from './camo-puzzle.service';
 import { COSMETICS, MISSIONS, applyMissions, canBuy, coinsFor, equip, levelOf, xpFor, xpForLevel, type CosmeticKind, type CosmeticState, type MatchDelta, type MissionState } from './camo-progress';
 import type { CamoPlayer } from './camo-rules';
 import { CamoSettingsService } from './camo-settings.service';
+import { CoinGrantService } from '../rewards/coin-grant.service';
+import { GameResultsService } from '../rewards/game-results.service';
 
 /** Stores XP, coins, missions and cosmetics (section 16). Coins ride the platform's existing balance and ledger. */
 @Injectable()
@@ -13,7 +15,18 @@ export class CamoProgressService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: CamoSettingsService,
+    private readonly grants: CoinGrantService,
+    private readonly results: GameResultsService,
   ) {}
+
+  /** The whole match as one result for the achievements (wins only count against real players). */
+  async recordMatch(players: readonly { userId: string; won: boolean }[]): Promise<void> {
+    await this.results.record({
+      game: 'camo',
+      participants: players.map((p) => p.userId),
+      winners: players.filter((p) => p.won).map((p) => p.userId),
+    });
+  }
 
   deltaOf(p: CamoPlayer, won: boolean): MatchDelta {
     const hiderRounds = p.match.roles.filter((r) => r === 'hider').length;
@@ -21,7 +34,7 @@ export class CamoProgressService {
   }
 
   /** One player's reward for a finished match. Never throws: a failed reward must not touch the match. */
-  async award(p: CamoPlayer, won: boolean): Promise<void> {
+  async award(p: CamoPlayer, won: boolean, matchId: string): Promise<void> {
     if (p.isBot || !p.userId) return;
     try {
       const cfg = this.settings.current;
@@ -34,13 +47,11 @@ export class CamoProgressService {
       const missionCoins = p.guest ? 0 : missions.completed.length * cfg.missionCoins;
       const coins = coinsMatch + missionCoins;
       const xp = (row?.xp ?? 0) + xpFor(delta, cfg);
-      await this.prisma.$transaction(async (tx) => {
-        await tx.camoStats.update({ where: { userId: p.userId! }, data: { xp, level: levelOf(xp), coinsDay: day, coinsToday: earnedToday + coinsMatch, missions: missions.state as never } });
-        if (coins > 0) {
-          await tx.user.update({ where: { id: p.userId! }, data: { coinsBalance: { increment: coins } } });
-          await tx.coinLedgerEntry.create({ data: { userId: p.userId!, amount: coins, reason: missionCoins ? 'camo_match_and_mission' : 'camo_match' } });
-        }
-      });
+      await this.prisma.camoStats.update({ where: { userId: p.userId }, data: { xp, level: levelOf(xp), coinsDay: day, coinsToday: earnedToday + coinsMatch, missions: missions.state as never } });
+      // Coins go through the grant door: paid only to trusted players, under the shared daily cap, once per match.
+      if (coins > 0) {
+        await this.grants.grant({ userId: p.userId, amount: coins, reason: missionCoins ? 'camo_match_and_mission' : 'camo_match', refKey: `camo:${matchId}`, dailyCapped: true });
+      }
     } catch (err) {
       this.logger.warn(`camo reward failed: ${err instanceof Error ? err.message : err}`);
     }

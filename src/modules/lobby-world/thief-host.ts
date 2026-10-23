@@ -27,6 +27,8 @@ export interface ThiefHostDeps extends GameHostDeps {
   pos(squadId: string, userId: string, now: number): ThiefPos | null;
   /** The game owns the ball (true) or hands it back to free play at this spot (false). */
   ballHeld(squadId: string, held: boolean, at: ThiefPos): void;
+  /** A round was played to its end (called once per round). */
+  finished?(state: ThiefState): void;
 }
 
 /** Runs every squad's «حرامي الكورة». */
@@ -34,6 +36,7 @@ export class ThiefHost {
   private readonly games = new Map<string, ThiefState>();
   private readonly flushedSeq = new Map<string, number>();
   private readonly flushedAt = new Map<string, number>();
+  private readonly reported = new WeakSet<ThiefState>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly deps: ThiefHostDeps) {}
@@ -184,6 +187,10 @@ export class ThiefHost {
 
   private release(s: ThiefState): void {
     this.deps.ballHeld(s.squadId, false, s.ball);
+    if (s.phase === 'ended' && !s.cancelled && !this.reported.has(s)) {
+      this.reported.add(s);
+      this.deps.finished?.(s);
+    }
   }
 
   private flush(s: ThiefState, now: number): void {

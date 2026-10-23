@@ -11,12 +11,16 @@ import { CreateVenueReviewDto } from './dto/create-venue-review.dto';
 import { CreatePlayerRatingDto } from './dto/create-player-rating.dto';
 import { buildPagination } from '../../common/dto/page-query.dto';
 import { RewardsService } from '../rewards/rewards.service';
+import { CoinGrantService } from '../rewards/coin-grant.service';
+import { matchWasPlayedForReal, realPhotoUrls } from '../rewards/match-proof';
+import { PLAYER_RATING_COINS } from '../rewards/coins-policy';
 
 @Injectable()
 export class ReviewsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rewards: RewardsService,
+    private readonly grants: CoinGrantService,
   ) {}
 
 
@@ -47,7 +51,7 @@ export class ReviewsService {
       await this.recomputeVenueRating(booking.venueId);
       await this.rewards.onReviewSubmitted(
         userId,
-        (dto.photos?.length ?? 0) > 0,
+        realPhotoUrls(dto.photos).length > 0,
         booking.id,
       );
       return review;
@@ -125,6 +129,8 @@ export class ReviewsService {
       throw new BadRequestException('bookingId or matchPostId is required');
 
     let participants: Set<string>;
+    // Coins and MVP progress are only for ratings of a match that really happened.
+    let verified = true;
     if (dto.matchPostId) {
       const post = await this.prisma.matchPost.findUnique({
         where: { id: dto.matchPostId },
@@ -139,6 +145,7 @@ export class ReviewsService {
         post.authorId,
         ...post.joinRequests.map((j) => j.userId),
       ]);
+      verified = await matchWasPlayedForReal(this.prisma, post, [...participants]);
     } else {
       const booking = await this.prisma.booking.findUnique({
         where: { id: dto.bookingId },
@@ -184,24 +191,20 @@ export class ReviewsService {
         data: { mvps: { increment: 1 } },
         select: { mvps: true },
       });
-      await this.rewards.onMvpAwarded(dto.rateeId, updated.mvps);
+      await this.rewards.onMvpAwarded(dto.rateeId, updated.mvps, verified);
     }
 
     await this.recomputeReliability(dto.rateeId);
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: raterId },
-        data: { coinsBalance: { increment: 10 } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: {
-          userId: raterId,
-          amount: 10,
-          reason: 'post_match_rating',
-          bookingId: dto.bookingId,
-        },
-      }),
-    ]);
+    if (verified) {
+      await this.grants.grant({
+        userId: raterId,
+        amount: PLAYER_RATING_COINS,
+        reason: 'post_match_rating',
+        refKey: `rating:${rating.id}`,
+        dailyCapped: true,
+        bookingId: dto.bookingId,
+      });
+    }
 
     return rating;
   }

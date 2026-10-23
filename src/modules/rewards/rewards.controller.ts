@@ -28,6 +28,9 @@ import { UpdateQuestDto } from './dto/update-quest.dto';
 import { CreateBadgeDto } from './dto/create-badge.dto';
 import { UpdateBadgeDto } from './dto/update-badge.dto';
 import { UpdatePlatformSettingDto } from './dto/update-platform-setting.dto';
+import { AchievementsService } from './achievements.service';
+import { CreateAchievementDto } from './dto/create-achievement.dto';
+import { UpdateAchievementDto } from './dto/update-achievement.dto';
 
 @ApiTags('rewards')
 @Controller()
@@ -35,6 +38,7 @@ export class RewardsController {
   constructor(
     private readonly rewards: RewardsService,
     private readonly prisma: PrismaService,
+    private readonly achievements: AchievementsService,
   ) {}
 
   private async promoActor(
@@ -80,6 +84,13 @@ export class RewardsController {
   @Get('rewards/quests')
   quests(@CurrentUser() user: AuthenticatedUser) {
     return this.rewards.myQuests(user.id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('rewards/achievements')
+  myAchievements(@CurrentUser() user: AuthenticatedUser) {
+    return this.achievements.listForUser(user.id);
   }
 
   @ApiBearerAuth()
@@ -177,6 +188,30 @@ export class RewardsController {
   @Patch('admin/quests/:id')
   updateQuest(@Param('id') id: string, @Body() dto: UpdateQuestDto) {
     return this.rewards.updateQuest(id, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  @Get('admin/achievements')
+  listAchievements() {
+    return this.achievements.listDefinitions();
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  @Post('admin/achievements')
+  createAchievement(@Body() dto: CreateAchievementDto) {
+    return this.achievements.createDefinition(dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  @Patch('admin/achievements/:id')
+  updateAchievement(@Param('id') id: string, @Body() dto: UpdateAchievementDto) {
+    return this.achievements.updateDefinition(id, dto);
   }
 
   @ApiBearerAuth()

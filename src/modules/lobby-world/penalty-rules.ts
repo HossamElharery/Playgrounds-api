@@ -76,6 +76,8 @@ export interface PenaltyState {
   lastShooterId: string | null;
   winners: string[];
   cancelled: boolean;
+  /** Ended because the others left, not because the shootout was played out. */
+  walkover: boolean;
   dive: PenaltyDive | null;
   rev: number;
 }
@@ -121,6 +123,7 @@ export function createPenalty(
     lastShooterId: null,
     winners: [],
     cancelled: false,
+    walkover: false,
     dive: null,
     rev: 0,
   };
@@ -250,6 +253,7 @@ export function removePlayer(
     return;
   }
   if (s.kickers.length === 1) {
+    s.walkover = true;
     finish(s, [...s.kickers], now);
     return;
   }

@@ -217,6 +217,7 @@ describe('LobbyWorldGateway — ball', () => {
         { membershipEnded$: new Subject() } as unknown as SquadService,
         { equipped$ } as unknown as MorphsService,
         world,
+        { record: jest.fn() } as never,
       );
       mod.onModuleInit();
       const set = jest.spyOn(world, 'setMorph');

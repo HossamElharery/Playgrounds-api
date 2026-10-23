@@ -50,6 +50,7 @@ import { BookingNotifier } from './booking-notifier.service';
 import { lockVenueSlots } from '../../common/utils/slot-lock.util';
 import { assertVenueBookable, computeVenueState, withoutInternalVenueFields } from '../../common/utils/venue-visibility.util';
 import { RewardsService } from '../rewards/rewards.service';
+import { MAX_COIN_DISCOUNT_PCT } from '../rewards/coins-policy';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CommissionService } from '../finance/commission.service';
 import { LedgerService } from '../finance/ledger.service';
@@ -62,7 +63,6 @@ import {
 const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 seconds" guidance
 const FIRST_BOOKING_BONUS_COINS = 200;
 const FIRST_BOOKING_MIN_TOTAL = 5000;
-const MAX_COIN_DISCOUNT_PCT = 30;
 const MAX_ADVANCE_DAYS = 90;
 // Player checkout is pay-at-venue unless the active payment provider reports
 // itself live (PaymentsConfigService.isOnlinePaymentsLive). This is derived, not a
@@ -1053,6 +1053,8 @@ export class BookingsService {
       userId: booking.userId,
       courtId: booking.courtId,
       isFirstBooking,
+      totalAmount: booking.totalAmount,
+      source: booking.source,
     });
     return updated;
   }
@@ -1115,6 +1117,8 @@ export class BookingsService {
       userId: booking.userId,
       courtId: booking.courtId,
       isFirstBooking,
+      totalAmount: booking.totalAmount,
+      source: booking.source,
     });
     return updated;
   }

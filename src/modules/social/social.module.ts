@@ -5,9 +5,10 @@ import { TeamsService } from './teams.service';
 import { SocialController } from './social.controller';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RewardsModule } from '../rewards/rewards.module';
 
 @Module({
-  imports: [RealtimeModule, NotificationsModule],
+  imports: [RealtimeModule, NotificationsModule, RewardsModule],
   providers: [FriendsService, MatchPostsService, TeamsService],
   controllers: [SocialController],
   exports: [FriendsService, MatchPostsService, TeamsService],

@@ -10,9 +10,13 @@ import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Prisma } from '@prisma/client';
 import { elapsedLiveMatchWhere, matchHasKickedOff } from './match-lifecycle';
+import { AchievementsService } from '../rewards/achievements.service';
+import { CoinGrantService } from '../rewards/coin-grant.service';
+import { matchWasPlayedForReal } from '../rewards/match-proof';
+import { MATCH_MIN_OTHER_PLAYERS, MATCH_PLAYED_COINS } from '../rewards/coins-policy';
 
-const FIRST_JOINERS_COIN_BONUS = 30;
-const FIRST_JOINERS_COUNT = 2;
+/** A match can be closed as "played" from a little before kickoff. */
+const MARK_PLAYED_EARLY_MS = 15 * 60_000;
 
 @Injectable()
 export class MatchPostsService {
@@ -20,6 +24,8 @@ export class MatchPostsService {
     private readonly prisma: PrismaService,
     private readonly emitter: RealtimeGatewayEmitter,
     private readonly notifications: NotificationsService,
+    private readonly grants: CoinGrantService,
+    private readonly achievements: AchievementsService,
   ) {}
 
   private async resolveSportId(key?: string) {
@@ -317,19 +323,6 @@ export class MatchPostsService {
       if (approve) {
         await this.addToMatchChat(request.matchPost.id, request.matchPost.authorId, request.userId, request.matchPost.chatThreadId, tx);
         const approvedCount = await tx.matchPostJoinRequest.count({ where: { matchPostId: request.matchPost.id, status: 'approved' } });
-        if (approvedCount <= FIRST_JOINERS_COUNT) {
-          await tx.user.update({
-            where: { id: request.userId },
-            data: { coinsBalance: { increment: FIRST_JOINERS_COIN_BONUS } },
-          });
-          await tx.coinLedgerEntry.create({
-            data: {
-              userId: request.userId,
-              amount: FIRST_JOINERS_COIN_BONUS,
-              reason: 'match_join_early',
-            },
-          });
-        }
         if (approvedCount >= request.matchPost.playersNeeded)
           await tx.matchPost.update({ where: { id: request.matchPost.id }, data: { status: 'full' } });
       }
@@ -389,10 +382,13 @@ export class MatchPostsService {
     if (!post) throw new NotFoundException('Match post not found');
     if (post.authorId !== organizerId)
       throw new ForbiddenException('Not your match post');
+    if (post.dateTime.getTime() - MARK_PLAYED_EARLY_MS > Date.now())
+      throw new BadRequestException('The match has not started yet');
     const playerIds = [
       post.authorId,
       ...post.joinRequests.map((j) => j.userId),
     ];
+    let closed = false;
     await this.prisma.$transaction(async tx => {
       const changed = await tx.matchPost.updateMany({
         where: { id, status: { in: ['open', 'full', 'expired'] } },
@@ -402,12 +398,47 @@ export class MatchPostsService {
         if (post.status === 'played') return;
         throw new BadRequestException('Match already closed');
       }
+      closed = true;
       await tx.user.updateMany({
         where: { id: { in: playerIds } },
         data: { matchesPlayed: { increment: 1 } },
       });
     });
+    if (closed) await this.rewardPlayedMatch(post, playerIds);
     return this.getById(id);
+  }
+
+  /**
+   * Prizes for a match that really happened: a venue checked one of the
+   * players in on that court at that time, and the organizer was not alone.
+   */
+  private async rewardPlayedMatch(
+    post: { id: string; authorId: string; courtId: string | null; dateTime: Date },
+    playerIds: string[],
+  ): Promise<void> {
+    try {
+      if (playerIds.length < MATCH_MIN_OTHER_PLAYERS + 1) return;
+      if (!(await matchWasPlayedForReal(this.prisma, post, playerIds))) return;
+      const real = await this.prisma.user.findMany({
+        where: { id: { in: playerIds }, isGuest: false, status: 'active', deletedAt: null },
+        select: { id: true },
+      });
+      const realIds = new Set(real.map((u) => u.id));
+      if (realIds.size < MATCH_MIN_OTHER_PLAYERS + 1) return;
+      if (realIds.has(post.authorId)) await this.achievements.bump(post.authorId, 'match.hosted');
+      for (const userId of realIds) {
+        await this.achievements.bump(userId, 'match.played');
+        await this.grants.grant({
+          userId,
+          amount: MATCH_PLAYED_COINS,
+          reason: `match_played:${post.id}`,
+          refKey: `match_played:${post.id}`,
+          dailyCapped: true,
+        });
+      }
+    } catch {
+      /* a rewards problem never undoes a played match */
+    }
   }
 
   async cancel(organizerId: string, id: string) {

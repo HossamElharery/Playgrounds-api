@@ -2,6 +2,8 @@ import { Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Subscription } from 'rxjs';
 import { MorphsModule } from '../morphs/morphs.module';
 import { MorphsService } from '../morphs/morphs.service';
+import { RewardsModule } from '../rewards/rewards.module';
+import { GameResultsService } from '../rewards/game-results.service';
 import { SquadModule } from '../squad/squad.module';
 import { SquadService } from '../squad/squad.service';
 import { LobbyWorldController } from './lobby-world.controller';
@@ -9,7 +11,7 @@ import { LobbyWorldGateway } from './lobby-world.gateway';
 import { LobbyWorldService } from './lobby-world.service';
 
 @Module({
-  imports: [SquadModule, MorphsModule],
+  imports: [SquadModule, MorphsModule, RewardsModule],
   providers: [LobbyWorldService, LobbyWorldGateway],
   controllers: [LobbyWorldController],
   exports: [LobbyWorldService],
@@ -21,9 +23,11 @@ export class LobbyWorldModule implements OnModuleInit, OnModuleDestroy {
     private readonly squads: SquadService,
     private readonly morphs: MorphsService,
     private readonly world: LobbyWorldService,
+    private readonly results: GameResultsService,
   ) {}
 
   onModuleInit(): void {
+    this.world.setGameResultSink((r) => void this.results.record(r));
     this.subs.add(
       this.squads.membershipEnded$.subscribe(
         ({ squadId, userId, squadEmptied }) => {

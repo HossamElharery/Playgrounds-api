@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { withJobLock } from '../../common/utils/job-lock.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { CoinGrantService } from '../rewards/coin-grant.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AnalyticsService } from './analytics.service';
 import { HashtagService } from './hashtag.service';
@@ -16,13 +18,17 @@ export class CoinsRewardService {
     private readonly notifications: NotificationsService,
     private readonly analytics: AnalyticsService,
     private readonly hashtags: HashtagService,
+    private readonly grants: CoinGrantService,
   ) {}
 
   @Cron('*/12 * * * *')
   async tick() {
     try {
-      await this.hashtags.refreshTrendingScores();
-      await this.evaluate();
+      // With several replicas every @Cron fires everywhere; one runs it.
+      await withJobLock(this.prisma, 'coinsRewardTick', async () => {
+        await this.hashtags.refreshTrendingScores();
+        await this.evaluate();
+      });
     } catch (err) {
       this.logger.error('Coins/hashtag job failed', err as Error);
     }
@@ -73,23 +79,32 @@ export class CoinsRewardService {
         }
         const eligible = await this.eligibleLikeCount(post.id);
         if (eligible < rule.threshold) continue;
-        const ok = await this.awardLedger(
-          post.authorId,
-          rule.coinsAwarded,
-          'post_engagement_reward',
-        );
-        if (!ok) continue;
-        await this.prisma.post.update({
-          where: { id: post.id },
+        // Claim the post first: a second runner that lost the race pays nothing.
+        const claimed = await this.prisma.post.updateMany({
+          where: { id: post.id, coinsAwarded: false },
           data: { coinsAwarded: true },
         });
+        if (claimed.count !== 1) continue;
+        const outcome = await this.grants.grant({
+          userId: post.authorId,
+          amount: rule.coinsAwarded,
+          reason: 'post_engagement_reward',
+          refKey: `post:${post.id}`,
+        });
+        if (outcome.status === 'void' || outcome.status === 'duplicate') continue;
         await this.notifications.create({
           userId: post.authorId,
           category: 'rewards',
           titleEn: 'You earned coins on a post',
           titleAr: 'كسبت كوينز على بوست',
-          bodyEn: `+${rule.coinsAwarded} coins`,
-          bodyAr: `+${rule.coinsAwarded} كوينز`,
+          bodyEn:
+            outcome.status === 'paid'
+              ? `+${rule.coinsAwarded} coins`
+              : `${rule.coinsAwarded} coins will be added after your first booking at a venue`,
+          bodyAr:
+            outcome.status === 'paid'
+              ? `+${rule.coinsAwarded} كوينز`
+              : `${rule.coinsAwarded} كوينز هتتضاف بعد أول حجز ليك في ملعب`,
           deepLink: `/app/community/post/${post.slug}-${post.id}`,
           payload: { postId: post.id, coins: rule.coinsAwarded },
         });
@@ -104,9 +119,17 @@ export class CoinsRewardService {
   }
 
   private async eligibleLikeCount(postId: string): Promise<number> {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60_000);
+    const cutoff = new Date(Date.now() - 72 * 60 * 60_000);
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
+    });
     const likes = await this.prisma.postLike.findMany({
-      where: { postId, user: { createdAt: { lte: cutoff } } },
+      where: {
+        postId,
+        userId: { not: post?.authorId },
+        user: { createdAt: { lte: cutoff }, isGuest: false, status: 'active' },
+      },
       select: { createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
@@ -126,28 +149,5 @@ export class CoinsRewardService {
     }
     if (burst > LIKE_VELOCITY_CAP_PER_MINUTE) return 0;
     return likes.length;
-  }
-
-  private async awardLedger(
-    userId: string,
-    amount: number,
-    reason: string,
-  ): Promise<boolean> {
-    if (amount <= 0) return false;
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true },
-    });
-    if (!user) return false;
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: userId },
-        data: { coinsBalance: { increment: amount } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: { userId, amount, reason },
-      }),
-    ]);
-    return true;
   }
 }

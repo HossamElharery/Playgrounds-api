@@ -77,6 +77,10 @@ model User {
   reputation        Int           @default(0)
   reliabilityPct    Float         @default(100)
   coinsBalance      Int           @default(0)
+  /// First time a paid booking of this player was checked in at a venue. Coins
+  /// from engagement (check-ins, games, achievements...) stay pending until
+  /// this is set: it separates real players from throw-away accounts.
+  trustedAt         DateTime?
   /// Prepaid EGP wallet in minor units (piasters). Player bookings, bundles,
   /// and memberships debit this — they never charge a PSP directly. Top-up
   /// is the only player flow that uses card / Vodafone / InstaPay / Fawry.
@@ -136,6 +140,9 @@ model User {
   squadInviteHoldsHeld      SquadInviteHold[]         @relation("SquadInviteHoldHolder")
   squadInviteHoldsFrom      SquadInviteHold[]         @relation("SquadInviteHoldFrom")
   coinLedger                CoinLedgerEntry[]
+  coinGrants                CoinGrant[]
+  userMetrics               UserMetric[]
+  userAchievements          UserAchievement[]
   walletLedger              WalletLedgerEntry[]
   paymentIntents            PaymentIntent[]
   walletWithdrawals         WalletWithdrawalRequest[] @relation("WalletWithdrawalUser")
@@ -2650,6 +2657,80 @@ model UserPostingRestriction {
   reason          String
   issuedByAdminId String
   issuedAt        DateTime  @default(now())
+}
+
+/// A coin reward that is earned but not necessarily paid yet. `refKey` makes
+/// every reward idempotent (one per user per thing). Engagement rewards wait
+/// here until the player is trusted (`User.trustedAt`) and any hold has passed.
+model CoinGrant {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  reason        String
+  refKey        String
+  /// pending | paid | void
+  status        String    @default("pending")
+  requiresTrust Boolean   @default(true)
+  /// Counts toward the rolling 24h cap on engagement coins.
+  dailyCapped   Boolean   @default(false)
+  releaseAt     DateTime?
+  bookingId     String?
+  createdAt     DateTime  @default(now())
+  paidAt        DateTime?
+
+  @@unique([userId, refKey])
+  @@index([status, releaseAt])
+  @@index([userId, status])
+}
+
+/// Lifetime counter behind the achievements (games won, matches hosted...).
+model UserMetric {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metric    String
+  value     Int      @default(0)
+  /// Cairo calendar day of `dayCount`, for the per-day cap of a metric.
+  dayKey    String?
+  dayCount  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, metric])
+}
+
+/// Admin-editable lifetime prize: reach `target` on `metric`, get `rewardCoins` once.
+model Achievement {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  metric      String
+  target      Int
+  rewardCoins Int
+  titleEn     String
+  titleAr     String
+  descEn      String   @default("")
+  descAr      String   @default("")
+  icon        String?
+  /// games | matches | bookings | community
+  category    String   @default("games")
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  completions UserAchievement[]
+
+  @@index([metric, active])
+}
+
+model UserAchievement {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  completedAt   DateTime    @default(now())
+
+  @@unique([userId, achievementId])
 }
 
 model CoinsRewardRule {

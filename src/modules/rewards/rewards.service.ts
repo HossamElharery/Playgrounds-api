@@ -12,12 +12,20 @@ import { UpdateQuestDto } from './dto/update-quest.dto';
 import { CreateBadgeDto } from './dto/create-badge.dto';
 import { UpdateBadgeDto } from './dto/update-badge.dto';
 import { UpdatePlatformSettingDto } from './dto/update-platform-setting.dto';
+import { AchievementsService } from './achievements.service';
+import { CoinGrantService } from './coin-grant.service';
+import {
+  DAILY_CHECKIN_COINS,
+  REFERRAL_BONUS_COINS,
+  REFERRAL_HOLD_MS,
+  REFERRAL_MONTHLY_CAP,
+  REVIEW_PHOTO_BONUS_COINS,
+  TRUST_MIN_BOOKING_TOTAL,
+  cairoDayKey,
+} from './coins-policy';
 
-const DAILY_CHECKIN_COINS = 5;
 const STREAK_MAX_MULTIPLIER = 3;
 const STREAK_FREEZE_COST_COINS = 400;
-const REFERRAL_BONUS_COINS = 300;
-const REVIEW_PHOTO_BONUS_COINS = 50;
 
 interface QuestScope {
   activityKind?: string; // 'field-sport' | 'racket-court' | 'gaming-station' | 'table-game'
@@ -30,7 +38,8 @@ interface QuestRule {
     | 'checkin.daily'
     | 'match.mvp.awarded'
     | 'referral.completed'
-    | 'review.submitted';
+    | 'review.submitted'
+    | 'review.photo';
   target: number;
   scope?: QuestScope | null;
 }
@@ -54,10 +63,14 @@ function isoWeekKey(date: Date): string {
 
 @Injectable()
 export class RewardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly grants: CoinGrantService,
+    private readonly achievements: AchievementsService,
+  ) {}
 
   async wallet(userId: string) {
-    const [user, ledger] = await Promise.all([
+    const [user, ledger, pending] = await Promise.all([
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
         select: { coinsBalance: true, streakCount: true, streakFreezes: true },
@@ -67,12 +80,16 @@ export class RewardsService {
         orderBy: { createdAt: 'desc' },
         take: 50,
       }),
+      this.grants.pendingSummary(userId),
     ]);
     return {
       balance: user.coinsBalance,
       streak: user.streakCount,
       streakFreezes: user.streakFreezes,
       ledger,
+      pendingCoins: pending.pendingCoins,
+      pendingCount: pending.pendingCount,
+      trusted: pending.trusted,
     };
   }
 
@@ -81,9 +98,9 @@ export class RewardsService {
       where: { id: userId },
     });
     const now = new Date();
+    const today = cairoDayKey(now.getTime());
     const lastCheckIn = user.streakUpdatedAt;
-    const isSameDay =
-      lastCheckIn && lastCheckIn.toDateString() === now.toDateString();
+    const isSameDay = !!lastCheckIn && cairoDayKey(lastCheckIn.getTime()) === today;
     if (isSameDay) {
       return {
         coins: 0,
@@ -94,8 +111,9 @@ export class RewardsService {
       };
     }
 
+    const yesterday = cairoDayKey(Date.parse(`${today}T12:00:00Z`) - 86_400_000);
     const isConsecutiveDay =
-      lastCheckIn && now.getTime() - lastCheckIn.getTime() < 48 * 3_600_000;
+      !!lastCheckIn && cairoDayKey(lastCheckIn.getTime()) === yesterday;
     const canUseFreeze =
       !isConsecutiveDay && !!lastCheckIn && user.streakFreezes > 0;
     const newStreak =
@@ -109,27 +127,44 @@ export class RewardsService {
     );
     const coins = DAILY_CHECKIN_COINS * multiplier;
 
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          coinsBalance: { increment: coins },
-          streakCount: newStreak,
-          streakUpdatedAt: now,
-          streakFreezes,
-        },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: { userId, amount: coins, reason: 'daily_checkin' },
-      }),
-    ]);
+    // Two taps (or two devices) at the same moment: only the one that still
+    // sees the old check-in time moves the streak, so the day pays once.
+    const claimed = await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        streakUpdatedAt: lastCheckIn ?? null,
+      },
+      data: {
+        streakCount: newStreak,
+        streakUpdatedAt: now,
+        streakFreezes,
+      },
+    });
+    if (claimed.count !== 1) {
+      return {
+        coins: 0,
+        streak: user.streakCount,
+        streakFreezes: user.streakFreezes,
+        usedFreeze: false,
+        alreadyCheckedIn: true,
+      };
+    }
+    const outcome = await this.grants.grant({
+      userId,
+      amount: coins,
+      reason: 'daily_checkin',
+      refKey: `checkin:${today}`,
+      dailyCapped: true,
+    });
 
     await this.bumpQuestsForEvent(userId, 'checkin.daily');
+    await this.achievements.setBest(userId, 'streak.best', newStreak);
     if (newStreak === 7) await this.awardBadgeIfExists(userId, 'week-streak');
     if (newStreak === 30) await this.awardBadgeIfExists(userId, 'iron-man');
 
     return {
-      coins,
+      coins: outcome.status === 'paid' ? outcome.amount : 0,
+      pendingCoins: outcome.status === 'pending' ? outcome.amount : 0,
       streak: newStreak,
       streakFreezes,
       usedFreeze: canUseFreeze,
@@ -138,28 +173,27 @@ export class RewardsService {
   }
 
   async purchaseStreakFreeze(userId: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-    });
-    if (user.coinsBalance < STREAK_FREEZE_COST_COINS) {
-      throw new BadRequestException('Not enough coins');
-    }
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: userId },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const spent = await tx.user.updateMany({
+        where: { id: userId, coinsBalance: { gte: STREAK_FREEZE_COST_COINS } },
         data: {
           coinsBalance: { decrement: STREAK_FREEZE_COST_COINS },
           streakFreezes: { increment: 1 },
         },
-      }),
-      this.prisma.coinLedgerEntry.create({
+      });
+      if (spent.count !== 1) throw new BadRequestException('Not enough coins');
+      await tx.coinLedgerEntry.create({
         data: {
           userId,
           amount: -STREAK_FREEZE_COST_COINS,
           reason: 'streak_freeze_purchase',
         },
-      }),
-    ]);
+      });
+      return tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { coinsBalance: true, streakFreezes: true },
+      });
+    });
     return {
       coinsBalance: updated.coinsBalance,
       streakFreezes: updated.streakFreezes,
@@ -253,19 +287,13 @@ export class RewardsService {
     });
 
     if (completed) {
-      await this.prisma.$transaction([
-        this.prisma.user.update({
-          where: { id: userId },
-          data: { coinsBalance: { increment: quest.rewardCoins } },
-        }),
-        this.prisma.coinLedgerEntry.create({
-          data: {
-            userId,
-            amount: quest.rewardCoins,
-            reason: `quest:${quest.key}`,
-          },
-        }),
-      ]);
+      // One reward per quest per week, however many requests finish it at once.
+      await this.grants.grant({
+        userId,
+        amount: quest.rewardCoins,
+        reason: `quest:${quest.key}`,
+        refKey: `quest:${quest.key}:${weekKey}`,
+      });
     }
   }
 
@@ -572,7 +600,22 @@ export class RewardsService {
     userId: string;
     courtId: string;
     isFirstBooking: boolean;
+    /** What the booking cost (minor units). Free / token bookings prove nothing. */
+    totalAmount: number;
+    source?: string;
   }) {
+    const qualifying =
+      (params.source ?? 'platform') === 'platform' &&
+      params.totalAmount >= TRUST_MIN_BOOKING_TOTAL;
+    // The first paid booking checked in at a venue is what makes a player
+    // "real": it releases every reward that was waiting, and settles referrals.
+    const becameTrusted = qualifying
+      ? await this.grants.markTrusted(params.userId)
+      : false;
+    if (params.isFirstBooking) {
+      await this.awardBadgeIfExists(params.userId, 'first-timer');
+    }
+    if (!qualifying) return;
     const court = await this.prisma.court.findUnique({
       where: { id: params.courtId },
       include: { sport: true },
@@ -582,8 +625,8 @@ export class RewardsService {
       activityKind: court?.sport.activityKind,
     };
     await this.bumpQuestsForEvent(params.userId, 'booking.completed', ctx);
-    if (params.isFirstBooking) {
-      await this.awardBadgeIfExists(params.userId, 'first-timer');
+    await this.achievements.bump(params.userId, 'booking.completed');
+    if (becameTrusted) {
       await this.settleReferralIfAny(params.userId, params.bookingId);
     }
   }
@@ -593,40 +636,42 @@ export class RewardsService {
       where: { id: userId },
       select: { referredById: true },
     });
-    if (!user?.referredById) return;
+    if (!user?.referredById || user.referredById === userId) return;
     const referrerId = user.referredById;
 
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: userId },
-        data: { coinsBalance: { increment: REFERRAL_BONUS_COINS } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: {
-          userId,
-          amount: REFERRAL_BONUS_COINS,
-          reason: 'referral_bonus',
-          bookingId,
-        },
-      }),
-      this.prisma.user.update({
-        where: { id: referrerId },
-        data: { coinsBalance: { increment: REFERRAL_BONUS_COINS } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: {
-          userId: referrerId,
-          amount: REFERRAL_BONUS_COINS,
-          reason: 'referral_bonus',
-          bookingId,
-        },
-      }),
-    ]);
+    // The new player is paid for the first paid booking; the inviter only
+    // for a limited number of friends a month, and both after a hold.
+    await this.grants.grant({
+      userId,
+      amount: REFERRAL_BONUS_COINS,
+      reason: 'referral_bonus',
+      refKey: 'referral:joined',
+      holdMs: REFERRAL_HOLD_MS,
+      bookingId,
+    });
+    const recent = await this.prisma.coinGrant.count({
+      where: {
+        userId: referrerId,
+        refKey: { startsWith: 'referral:invited:' },
+        createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+      },
+    });
+    if (recent < REFERRAL_MONTHLY_CAP) {
+      await this.grants.grant({
+        userId: referrerId,
+        amount: REFERRAL_BONUS_COINS,
+        reason: 'referral_bonus',
+        refKey: `referral:invited:${userId}`,
+        holdMs: REFERRAL_HOLD_MS,
+        bookingId,
+      });
+    }
     await this.bumpQuestsForEvent(referrerId, 'referral.completed');
   }
 
-  async onMvpAwarded(userId: string, newMvpCount: number) {
+  async onMvpAwarded(userId: string, newMvpCount: number, verified = true) {
     await this.bumpQuestsForEvent(userId, 'match.mvp.awarded');
+    if (verified) await this.achievements.bump(userId, 'mvp.awarded');
     if (newMvpCount >= 5) await this.awardBadgeIfExists(userId, 'mvp-x5');
   }
 
@@ -637,19 +682,14 @@ export class RewardsService {
   ) {
     await this.bumpQuestsForEvent(userId, 'review.submitted');
     if (!hasPhoto) return;
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: userId },
-        data: { coinsBalance: { increment: REVIEW_PHOTO_BONUS_COINS } },
-      }),
-      this.prisma.coinLedgerEntry.create({
-        data: {
-          userId,
-          amount: REVIEW_PHOTO_BONUS_COINS,
-          reason: 'review_with_photo',
-          bookingId,
-        },
-      }),
-    ]);
+    await this.bumpQuestsForEvent(userId, 'review.photo');
+    await this.achievements.bump(userId, 'review.photo');
+    await this.grants.grant({
+      userId,
+      amount: REVIEW_PHOTO_BONUS_COINS,
+      reason: 'review_with_photo',
+      refKey: `review_photo:${bookingId}`,
+      bookingId,
+    });
   }
 }

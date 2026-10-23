@@ -83,7 +83,7 @@ describe('SquadService membershipEnded$', () => {
     const left = jest.spyOn(world, 'memberLeft');
     const emptied = jest.spyOn(world, 'squadEmptied');
     const morphs = { equipped$: new Subject() } as unknown as MorphsService;
-    new LobbyWorldModule(service, morphs, world).onModuleInit();
+    new LobbyWorldModule(service, morphs, world, { record: jest.fn() } as never).onModuleInit();
     service.membershipEnded$.next({
       squadId: 's1',
       userId: 'u2',

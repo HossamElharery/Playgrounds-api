@@ -7,8 +7,11 @@ describe('Match lifecycle regressions', () => {
     sportCategory: { findFirst: jest.fn().mockResolvedValue({ id: 'sport-football' }) },
     matchPostJoinRequest: { findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
     chatThreadParticipant: { deleteMany: jest.fn() },
-    user: { updateMany: jest.fn() },
+    user: { updateMany: jest.fn(), findMany: jest.fn() },
+    booking: { findFirst: jest.fn() },
   };
+  const grants = { grant: jest.fn() };
+  const achievements = { bump: jest.fn() };
   const notifications = { create: jest.fn().mockResolvedValue(null) };
   let service: MatchPostsService;
   beforeEach(() => {
@@ -18,7 +21,7 @@ describe('Match lifecycle regressions', () => {
     prisma.matchPost.updateMany.mockResolvedValue({ count: 0 });
     prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'open', dateTime: new Date(Date.now() + 86_400_000), joinRequests: [{ userId: 'member' }] });
     notifications.create.mockResolvedValue(null);
-    service = new MatchPostsService(prisma as never, {} as never, notifications as never);
+    service = new MatchPostsService(prisma as never, {} as never, notifications as never, grants as never, achievements as never);
     jest.spyOn(service, 'getById').mockResolvedValue({} as never);
   });
   it('tells the feed list whether the viewer already requested, is approved, or organizes each post', async () => {
@@ -93,16 +96,68 @@ describe('Match lifecycle regressions', () => {
     expect(prisma.matchPostJoinRequest.create).not.toHaveBeenCalled();
   });
   it('increments player statistics only for the first successful completion', async () => {
+    prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'open', dateTime: new Date(Date.now() - 3_600_000), joinRequests: [{ userId: 'member' }] });
     prisma.matchPost.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     await service.markPlayed('captain', 'match');
-    prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'played', joinRequests: [] });
+    prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'played', dateTime: new Date(Date.now() - 3_600_000), joinRequests: [] });
     await service.markPlayed('captain', 'match');
     expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
   });
   it('cannot complete a cancelled match', async () => {
-    prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'cancelled', joinRequests: [] });
+    prisma.matchPost.findUnique.mockResolvedValue({ id: 'match', authorId: 'captain', status: 'cancelled', dateTime: new Date(Date.now() - 3_600_000), joinRequests: [] });
     prisma.matchPost.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.markPlayed('captain', 'match')).rejects.toThrow('already closed');
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  describe('match rewards', () => {
+    const played = (extra: object = {}) => ({
+      id: 'match', authorId: 'captain', status: 'open', courtId: 'court-1',
+      dateTime: new Date(Date.now() - 3_600_000), joinRequests: [{ userId: 'member' }], ...extra,
+    });
+    beforeEach(() => {
+      prisma.matchPost.updateMany.mockResolvedValue({ count: 1 });
+      prisma.user.findMany.mockResolvedValue([{ id: 'captain' }, { id: 'member' }]);
+    });
+
+    it('refuses to close a match that has not started, so a fake match cannot be farmed early', async () => {
+      prisma.matchPost.findUnique.mockResolvedValue(played({ dateTime: new Date(Date.now() + 3_600_000) }));
+      await expect(service.markPlayed('captain', 'match')).rejects.toThrow('not started');
+      expect(prisma.matchPost.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('pays nothing when no venue checked a booking in for the match', async () => {
+      prisma.matchPost.findUnique.mockResolvedValue(played());
+      prisma.booking.findFirst.mockResolvedValue(null);
+      await service.markPlayed('captain', 'match');
+      expect(achievements.bump).not.toHaveBeenCalled();
+      expect(grants.grant).not.toHaveBeenCalled();
+    });
+
+    it('pays nothing for a match without a court', async () => {
+      prisma.matchPost.findUnique.mockResolvedValue(played({ courtId: null }));
+      await service.markPlayed('captain', 'match');
+      expect(prisma.booking.findFirst).not.toHaveBeenCalled();
+      expect(grants.grant).not.toHaveBeenCalled();
+    });
+
+    it('rewards organizer and players once a checked-in booking proves the match', async () => {
+      prisma.matchPost.findUnique.mockResolvedValue(played());
+      prisma.booking.findFirst.mockResolvedValue({ id: 'b1' });
+      await service.markPlayed('captain', 'match');
+      expect(achievements.bump).toHaveBeenCalledWith('captain', 'match.hosted');
+      expect(achievements.bump).toHaveBeenCalledWith('member', 'match.played');
+      expect(grants.grant).toHaveBeenCalledWith(expect.objectContaining({ userId: 'member', refKey: 'match_played:match', dailyCapped: true }));
+      const where = prisma.booking.findFirst.mock.calls[0][0].where;
+      expect(where.checkedInAt).toEqual({ not: null });
+      expect(where.courtId).toBe('court-1');
+    });
+
+    it('does not reward a host playing alone', async () => {
+      prisma.matchPost.findUnique.mockResolvedValue(played({ joinRequests: [] }));
+      prisma.booking.findFirst.mockResolvedValue({ id: 'b1' });
+      await service.markPlayed('captain', 'match');
+      expect(achievements.bump).not.toHaveBeenCalled();
+    });
   });
 });
