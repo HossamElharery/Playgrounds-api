@@ -1,5 +1,30 @@
 import { RealtimeGateway } from './realtime.gateway';
 
+describe('RealtimeGateway presence heartbeat persistence', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('coalesces frequent heartbeats into one database write per minute', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-25T04:00:00Z') });
+    const prisma: any = { user: { update: jest.fn(async () => ({})) } };
+    const gateway = new RealtimeGateway(
+      {} as any,
+      {} as any,
+      prisma,
+      {} as any,
+    );
+    const client: any = { data: { userId: 'u1' } };
+
+    await gateway.heartbeat(client);
+    jest.advanceTimersByTime(25_000);
+    await gateway.heartbeat(client);
+    jest.advanceTimersByTime(35_000);
+    await gateway.heartbeat(client);
+
+    expect(prisma.user.update).toHaveBeenCalledTimes(2);
+    gateway.onModuleDestroy();
+  });
+});
+
 describe('RealtimeGateway voice relay ordering', () => {
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

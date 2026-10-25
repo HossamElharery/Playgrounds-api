@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TurnstileService } from '../ai/turnstile.service';
 import { camoEnabled } from './camo-flags';
 import { CamoSettingsService } from './camo-settings.service';
+import { withJobLock } from '../../common/utils/job-lock.util';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CAMO_GUEST_RETENTION_MS = 30 * DAY_MS;
@@ -26,7 +27,12 @@ export class CamoGuestService {
     private readonly settings: CamoSettingsService,
   ) {}
 
-  private bump(map: Map<string, number[]>, key: string, limit: number, now: number): boolean {
+  private bump(
+    map: Map<string, number[]>,
+    key: string,
+    limit: number,
+    now: number,
+  ): boolean {
     const list = (map.get(key) ?? []).filter((t) => now - t < DAY_MS);
     if (list.length >= limit) {
       map.set(key, list);
@@ -39,22 +45,61 @@ export class CamoGuestService {
   }
 
   /** Creates the guest row; the caller issues the token pair. */
-  async create(input: { name?: string; lang?: 'ar' | 'en'; turnstileToken?: string; deviceId?: string; ip?: string }, now = Date.now()): Promise<User> {
-    if (!camoEnabled(this.settings.flagSource(this.config))) throw new ApiException(HttpStatus.NOT_FOUND, 'CAMO_DISABLED', 'The game is not available');
+  async create(
+    input: {
+      name?: string;
+      lang?: 'ar' | 'en';
+      turnstileToken?: string;
+      deviceId?: string;
+      ip?: string;
+    },
+    now = Date.now(),
+  ): Promise<User> {
+    if (!camoEnabled(this.settings.flagSource(this.config)))
+      throw new ApiException(
+        HttpStatus.NOT_FOUND,
+        'CAMO_DISABLED',
+        'The game is not available',
+      );
     if (this.turnstile.enabled) {
-      const verdict = await this.turnstile.verify(input.turnstileToken ?? '', input.ip);
-      if (verdict === 'failed') throw new ApiException(HttpStatus.FORBIDDEN, 'CHALLENGE_FAILED', 'Challenge failed');
+      const verdict = await this.turnstile.verify(
+        input.turnstileToken ?? '',
+        input.ip,
+      );
+      if (verdict === 'failed')
+        throw new ApiException(
+          HttpStatus.FORBIDDEN,
+          'CHALLENGE_FAILED',
+          'Challenge failed',
+        );
     }
     const s = await this.settings.load();
     if (input.ip && !this.bump(this.byIp, input.ip, s.guestPerIpPerDay, now)) {
-      throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, 'GUEST_LIMIT_IP', 'Too many guests from this network today');
+      throw new ApiException(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'GUEST_LIMIT_IP',
+        'Too many guests from this network today',
+      );
     }
-    if (input.deviceId && !this.bump(this.byDevice, input.deviceId, s.guestPerDevicePerDay, now)) {
-      throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, 'GUEST_LIMIT_DEVICE', 'Too many guests from this device today');
+    if (
+      input.deviceId &&
+      !this.bump(this.byDevice, input.deviceId, s.guestPerDevicePerDay, now)
+    ) {
+      throw new ApiException(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'GUEST_LIMIT_DEVICE',
+        'Too many guests from this device today',
+      );
     }
     const lang = input.lang === 'en' ? 'en' : 'ar';
     return this.prisma.user.create({
-      data: { name: guestDisplayName(input.name, lang), isGuest: true, guestSource: 'camo_play', roles: ['player'], preferredLang: lang },
+      data: {
+        name: guestDisplayName(input.name, lang),
+        isGuest: true,
+        guestSource: 'camo_play',
+        roles: ['player'],
+        preferredLang: lang,
+      },
     });
   }
 
@@ -64,6 +109,12 @@ export class CamoGuestService {
    * business of `SquadService.sweepGuests`, never of this job.
    */
   @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  async sweepScheduled(): Promise<void> {
+    await withJobLock(this.prisma, 'camo-guest-sweep', async () => {
+      await this.sweep();
+    });
+  }
+
   async sweep(now = Date.now()): Promise<number> {
     const cutoff = new Date(now - CAMO_GUEST_RETENTION_MS);
     const where = {
@@ -74,19 +125,30 @@ export class CamoGuestService {
       bookings: { none: {} },
       squadMemberships: { none: {} },
     };
-    const stale = await this.prisma.user.findMany({ where, select: { id: true }, take: 500 });
+    const stale = await this.prisma.user.findMany({
+      where,
+      select: { id: true },
+      take: 500,
+    });
     let removed = 0;
     for (const g of stale) {
       try {
         await this.prisma.$transaction(async (tx) => {
-          const current = await tx.user.findFirst({ where: { ...where, id: g.id }, select: { id: true } });
+          const current = await tx.user.findFirst({
+            where: { ...where, id: g.id },
+            select: { id: true },
+          });
           if (!current) return;
-          await tx.friendship.deleteMany({ where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] } });
+          await tx.friendship.deleteMany({
+            where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] },
+          });
           await tx.user.delete({ where: { id: g.id, isGuest: true } });
           removed++;
         });
       } catch (err) {
-        this.logger.warn(`guest ${g.id} not swept: ${err instanceof Error ? err.message : err}`);
+        this.logger.warn(
+          `guest ${g.id} not swept: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
     return removed;

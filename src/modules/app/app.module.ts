@@ -61,11 +61,14 @@ import { CallsModule } from '../calls/calls.module';
     }),
     SentryModule.forRoot(),
     ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60_000, limit: 120 }],
-      skipIf: (ctx) => {
-        const req = ctx.switchToHttp().getRequest<{ method?: string; user?: unknown }>();
-        return req.method === 'GET' && Boolean(req.user);
-      },
+      // Bound bursts as well as sustained traffic. The previous configuration
+      // skipped every authenticated GET, which meant a valid account could
+      // bypass the global protection entirely.
+      throttlers: [
+        { name: 'burst', ttl: 1_000, limit: 30 },
+        { name: 'short', ttl: 10_000, limit: 200 },
+        { name: 'default', ttl: 60_000, limit: 600 },
+      ],
     }),
     ScheduleModule.forRoot(),
     PrismaModule,

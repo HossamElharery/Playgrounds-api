@@ -27,11 +27,19 @@ export class MediaUploadController {
 
   @Post('uploads')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  request(@CurrentUser() user: AuthenticatedUser, @Body() dto: RequestUploadDto) {
+  request(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RequestUploadDto,
+  ) {
     return this.media.requestUpload(user.id, dto);
   }
 
   @Post('uploads/:id/file')
+  @Throttle({
+    burst: { limit: 2, ttl: 1_000 },
+    short: { limit: 4, ttl: 10_000 },
+    default: { limit: 6, ttl: 60_000 },
+  })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),

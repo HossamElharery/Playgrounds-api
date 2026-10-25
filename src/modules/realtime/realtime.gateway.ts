@@ -35,6 +35,7 @@ export const LOBBY_EMOTE_IDS = [
 export type LobbyEmoteId = (typeof LOBBY_EMOTE_IDS)[number];
 const EMOTE_IDS: ReadonlySet<string> = new Set(LOBBY_EMOTE_IDS);
 const EMOTE_PRUNE_EVERY_MS = 60_000;
+const PRESENCE_DB_WRITE_MS = 60_000;
 
 @Injectable()
 @WebSocketGateway({
@@ -46,6 +47,7 @@ export class RealtimeGateway
 {
   private readonly logger = new Logger(RealtimeGateway.name);
   private readonly lastEmoteAt = new Map<string, number>();
+  private readonly lastPresenceWriteAt = new Map<string, number>();
   private emotePruneTimer: NodeJS.Timeout | null = null;
 
   @WebSocketServer()
@@ -103,6 +105,8 @@ export class RealtimeGateway
         where: { id: userId },
         data: { lastSeenAt: new Date() },
       });
+      this.lastPresenceWriteAt.set(userId, Date.now());
+      this.scheduleEmotePrune();
       await this.broadcastPresence(userId);
     } catch {
       client.disconnect(true);
@@ -158,10 +162,15 @@ export class RealtimeGateway
     await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId) return;
+    const now = Date.now();
+    const previous = this.lastPresenceWriteAt.get(userId) ?? 0;
+    if (now - previous < PRESENCE_DB_WRITE_MS) return;
     await this.prisma.user.update({
       where: { id: userId },
-      data: { lastSeenAt: new Date() },
+      data: { lastSeenAt: new Date(now) },
     });
+    this.lastPresenceWriteAt.set(userId, now);
+    this.scheduleEmotePrune();
   }
 
   @SubscribeMessage('chat.thread.join')
@@ -220,7 +229,9 @@ export class RealtimeGateway
       const userId = this.authedUserId(client);
       const venueId = typeof data?.venueId === 'string' ? data.venueId : '';
       if (!userId || !/^[0-9a-f-]{36}$/i.test(venueId)) return;
-      const watched = [...client.rooms].filter((r) => r.startsWith('venue-slots:'));
+      const watched = [...client.rooms].filter((r) =>
+        r.startsWith('venue-slots:'),
+      );
       if (watched.includes(slotsRoom(venueId))) return;
       if (watched.length >= 5) return;
       const venue = await this.prisma.venue.findFirst({
@@ -240,7 +251,8 @@ export class RealtimeGateway
     @MessageBody() data: { venueId?: unknown },
   ) {
     return this.inOrder(client, async () => {
-      if (typeof data?.venueId === 'string') await client.leave(slotsRoom(data.venueId));
+      if (typeof data?.venueId === 'string')
+        await client.leave(slotsRoom(data.venueId));
     });
   }
 
@@ -334,6 +346,7 @@ export class RealtimeGateway
   onModuleDestroy(): void {
     if (this.emotePruneTimer) clearInterval(this.emotePruneTimer);
     this.emotePruneTimer = null;
+    this.lastPresenceWriteAt.clear();
   }
 
   private scheduleEmotePrune(): void {
@@ -342,6 +355,10 @@ export class RealtimeGateway
       const cutoff = Date.now() - SQUAD_EMOTE_COOLDOWN_MS;
       for (const [userId, at] of this.lastEmoteAt) {
         if (at < cutoff) this.lastEmoteAt.delete(userId);
+      }
+      const presenceCutoff = Date.now() - PRESENCE_DB_WRITE_MS * 2;
+      for (const [userId, at] of this.lastPresenceWriteAt) {
+        if (at < presenceCutoff) this.lastPresenceWriteAt.delete(userId);
       }
       if (!this.lastEmoteAt.size) this.onModuleDestroy();
     }, EMOTE_PRUNE_EVERY_MS);
@@ -500,7 +517,8 @@ export class RealtimeGateway
         this.emitToRoom(`squad:${data.squadId}`, {
           type: 'voice.hangup',
           squadId: data.squadId,
-          fromUserId: this.voiceScopes?.senderKey(data.squadId, userId) ?? userId,
+          fromUserId:
+            this.voiceScopes?.senderKey(data.squadId, userId) ?? userId,
         });
       }
     });

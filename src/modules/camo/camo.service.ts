@@ -1,14 +1,33 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { CAMO_PROTOCOL_VERSION } from './camo-constants';
-import { camoDailyEnabled, camoDraining, camoEnabled, camoPublicMatchEnabled, camoVoiceEnabled } from './camo-flags';
-import { CamoHost, type CamoUser, type HostPolicy, type HostSink, type JoinResult } from './camo-host';
+import {
+  camoDailyEnabled,
+  camoDraining,
+  camoEnabled,
+  camoPublicMatchEnabled,
+  camoVoiceEnabled,
+} from './camo-flags';
+import {
+  CamoHost,
+  type CamoUser,
+  type HostPolicy,
+  type HostSink,
+  type JoinResult,
+} from './camo-host';
 import { CamoProgressService } from './camo-progress.service';
 import { CamoPuzzleService } from './camo-puzzle.service';
 import { CamoModerationService } from './camo-moderation.service';
 import { CamoSettingsService } from './camo-settings.service';
 import { ranking, type CamoMatch } from './camo-rules';
+import { isShutdownDraining } from '../../common/lifecycle/shutdown-state';
+import type { CosmeticState } from './camo-progress';
 
 const GUEST_MORPH = 'guest';
 const CLASSIC = 'classic';
@@ -33,7 +52,10 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
   private sink: HostSink | null = null;
   private readonly blocked = new Map<string, Set<string>>();
   private readonly denied = new Map<string, string | null>();
-  private readonly userCache = new Map<string, { at: number; user: CamoUser }>();
+  private readonly userCache = new Map<
+    string,
+    { at: number; user: CamoUser }
+  >();
 
   constructor(
     private readonly config: ConfigService,
@@ -45,7 +67,8 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
   ) {
     this.flags = this.settingsService.flagSource(this.config);
     const policy: HostPolicy = {
-      avoid: (a, b) => !!(this.blocked.get(a)?.has(b) || this.blocked.get(b)?.has(a)),
+      avoid: (a, b) =>
+        !!(this.blocked.get(a)?.has(b) || this.blocked.get(b)?.has(a)),
       denied: (u) => this.denied.get(u) ?? null,
     };
     this.host = new CamoHost({
@@ -57,7 +80,12 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
       voiceOn: () => camoVoiceEnabled(this.flags),
       votes: () => this.settingsService.current,
       onModeration: (e) => this.moderation.record(e),
-      onMatchEnd: (m) => void (m.puzzle ? this.puzzles.finished(m) : m.tutorial || m.creator ? undefined : this.persist(m)),
+      onMatchEnd: (m) =>
+        void (m.puzzle
+          ? this.puzzles.finished(m)
+          : m.tutorial || m.creator
+            ? undefined
+            : this.persist(m)),
     });
   }
 
@@ -66,7 +94,10 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     void this.settingsService.load();
     // other API instances and the admin tab write the settings: pick changes up every 30 s
-    this.settingsTimer = setInterval(() => void this.settingsService.load(true), 30_000);
+    this.settingsTimer = setInterval(
+      () => void this.settingsService.load(true),
+      30_000,
+    );
     this.settingsTimer.unref?.();
     this.host.start();
   }
@@ -76,13 +107,17 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     this.host.dispose();
   }
 
-  settings(): ReturnType<CamoSettingsService['load']> extends Promise<infer T> ? T : never {
+  settings(): ReturnType<CamoSettingsService['load']> extends Promise<infer T>
+    ? T
+    : never {
     return this.settingsService.current;
   }
 
   attachSink(sink: HostSink | null): void {
     this.sink = sink;
-    this.puzzles.notifyCreator = sink ? (u, p) => sink.emit(u, 'camo.challenge.result', p) : null;
+    this.puzzles.notifyCreator = sink
+      ? (u, p) => sink.emit(u, 'camo.challenge.result', p)
+      : null;
   }
 
   features(): CamoFeatures {
@@ -115,16 +150,35 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
     if (hit && Date.now() - hit.at < 60_000) return hit.user;
     const u = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, isGuest: true, status: true, avatarConfig: true, morphProfile: { select: { equippedMorphId: true } } },
+      select: {
+        id: true,
+        name: true,
+        isGuest: true,
+        status: true,
+        avatarConfig: true,
+        morphProfile: { select: { equippedMorphId: true } },
+      },
     });
     if (!u || u.status !== 'active') return null;
     const unsupported = this.settingsService.current.camoUnsupported;
-    let morphId = u.isGuest ? GUEST_MORPH : (u.morphProfile?.equippedMorphId ?? CLASSIC);
+    let morphId = u.isGuest
+      ? GUEST_MORPH
+      : (u.morphProfile?.equippedMorphId ?? CLASSIC);
     // Server-side safety net: a body that failed the M0 tests plays as classic in the match only.
     if (unsupported.includes(morphId)) morphId = CLASSIC;
-    const looks = await this.progress.looksOf([u.id]).catch(() => ({}) as Record<string, { level: number; equipped: Record<string, string> }>);
+    const looks: Record<
+      string,
+      { level: number; equipped: CosmeticState['equipped'] }
+    > = await this.progress.looksOf([u.id]).catch(() => ({}));
     const lk = looks[u.id];
-    const user: CamoUser = { userId: u.id, name: u.name, morphId, guest: u.isGuest, look: morphId === CLASSIC ? u.avatarConfig : undefined, flair: lk ? { lv: lk.level, eq: lk.equipped as Record<string, string> } : { lv: 1, eq: {} } };
+    const user: CamoUser = {
+      userId: u.id,
+      name: u.name,
+      morphId,
+      guest: u.isGuest,
+      look: morphId === CLASSIC ? u.avatarConfig : undefined,
+      flair: lk ? { lv: lk.level, eq: lk.equipped } : { lv: 1, eq: {} },
+    };
     this.userCache.set(userId, { at: Date.now(), user });
     return user;
   }
@@ -133,19 +187,40 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
   async prepare(userId: string): Promise<void> {
     const now = new Date();
     const [blocks, avoid, ban] = await Promise.all([
-      this.prisma.userBlock.findMany({ where: { OR: [{ blockerId: userId }, { blockedId: userId }] }, select: { blockerId: true, blockedId: true }, take: 500 }),
-      this.prisma.camoMatchmakingAvoid.findMany({ where: { OR: [{ userId }, { avoidUserId: userId }], until: { gt: now } }, select: { userId: true, avoidUserId: true } }),
-      this.prisma.camoSanction.findFirst({ where: { userId, kind: 'camo_ban', OR: [{ until: null }, { until: { gt: now } }] }, select: { id: true } }),
+      this.prisma.userBlock.findMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+        select: { blockerId: true, blockedId: true },
+        take: 500,
+      }),
+      this.prisma.camoMatchmakingAvoid.findMany({
+        where: {
+          OR: [{ userId }, { avoidUserId: userId }],
+          until: { gt: now },
+        },
+        select: { userId: true, avoidUserId: true },
+      }),
+      this.prisma.camoSanction.findFirst({
+        where: {
+          userId,
+          kind: 'camo_ban',
+          OR: [{ until: null }, { until: { gt: now } }],
+        },
+        select: { id: true },
+      }),
     ]);
     const set = new Set<string>();
-    for (const b of blocks) set.add(b.blockerId === userId ? b.blockedId : b.blockerId);
-    for (const a of avoid) set.add(a.userId === userId ? a.avoidUserId : a.userId);
+    for (const b of blocks)
+      set.add(b.blockerId === userId ? b.blockedId : b.blockerId);
+    for (const a of avoid)
+      set.add(a.userId === userId ? a.avoidUserId : a.userId);
     this.blocked.set(userId, set);
     this.denied.set(userId, ban ? 'camo_ban' : null);
   }
 
   drainResult(): JoinResult | null {
-    return camoDraining(this.flags) ? { ok: false, reason: 'drain' } : null;
+    return camoDraining(this.flags) || isShutdownDraining()
+      ? { ok: false, reason: 'drain' }
+      : null;
   }
 
   /** Stores a finished match and the players' running stats. Bots earn nothing and are not counted as real players. */
@@ -187,7 +262,16 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
         const won = board.get(p.eid) === 1;
         await this.prisma.camoStats.upsert({
           where: { userId: p.userId },
-          create: { userId: p.userId, matches: 1, wins: won ? 1 : 0, caughtCount: p.match.caught, cardsGiven: p.match.cardsGiven, yellows: p.match.yellows, bestSurvivalMs: p.match.bestSurvivalMs, streak: won ? 1 : 0 },
+          create: {
+            userId: p.userId,
+            matches: 1,
+            wins: won ? 1 : 0,
+            caughtCount: p.match.caught,
+            cardsGiven: p.match.cardsGiven,
+            yellows: p.match.yellows,
+            bestSurvivalMs: p.match.bestSurvivalMs,
+            streak: won ? 1 : 0,
+          },
           update: {
             matches: { increment: 1 },
             wins: { increment: won ? 1 : 0 },
@@ -198,13 +282,18 @@ export class CamoService implements OnModuleInit, OnModuleDestroy {
           },
         });
         await this.progress.award(p, won, m.id);
-        await this.prisma.$executeRaw`UPDATE "CamoStats" SET "bestSurvivalMs" = GREATEST("bestSurvivalMs", ${p.match.bestSurvivalMs}) WHERE "userId" = ${p.userId}`;
+        await this.prisma
+          .$executeRaw`UPDATE "CamoStats" SET "bestSurvivalMs" = GREATEST("bestSurvivalMs", ${p.match.bestSurvivalMs}) WHERE "userId" = ${p.userId}`;
       }
       await this.progress.recordMatch(
-        m.players.filter((p) => !p.isBot && p.userId).map((p) => ({ userId: p.userId!, won: board.get(p.eid) === 1 })),
+        m.players
+          .filter((p) => !p.isBot && p.userId)
+          .map((p) => ({ userId: p.userId!, won: board.get(p.eid) === 1 })),
       );
     } catch (err) {
-      this.logger.error(`could not store match ${m.id}: ${err instanceof Error ? err.message : err}`);
+      this.logger.error(
+        `could not store match ${m.id}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 }

@@ -5,12 +5,17 @@ export const envValidationSchema = Joi.object({
     .valid('development', 'test', 'production')
     .default('development'),
   PORT: Joi.number().default(3000),
+  SHUTDOWN_DRAIN_MS: Joi.number().integer().min(0).max(30_000).default(5_000),
 
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgresql', 'postgres'] })
     .required(),
   PRISMA_CONNECTION_LIMIT: Joi.number().integer().min(1).max(20).default(10),
-  PRISMA_POOL_TIMEOUT_SECONDS: Joi.number().integer().min(1).max(60).default(15),
+  PRISMA_POOL_TIMEOUT_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .max(60)
+    .default(15),
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
@@ -69,13 +74,35 @@ export const envValidationSchema = Joi.object({
 
   // Card payments. Empty = disabled: every booking is pay-at-venue. `paymob` needs its keys, or boot fails.
   PAYMENT_GATEWAY: Joi.string().valid('', 'paymob').default(''),
-  PAYMOB_SECRET_KEY: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
-  PAYMOB_PUBLIC_KEY: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
-  PAYMOB_HMAC_SECRET: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().min(8).required(), otherwise: Joi.string().allow('').optional() }),
-  PAYMOB_INTEGRATION_IDS: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().pattern(/^\d+(,\s*\d+)*$/).required(), otherwise: Joi.string().allow('').optional() }),
+  PAYMOB_SECRET_KEY: Joi.when('PAYMENT_GATEWAY', {
+    is: 'paymob',
+    then: Joi.string().min(8).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  PAYMOB_PUBLIC_KEY: Joi.when('PAYMENT_GATEWAY', {
+    is: 'paymob',
+    then: Joi.string().min(8).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  PAYMOB_HMAC_SECRET: Joi.when('PAYMENT_GATEWAY', {
+    is: 'paymob',
+    then: Joi.string().min(8).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  PAYMOB_INTEGRATION_IDS: Joi.when('PAYMENT_GATEWAY', {
+    is: 'paymob',
+    then: Joi.string()
+      .pattern(/^\d+(,\s*\d+)*$/)
+      .required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
   PAYMOB_BASE_URL: Joi.string().uri().allow('').optional(),
   PAYMENT_RETURN_BASE_URL: Joi.string().uri().allow('').optional(),
-  API_PUBLIC_URL: Joi.when('PAYMENT_GATEWAY', { is: 'paymob', then: Joi.string().uri().required(), otherwise: Joi.string().uri().allow('').optional() }),
+  API_PUBLIC_URL: Joi.when('PAYMENT_GATEWAY', {
+    is: 'paymob',
+    then: Joi.string().uri().required(),
+    otherwise: Joi.string().uri().allow('').optional(),
+  }),
 
   CORS_ORIGINS: Joi.string().default('http://localhost:4200'),
   SITE_URL: Joi.string().uri().default('https://matchena.com'),
@@ -98,8 +125,12 @@ export const envValidationSchema = Joi.object({
   CAMO_DAILY_ENABLED: Joi.string().allow('').optional(),
   CAMO_DRAIN: Joi.string().allow('').optional(),
   LOBBY_KIOSK_ENABLED: Joi.string().allow('').optional(),
-  LOBBY_SOCIAL_ENABLED: Joi.string().valid('true', 'false', '').default('false'),
-  LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT: Joi.string().valid('true', 'false', '').default('false'),
+  LOBBY_SOCIAL_ENABLED: Joi.string()
+    .valid('true', 'false', '')
+    .default('false'),
+  LOBBY_SOCIAL_ALLOW_DRAFT_CONTENT: Joi.string()
+    .valid('true', 'false', '')
+    .default('false'),
   STAFF_CALLS_ENABLED: Joi.string().allow('').optional(),
   STUN_URLS: Joi.string().allow('').optional(),
   TURN_URLS: Joi.string().allow('').optional(),

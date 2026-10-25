@@ -24,6 +24,7 @@ import {
   squadInviteHoldUntil,
   squadInviteRetryAfterSec,
 } from './squad-invite-hold';
+import { withJobLock } from '../../common/utils/job-lock.util';
 
 const SQUAD_MAX_SIZE = 7;
 
@@ -96,6 +97,12 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
+  async sweepStaleLobbiesScheduled(): Promise<void> {
+    await withJobLock(this.prisma, 'squad-stale-lobbies', async () => {
+      await this.sweepStaleLobbies();
+    });
+  }
+
   async sweepStaleLobbies(): Promise<void> {
     await this.expireStaleInvites().catch(() => undefined);
     const stale = new Date(Date.now() - SQUAD_DISCONNECT_GRACE_MS);
@@ -124,7 +131,6 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
     this.presence.setSquadConnected(userId, true);
     return { squadId: squad.id, created: true };
   }
-
 
   private linkTokenFor(linkId: string): string {
     const secret = this.config.get<string>('JWT_ACCESS_SECRET') ?? '';
@@ -276,20 +282,36 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
   }
 
   async accountCompleted(userId: string): Promise<void> {
-    const member = await this.prisma.squadMember.findFirst({ where: { userId }, select: { squadId: true } });
-    if (member) this.emitter.emitToRoom(`squad:${member.squadId}`, {
-      type: 'squad.member.updated', squadId: member.squadId, userId,
+    const member = await this.prisma.squadMember.findFirst({
+      where: { userId },
+      select: { squadId: true },
     });
+    if (member)
+      this.emitter.emitToRoom(`squad:${member.squadId}`, {
+        type: 'squad.member.updated',
+        squadId: member.squadId,
+        userId,
+      });
   }
 
   @Cron(CronExpression.EVERY_HOUR)
+  async sweepGuestsScheduled(): Promise<void> {
+    await withJobLock(this.prisma, 'squad-guest-sweep', async () => {
+      await this.sweepGuests();
+    });
+  }
+
   async sweepGuests(): Promise<void> {
     const cutoff = new Date(Date.now() - GUEST_RETENTION_MS);
     const stale = await this.prisma.user.findMany({
       where: {
         isGuest: true,
         // camo_play guests are swept by the camo job (30 days, only when unconverted and without bookings)
-        AND: [{ OR: [{ guestSource: null }, { guestSource: { not: 'camo_play' } }] }],
+        AND: [
+          {
+            OR: [{ guestSource: null }, { guestSource: { not: 'camo_play' } }],
+          },
+        ],
         createdAt: { lt: cutoff },
         OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }],
         squadMemberships: { none: {} },
@@ -298,17 +320,33 @@ export class SquadService implements OnModuleInit, OnModuleDestroy {
       take: 200,
     });
     for (const g of stale) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${g.id} FOR UPDATE`;
-        const current = await tx.user.findFirst({
-          where: { id: g.id, isGuest: true, AND: [{ OR: [{ guestSource: null }, { guestSource: { not: 'camo_play' } }] }], createdAt: { lt: cutoff }, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }], squadMemberships: { none: {} } },
-        });
-        if (!current) return;
-        await tx.friendship.deleteMany({
-          where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] },
-        });
-        await tx.user.delete({ where: { id: g.id, isGuest: true } });
-      }).catch(() => undefined);
+      await this.prisma
+        .$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${g.id} FOR UPDATE`;
+          const current = await tx.user.findFirst({
+            where: {
+              id: g.id,
+              isGuest: true,
+              AND: [
+                {
+                  OR: [
+                    { guestSource: null },
+                    { guestSource: { not: 'camo_play' } },
+                  ],
+                },
+              ],
+              createdAt: { lt: cutoff },
+              OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }],
+              squadMemberships: { none: {} },
+            },
+          });
+          if (!current) return;
+          await tx.friendship.deleteMany({
+            where: { OR: [{ requesterId: g.id }, { addresseeId: g.id }] },
+          });
+          await tx.user.delete({ where: { id: g.id, isGuest: true } });
+        })
+        .catch(() => undefined);
     }
     await this.prisma.squadInviteLink
       .deleteMany({ where: { expiresAt: { lt: cutoff } } })
