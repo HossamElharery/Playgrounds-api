@@ -188,6 +188,7 @@ model User {
   staffMember               StaffMember?              @relation("StaffMemberUser")
   staffTeam                 StaffMember[]             @relation("StaffMemberOwner")
   subscriptionPayments      SubscriptionPayment[]     @relation("SubscriptionPaymentRecordedBy")
+  aiCreditTopUps            AiCreditTopUp[]           @relation("AiCreditTopUpRecordedBy")
   settlementsRecorded       VenueSettlement[]         @relation("SettlementRecordedBy")
   settlementsConfirmed      VenueSettlement[]         @relation("SettlementConfirmedBy")
   membership                UserMembership?
@@ -2825,7 +2826,22 @@ model VenueSubscription {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  payments SubscriptionPayment[]
+  /// The owner assistant for the owner and every staff login. Nothing else in the venue reads it.
+  aiAssistantEnabled  Boolean   @default(true)
+  /// Admin-set monthly AI credit in USD; null = the plan's default from the AI settings.
+  aiCreditOverrideUsd Float?
+  /// True until an admin first adds time; a trial gets one small one-off credit, not the plan's.
+  aiTrial             Boolean   @default(true)
+  /// The current 30-day AI credit window (unused while on trial).
+  aiCycleStartedAt    DateTime?
+  aiCycleEndsAt       DateTime?
+  /// Real provider cost charged to this window's allowance, in micro-USD (never above the allowance).
+  aiCycleSpentMicros  Int       @default(0)
+  /// Unused credit from top-ups, in micro-USD. Spent after the allowance and kept across windows.
+  aiTopUpMicros       Int       @default(0)
+
+  payments  SubscriptionPayment[]
+  aiTopUps  AiCreditTopUp[]
 
   @@index([currentPeriodEnd])
 }
@@ -2849,6 +2865,26 @@ model SubscriptionPayment {
   createdAt       DateTime          @default(now())
 
   @@index([venueId, paidAt])
+}
+
+/// A manual AI-credit top-up, in USD. Separate from the EGP venue ledger and settlements.
+/// `received*` is what Matchena collected and is admin-only; the owner only ever sees `creditedMicros`.
+model AiCreditTopUp {
+  id               String            @id @default(uuid())
+  subscriptionId   String
+  subscription     VenueSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  venueId          String
+  /// Minor units collected from the owner; 0 when the credit was a gift.
+  receivedAmount   Int               @default(0)
+  receivedCurrency String            @default("EGP")
+  /// What the venue was credited, in micro-USD.
+  creditedMicros   Int
+  note             String?           @db.Text
+  recordedById     String
+  recordedBy       User              @relation("AiCreditTopUpRecordedBy", fields: [recordedById], references: [id])
+  createdAt        DateTime          @default(now())
+
+  @@index([venueId, createdAt])
 }
 
 /// A discount on an idle window (one court, one weekday, some hours) — applied from a suggestion

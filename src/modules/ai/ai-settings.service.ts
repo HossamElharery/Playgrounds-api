@@ -11,7 +11,7 @@ export interface AiSettingDef {
   def: number | boolean | null;
   min?: number;
   max?: number;
-  group: 'captain' | 'owner' | 'budget' | 'protection';
+  group: 'captain' | 'owner' | 'credit' | 'budget' | 'protection';
 }
 
 export const AI_SETTING_DEFS = {
@@ -22,8 +22,14 @@ export const AI_SETTING_DEFS = {
   captainGuestIpPerMinute: { kind: 'int', env: 'CAPTAIN_GUEST_IP_PER_MINUTE', def: 10, min: 1, max: 120, group: 'captain' },
   captainUserPerDay: { kind: 'int', env: 'CAPTAIN_USER_PER_DAY', def: 150, min: 1, max: 2000, group: 'captain' },
   captainUserPerMinute: { kind: 'int', env: 'CAPTAIN_USER_PER_MINUTE', def: 10, min: 1, max: 60, group: 'captain' },
-  ownerPerDay: { kind: 'int', def: 600, min: 20, max: 5000, group: 'owner' },
   ownerPerMinute: { kind: 'int', def: 20, min: 1, max: 120, group: 'owner' },
+  // Monthly owner-assistant credit per venue, by plan (USD of real provider cost). Provisional.
+  creditTrialUsd: { kind: 'usd', def: 0.5, min: 0, max: 20, group: 'credit' },
+  creditStarterUsd: { kind: 'usd', def: 1.5, min: 0, max: 200, group: 'credit' },
+  creditProUsd: { kind: 'usd', def: 4, min: 0, max: 200, group: 'credit' },
+  creditBusinessUsd: { kind: 'usd', def: 10, min: 0, max: 200, group: 'credit' },
+  creditGamingLiteUsd: { kind: 'usd', def: 1.5, min: 0, max: 200, group: 'credit' },
+  creditGamingProUsd: { kind: 'usd', def: 4, min: 0, max: 200, group: 'credit' },
   ownerBudgetUsd: { kind: 'usd', env: 'AI_OWNER_DAILY_BUDGET_USD', def: 1.5, min: 0.05, max: 50, group: 'budget' },
   publicBudgetUsd: { kind: 'usd', env: 'AI_PUBLIC_DAILY_BUDGET_USD', def: 1.5, min: 0.05, max: 50, group: 'budget' },
   turnstileAfterMessages: { kind: 'int', def: 5, min: 1, max: 50, group: 'protection' },

@@ -61,6 +61,8 @@ describe('SubscriptionsService', () => {
     const update = tx.venueSubscription.update.mock.calls[0][0].data;
     expect(update.currentPeriodEnd.getTime()).toBe(at(100).getTime());
     expect(update.lastNoticeDate).toBeNull();
+    // Renewing ends the AI trial and opens a fresh 30-day assistant credit window.
+    expect(update).toMatchObject({ aiTrial: false, aiCycleSpentMicros: 0, aiCycleStartedAt: now, aiCycleEndsAt: at(30) });
     expect(tx.subscriptionPayment.create.mock.calls[0][0].data).toMatchObject({ amount: 200000, daysAdded: 90, method: 'instapay', recordedById: 'admin-1' });
     expect(tx.auditLogEntry.create.mock.calls[0][0].data.action).toBe('subscription.extended');
     expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', deepLink: '/owner/settings' }));

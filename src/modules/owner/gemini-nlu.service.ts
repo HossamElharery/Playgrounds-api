@@ -69,6 +69,7 @@ export class GeminiNluService {
     text: string,
     courts: NluCourtRef[],
     today: string,
+    onCost?: (usd: number) => void,
   ): Promise<NluResult | null> {
     if (!this.enabled) return null;
     const synonyms = await this.aiContext.buildPlatformContext();
@@ -77,11 +78,12 @@ export class GeminiNluService {
       `${JSON.stringify(courts)}. الأونر قال: "${text.slice(0, 400)}"`;
 
     try {
-      const { raw } = await this.aiProvider.getStructuredIntent({
+      const { raw, costUsd } = await this.aiProvider.getStructuredIntent({
         systemPrompt: `${SYSTEM_PROMPT}\n\n${synonyms}`,
         userPrompt: prompt,
         responseSchema: RESPONSE_SCHEMA,
       });
+      onCost?.(costUsd);
       return this.parseModelJson(raw, courts);
     } catch (err) {
       if (!(err instanceof AiUnavailableError)) this.logger.warn(`Schedule NLU call failed: ${err}`);

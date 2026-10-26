@@ -85,6 +85,7 @@ import {
 } from './dto/manual-booking.dto';
 import { ApiException } from '../../common/errors/api-exception';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
+import { VenueAiCreditService } from '../ai/credit/venue-ai-credit.service';
 import { CommandCentreService } from './command/command-centre.service';
 import { ActivityService } from './activity/activity.service';
 import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
@@ -119,6 +120,7 @@ export class OwnerController {
     private readonly quickstart: QuickstartService,
     private readonly assistant: OwnerAssistantService,
     private readonly assistantExecutor: OwnerAssistantExecutorService,
+    private readonly aiCredit: VenueAiCreditService,
   ) {}
 
   @AnyStaff()
@@ -194,6 +196,15 @@ export class OwnerController {
       history: dto.history,
       draft: dto.draft,
     });
+  }
+
+  @RequirePermission('bookings.view')
+  @Get('assistant/credit')
+  assistantCredit(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
+    return this.aiCredit.forOwner(user, venueId);
   }
 
   @RequirePermission('bookings.view')

@@ -16,6 +16,7 @@ import {
   type SubscriptionState,
 } from './subscription-state.util';
 import { DEFAULT_PLAN_KEY, planListPrice } from './subscription-plans';
+import { freshAiCycle } from '../ai/credit/venue-ai-credit';
 
 export const DEFAULT_LIST_PRICE = planListPrice(DEFAULT_PLAN_KEY, 'EGP') ?? 0; // 2,000 EGP in piasters
 export const DEFAULT_TRIAL_DAYS = 15;
@@ -87,6 +88,7 @@ export class SubscriptionsService {
           ...(await this.startingTerms(tx, venueId)),
           currentPeriodEnd: new Date(Date.now() + days * DAY_MS),
           agreedPriceAmount: agreedPriceAmount ?? null,
+          ...freshAiCycle(),
         },
       });
       await tx.auditLogEntry.create({
@@ -103,7 +105,7 @@ export class SubscriptionsService {
     const end = extendedPeriodEnd(existing.currentPeriodEnd, days);
     await tx.venueSubscription.update({
       where: { venueId },
-      data: { currentPeriodEnd: end, ...(agreedPriceAmount != null ? { agreedPriceAmount } : {}) },
+      data: { currentPeriodEnd: end, ...(agreedPriceAmount != null ? { agreedPriceAmount } : {}), ...freshAiCycle() },
     });
     await tx.subscriptionPayment.create({
       data: {
@@ -219,7 +221,8 @@ export class SubscriptionsService {
     await this.prisma.$transaction(async (tx) => {
       await tx.venueSubscription.update({
         where: { id: sub.id },
-        data: { currentPeriodEnd: end, lastNoticeDate: null },
+        // Renewing the plan renews the assistant's monthly credit too.
+        data: { currentPeriodEnd: end, lastNoticeDate: null, ...freshAiCycle() },
       });
       await tx.subscriptionPayment.create({
         data: {

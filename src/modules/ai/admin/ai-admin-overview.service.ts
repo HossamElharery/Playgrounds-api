@@ -279,7 +279,7 @@ export class AiAdminOverviewService {
       take: 12,
     });
     const limitFor = (scope: string, kind: string): number | null => {
-      if (scope === 'quota:owner') return this.settings.number('ownerPerDay');
+      if (scope === 'quota:owner') return null; // owners are capped by their venue's credit, not a count
       if (kind === 'ip') return this.settings.number('captainGuestIpPerDay') ?? (this.settings.number('captainGuestPerDay') ?? 15) * 4;
       if (kind === 'dev') return this.settings.number('captainGuestPerDay');
       return this.settings.number('captainUserPerDay');

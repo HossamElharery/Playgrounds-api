@@ -10,6 +10,7 @@ import { AiQuotaService } from '../../ai/ai-quota.service';
 import { AiSettingsService } from '../../ai/ai-settings.service';
 import { AiLogService } from '../../ai/ai-log.service';
 import { AssistantTranscriptService } from '../../ai/transcript/assistant-transcript.service';
+import { VenueAiCreditService, type CreditVerdict } from '../../ai/credit/venue-ai-credit.service';
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { OwnerSummaryService } from '../owner-summary.service';
 import { ExpensesService } from '../expenses/expenses.service';
@@ -86,6 +87,7 @@ export class OwnerAssistantService {
     @Optional() private readonly settings?: AiSettingsService,
     @Optional() private readonly logs?: AiLogService,
     @Optional() private readonly transcript?: AssistantTranscriptService,
+    @Optional() private readonly credit?: VenueAiCreditService,
   ) {}
 
   get enabled(): boolean {
@@ -98,7 +100,7 @@ export class OwnerAssistantService {
     text: string,
     extra: { history?: NluTurn[]; draft?: Record<string, unknown> } = {},
   ): Promise<AssistantPlan> {
-    const trace: { limited?: boolean; meta?: AssistantReading['meta'] } = {};
+    const trace: { limited?: boolean; detail?: string; meta?: AssistantReading['meta'] } = {};
     const plan = await this.plan(user, venueId, text, extra, trace);
     const blocking = plan.issues.find((i) => i.blocking);
     const outcome = trace.limited
@@ -117,7 +119,7 @@ export class OwnerAssistantService {
       text,
       intent: plan.intent,
       outcome,
-      detail: blocking?.code,
+      detail: trace.detail ?? blocking?.code,
       confidence: plan.confidence,
       model: trace.meta?.model ?? null,
       ms: trace.meta?.ms,
@@ -149,7 +151,7 @@ export class OwnerAssistantService {
     venueId: string,
     text: string,
     extra: { history?: NluTurn[]; draft?: Record<string, unknown> },
-    trace: { limited?: boolean; meta?: AssistantReading['meta'] },
+    trace: { limited?: boolean; detail?: string; meta?: AssistantReading['meta'] },
   ): Promise<AssistantPlan> {
     const venue = await assertVenueAccess(this.prisma, user, venueId, {
       write: false,
@@ -161,27 +163,33 @@ export class OwnerAssistantService {
     if (!this.nlu.enabled)
       return this.blank('unknown', bi('', ''), { available: false });
 
+    // The venue's own switch and credit, checked for the owner and every staff login alike
+    // (the permission guards let owners through, so this cannot be a permission).
+    const credit = await this.credit?.check(venueId);
+    if (credit && !credit.ok) {
+      trace.limited = true;
+      trace.detail = `credit_${credit.reason}`;
+      this.logger.warn(`[assistant-credit] ${credit.reason} for venue ${venueId}`);
+      return this.blank('unknown', await this.creditReply(user, venueId, credit));
+    }
+
+    // Burst protection only; cost is capped by the venue's credit. One window per venue.
     const verdict = await this.quota?.take('owner', [
       {
-        key: `user:${user.id}`,
+        key: `venue:${venueId}`,
         perMinute: this.settings?.number('ownerPerMinute') ?? 20,
-        perDay: this.settings?.number('ownerPerDay') ?? 600,
+        perDay: Number.MAX_SAFE_INTEGER,
       },
     ]);
     if (verdict && !verdict.ok) {
       trace.limited = true;
-      this.logger.warn(`[assistant-limit] ${verdict.reason} for user ${user.id}`);
+      this.logger.warn(`[assistant-limit] ${verdict.reason} for venue ${venueId}`);
       return this.blank(
         'unknown',
-        verdict.reason === 'minute'
-          ? bi(
-              `بالراحة شوية، استنى ${Math.min(verdict.retryAfterSec, 60)} ثانية وابعت تاني.`,
-              `Easy: wait ${Math.min(verdict.retryAfterSec, 60)} seconds and send again.`,
-            )
-          : bi(
-              'وصلت للحد اليومي للمساعد. تقدر تكمّل من لوحة المواعيد والأزرار، والمساعد يرجع بكرة.',
-              'You have reached the assistant’s daily limit. You can carry on from the day board and its buttons, and the assistant is back tomorrow.',
-            ),
+        bi(
+          `بالراحة شوية، استنى ${Math.min(verdict.retryAfterSec, 60)} ثانية وابعت تاني.`,
+          `Easy: wait ${Math.min(verdict.retryAfterSec, 60)} seconds and send again.`,
+        ),
       );
     }
 
@@ -219,12 +227,19 @@ export class OwnerAssistantService {
     }));
 
     const draft = sanitizeDraft(extra.draft, courts);
+    let costUsd = 0;
     const raw = await this.nlu.read(clean, courts, today, known, {
       venueName: venue.nameAr || venue.nameEn,
       nowHhmm: zonedHhmm(new Date(), tz),
       history: extra.history,
       draft,
+      onCost: (usd) => {
+        costUsd += usd;
+      },
     });
+    // The venue pays for its owner's and staff's calls; a platform admin looking in does not.
+    const platformAdmin = user.roles.includes('admin') && venue.ownerId !== user.id;
+    if (credit?.ok && costUsd > 0 && !platformAdmin) await this.credit?.charge(venueId, credit.view, costUsd);
     if (!raw) return this.blank('unknown', bi('', ''), { available: false });
     trace.meta = raw.meta;
     const reading = completeReading(raw, draft, clean, courts);
@@ -1592,6 +1607,44 @@ export class OwnerAssistantService {
       ),
     };
     return { ...this.blank(intent, issue.message), issues: [issue] };
+  }
+
+  /** Why the assistant is off for this venue, and who can fix it: support for the owner, the owner for staff. */
+  private async creditReply(
+    user: AuthenticatedUser,
+    venueId: string,
+    credit: Extract<CreditVerdict, { ok: false }>,
+  ): Promise<Bi> {
+    const owner = user.roles.includes('owner') || user.roles.includes('admin');
+    const rest = bi(
+      'كل حاجة تانية شغالة عادي من لوحة المواعيد والأزرار.',
+      'Everything else works as usual from the day board and its buttons.',
+    );
+    if (credit.reason === 'disabled') {
+      return joinBi([
+        bi('المساعد متوقف للمنشأة دي.', 'The assistant is switched off for this venue.'),
+        rest,
+        owner
+          ? bi('علشان ترجّعه كلّم دعم ماتشنا.', 'To turn it back on, contact Matchena support.')
+          : bi('علشان يرجع كلّم صاحب المنشأة.', 'To turn it back on, ask the venue owner.'),
+      ]);
+    }
+    const v = credit.view;
+    let renews: Bi | null = null;
+    if (!v.trial && !v.paused && v.cycleEndsAt) {
+      const tz = await this.venueTz(venueId);
+      const day = (lang: 'ar' | 'en') =>
+        new Intl.DateTimeFormat(lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-GB', { timeZone: tz, day: 'numeric', month: 'long' }).format(v.cycleEndsAt!);
+      renews = bi(`والرصيد الشهري بيتجدد يوم ${day('ar')}.`, `The monthly credit renews on ${day('en')}.`);
+    }
+    return joinBi([
+      bi('رصيد المساعد للمنشأة دي خلص.', 'This venue’s assistant credit is used up.'),
+      rest,
+      owner
+        ? bi('علشان تشحن رصيد كلّم دعم ماتشنا.', 'To top it up, contact Matchena support.')
+        : bi('بلّغ صاحب المنشأة علشان يشحن الرصيد.', 'Let the venue owner know so they can top it up.'),
+      ...(renews ? [renews] : []),
+    ]);
   }
 
   private blank(

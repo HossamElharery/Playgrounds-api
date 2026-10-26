@@ -7,6 +7,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -282,4 +283,57 @@ export class StartShadowDto {
   @Min(1)
   @Max(30)
   days?: number;
+}
+
+export class ListVenueCreditDto {
+  @ApiPropertyOptional({ description: 'Searches the venue’s and the owner’s name.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
+}
+
+export class UpdateVenueCreditDto {
+  @ApiPropertyOptional({ description: 'The assistant for the owner and every staff login of this venue.' })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Monthly credit in USD instead of the plan’s; null goes back to the plan.', nullable: true })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(500)
+  overrideUsd?: number | null;
+
+  @ApiPropertyOptional({ description: 'End the trial now: the plan’s monthly credit starts with a fresh window.' })
+  @IsOptional()
+  @IsIn([true])
+  endTrial?: true;
+}
+
+export class AiCreditTopUpDto {
+  @ApiProperty({ description: 'What Matchena collected, in minor units. Admin only; 0 for a gift.' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000_000)
+  receivedAmount!: number;
+
+  @ApiProperty({ example: 'EGP' })
+  @Matches(/^[A-Z]{3}$/)
+  receivedCurrency!: string;
+
+  @ApiProperty({ description: 'What the venue gets, in USD. The only number the owner ever sees.' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(500)
+  creditedUsd!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }

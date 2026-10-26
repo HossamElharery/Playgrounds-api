@@ -55,7 +55,7 @@ describe('owner assistant telemetry', () => {
   });
 
   it('records a refused-by-limit request as limited, with the text', async () => {
-    const quota = { take: jest.fn().mockResolvedValue({ ok: false, reason: 'day', retryAfterSec: 100, key: 'user:u1' }) };
+    const quota = { take: jest.fn().mockResolvedValue({ ok: false, reason: 'minute', retryAfterSec: 30, key: 'venue:v1' }) };
     const { service, logs } = build({ quota });
     await service.ask(user, 'v1', SECRET_TEXT);
     expect(logs.logOwnerEvent.mock.calls[0][0]).toMatchObject({ outcome: 'limited' });
@@ -68,13 +68,13 @@ describe('owner assistant telemetry', () => {
     expect(logs.logOwnerEvent.mock.calls[0][0]).toMatchObject({ outcome: 'unavailable' });
   });
 
-  it('uses the admin-set per-day and per-minute allowance', async () => {
+  it('uses the admin-set per-minute burst limit, one window per venue (owner and staff share it)', async () => {
     const quota = { take: jest.fn().mockResolvedValue({ ok: true }) };
-    const settings = { number: jest.fn().mockImplementation((k: string) => (k === 'ownerPerDay' ? 123 : 7)) };
+    const settings = { number: jest.fn().mockImplementation((k: string) => (k === 'ownerPerMinute' ? 7 : null)) };
     const prisma = { venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'نيون', currency: 'EGP', country: { timezone: 'Africa/Cairo' } }) }, court: { findMany: jest.fn().mockResolvedValue([]) }, booking: { findMany: jest.fn().mockResolvedValue([]) } };
     const nlu = { enabled: true, read: jest.fn().mockResolvedValue(reading({ intent: 'unknown' })) };
     const service = new OwnerAssistantService(prisma as never, nlu as never, {} as never, {} as never, {} as never, quota as never, settings as never);
     await service.ask(user, 'v1', 'إيه الحجوزات؟');
-    expect(quota.take).toHaveBeenCalledWith('owner', [{ key: 'user:u1', perMinute: 7, perDay: 123 }]);
+    expect(quota.take).toHaveBeenCalledWith('owner', [{ key: 'venue:v1', perMinute: 7, perDay: Number.MAX_SAFE_INTEGER }]);
   });
 });

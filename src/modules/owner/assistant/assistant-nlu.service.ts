@@ -21,6 +21,8 @@ export interface NluExtra {
   nowHhmm?: string;
   history?: NluTurn[];
   draft?: AssistantReading | null;
+  /** Told the real cost of the model call, even when its answer cannot be used. */
+  onCost?: (usd: number) => void;
 }
 
 export interface NluKnownBooking {
@@ -162,6 +164,7 @@ export class AssistantNluService {
         userPrompt: prompt,
         responseSchema: RESPONSE_SCHEMA,
       });
+      extra.onCost?.(costUsd);
       const reading = this.parse(raw, courts, today);
       return reading ? { ...reading, meta: { model, ms, costUsd } } : null;
     } catch (err) {

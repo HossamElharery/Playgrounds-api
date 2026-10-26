@@ -16,6 +16,7 @@ import { OwnerController } from './owner.controller';
 import { GeminiNluService } from './gemini-nlu.service';
 import { BookingsModule } from '../bookings/bookings.module';
 import { AiModule } from '../ai/ai.module';
+import { VenueAiCreditModule } from '../ai/credit/venue-ai-credit.module';
 import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OwnerBookingsService } from './owner-bookings.service';
@@ -41,7 +42,7 @@ import { CommandCentreService } from './command/command-centre.service';
 import { ActivityService } from './activity/activity.service';
 
 @Module({
-  imports: [RealtimeModule, BookingsModule, AiModule, FinanceModule, NotificationsModule],
+  imports: [RealtimeModule, BookingsModule, AiModule, VenueAiCreditModule, FinanceModule, NotificationsModule],
   providers: [
     GamingLayoutService, GamingSetupService,
     GamingOutboxService, GamingAlertsService, GamingCommandService, GamingSessionsService, GamingCommerceService, GamingReceiptsService,

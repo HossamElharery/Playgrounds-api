@@ -4,7 +4,7 @@ const config = (env: Record<string, string> = {}) => ({ get: (k: string) => env[
 
 describe('validateSettingsPatch', () => {
   it('accepts values inside their bounds and null (back to default)', () => {
-    expect(validateSettingsPatch({ captainGuestPerDay: 20, publicBudgetUsd: 2.5, captainGuestsEnabled: false, ownerPerDay: null })).toEqual({});
+    expect(validateSettingsPatch({ captainGuestPerDay: 20, publicBudgetUsd: 2.5, captainGuestsEnabled: false, creditProUsd: null })).toEqual({});
   });
 
   it('refuses unknown keys, wrong types, fractions of whole numbers and out-of-range values', () => {
@@ -49,11 +49,11 @@ describe('AiSettingsService', () => {
   });
 
   it('keeps the last known values when the table cannot be read', async () => {
-    const findMany = jest.fn().mockResolvedValueOnce([{ key: 'ownerPerDay', value: 700 }]).mockRejectedValue(new Error('db down'));
+    const findMany = jest.fn().mockResolvedValueOnce([{ key: 'ownerPerMinute', value: 70 }]).mockRejectedValue(new Error('db down'));
     const s = new AiSettingsService(config(), { aiSetting: { findMany } } as never);
     await s.refresh();
     await s.refresh();
-    expect(s.number('ownerPerDay')).toBe(700);
+    expect(s.number('ownerPerMinute')).toBe(70);
   });
 
   it('works with no database at all', () => {

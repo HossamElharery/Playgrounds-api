@@ -10,11 +10,14 @@ import { AiAdminOverviewService } from './ai-admin-overview.service';
 import { AiAdminQuestionsService } from './ai-admin-questions.service';
 import { AiAdminKnowledgeService } from './ai-admin-knowledge.service';
 import { AiAdminQualityService } from './ai-admin-quality.service';
+import { AiAdminCreditService } from './ai-admin-credit.service';
 import {
+  AiCreditTopUpDto,
   DraftKnowledgeDto,
   KnowledgeBodyDto,
   ListAiQuestionsDto,
   ListOwnerRequestsDto,
+  ListVenueCreditDto,
   OwnerRequestsSummaryDto,
   PreviewKnowledgeDto,
   ReorderKnowledgeDto,
@@ -24,6 +27,7 @@ import {
   StartEvalDto,
   StartShadowDto,
   UpdateLimitsDto,
+  UpdateVenueCreditDto,
   ValidateKnowledgeDto,
 } from './ai-admin.dto';
 
@@ -39,6 +43,7 @@ export class AiAdminController {
     private readonly tools: AiAdminKnowledgeService,
     private readonly knowledge: AssistantKnowledgeService,
     private readonly quality: AiAdminQualityService,
+    private readonly credit: AiAdminCreditService,
   ) {}
 
   @Get('overview')
@@ -163,6 +168,27 @@ export class AiAdminController {
   @Put('limits')
   updateLimits(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateLimitsDto) {
     return this.overview.updateLimits(dto.values, user.id);
+  }
+
+  @Get('venue-credit')
+  venueCredit(@Query() q: ListVenueCreditDto) {
+    return this.credit.list(q.q);
+  }
+
+  @Get('venues/:venueId/credit')
+  venueCreditDetail(@Param('venueId') venueId: string) {
+    return this.credit.detail(venueId);
+  }
+
+  @Patch('venues/:venueId/credit')
+  updateVenueCredit(@CurrentUser() user: AuthenticatedUser, @Param('venueId') venueId: string, @Body() dto: UpdateVenueCreditDto) {
+    return this.credit.update(user.id, venueId, dto);
+  }
+
+  @Post('venues/:venueId/credit/top-ups')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  topUpVenueCredit(@CurrentUser() user: AuthenticatedUser, @Param('venueId') venueId: string, @Body() dto: AiCreditTopUpDto) {
+    return this.credit.topUp(user.id, venueId, dto);
   }
 
   @Get('quality')

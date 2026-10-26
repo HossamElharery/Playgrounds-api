@@ -25,6 +25,7 @@ import { paginateByCursor } from '../../common/pagination/cursor-pagination.dto'
 import { BookingsService } from '../bookings/bookings.service';
 import { GeminiNluService, NluResult } from './gemini-nlu.service';
 import { AssistantTranscriptService } from '../ai/transcript/assistant-transcript.service';
+import { VenueAiCreditService } from '../ai/credit/venue-ai-credit.service';
 import { UNDO_ANCHOR_TEXT } from './assistant/assistant-undo';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { assertVenueAccess } from '../../common/access/owner-access';
@@ -66,6 +67,7 @@ export class OwnerService {
     private readonly bookings: BookingsService,
     private readonly nlu: GeminiNluService,
     @Optional() private readonly transcript?: AssistantTranscriptService,
+    @Optional() private readonly credit?: VenueAiCreditService,
   ) {}
 
   private async venueTimeZone(venueId: string): Promise<string> {
@@ -416,7 +418,14 @@ export class OwnerService {
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });
-    const result = await this.nlu.interpret(text, courts, today);
+    // Same venue switch and credit as the assistant: this older endpoint calls the same models.
+    const credit = await this.credit?.check(venueId);
+    if (credit && !credit.ok) return unknownNlu(today, false);
+    let costUsd = 0;
+    const result = await this.nlu.interpret(text, courts, today, (usd) => {
+      costUsd += usd;
+    });
+    if (credit?.ok && costUsd > 0 && !user.roles.includes('admin')) await this.credit?.charge(venueId, credit.view, costUsd);
     if (!result) {
       return unknownNlu(today, true);
     }
