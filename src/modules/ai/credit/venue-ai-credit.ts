@@ -1,8 +1,15 @@
 import type { VenueSubscription } from '@prisma/client';
 import type { AiSettingKey } from '../ai-settings.service';
 import { fromMicros, toMicros } from '../ai-day';
-import { DAY_MS, subscriptionStanding } from '../../subscriptions/subscription-state.util';
-import { DEFAULT_PLAN_KEY, isPlanKey, type PlanKey } from '../../subscriptions/subscription-plans';
+import {
+  DAY_MS,
+  subscriptionStanding,
+} from '../../subscriptions/subscription-state.util';
+import {
+  DEFAULT_PLAN_KEY,
+  isPlanKey,
+  type PlanKey,
+} from '../../subscriptions/subscription-plans';
 
 /**
  * The owner assistant's monthly credit, per venue, in USD of real provider cost.
@@ -74,7 +81,10 @@ export function dueWindow(
   if (row.aiTrial) return null;
   const end = row.aiCycleEndsAt?.getTime();
   if (end !== undefined && now.getTime() < end) return null;
-  const start = end === undefined ? now.getTime() : end + Math.floor((now.getTime() - end) / WINDOW_MS) * WINDOW_MS;
+  const start =
+    end === undefined
+      ? now.getTime()
+      : end + Math.floor((now.getTime() - end) / WINDOW_MS) * WINDOW_MS;
   return { start: new Date(start), end: new Date(start + WINDOW_MS) };
 }
 
@@ -109,15 +119,31 @@ export interface VenueAiCreditView {
 }
 
 /** The credit as it stands at `now`, as if a window that ran out had already been rolled over. */
-export function creditView(row: CreditRow, facts: CreditFacts, now: Date = new Date()): VenueAiCreditView {
+export function creditView(
+  row: CreditRow,
+  facts: CreditFacts,
+  now: Date = new Date(),
+): VenueAiCreditView {
   const due = dueWindow(row, now);
   const spent = due ? 0 : Math.max(0, row.aiCycleSpentMicros);
-  const source = row.aiCreditOverrideUsd != null ? 'override' : row.aiTrial ? 'trial' : 'plan';
+  const source =
+    row.aiCreditOverrideUsd != null
+      ? 'override'
+      : row.aiTrial
+        ? 'trial'
+        : 'plan';
   const baseUsd =
-    source === 'override' ? (row.aiCreditOverrideUsd ?? 0) : source === 'trial' ? facts.trialUsd : facts.planUsd;
+    source === 'override'
+      ? (row.aiCreditOverrideUsd ?? 0)
+      : source === 'trial'
+        ? facts.trialUsd
+        : facts.planUsd;
   const paused = subscriptionStanding(row, now).state === 'overdue';
   const allowance = paused ? 0 : toMicros(baseUsd);
-  const room = Math.max(0, allowance - (source === 'trial' ? (facts.otherTrialSpentMicros ?? 0) : 0));
+  const room = Math.max(
+    0,
+    allowance - (source === 'trial' ? (facts.otherTrialSpentMicros ?? 0) : 0),
+  );
   const topUp = Math.max(0, row.aiTopUpMicros);
   return {
     venueId: row.venueId,
@@ -152,6 +178,11 @@ export function ownerCreditDto(
     topUpUsd: view.topUpUsd,
     balanceUsd: view.balanceUsd,
     renewsAt: view.trial || view.paused ? null : view.cycleEndsAt,
-    topUps: topUps?.map((t) => ({ id: t.id, creditedUsd: fromMicros(t.creditedMicros), createdAt: t.createdAt })) ?? null,
+    topUps:
+      topUps?.map((t) => ({
+        id: t.id,
+        creditedUsd: fromMicros(t.creditedMicros),
+        createdAt: t.createdAt,
+      })) ?? null,
   };
 }

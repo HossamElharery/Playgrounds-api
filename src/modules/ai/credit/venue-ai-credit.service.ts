@@ -42,17 +42,29 @@ export class VenueAiCreditService {
   }
 
   /** The venue's credit now, rolling a window that ran out over first. */
-  async state(venueId: string, now: Date = new Date()): Promise<VenueAiCreditView> {
+  async state(
+    venueId: string,
+    now: Date = new Date(),
+  ): Promise<VenueAiCreditView> {
     let row = await this.row(venueId);
     const due = dueWindow(row, now);
     if (due) {
       const rolled = await this.prisma.venueSubscription.updateMany({
         where: { venueId, aiTrial: false, aiCycleEndsAt: row.aiCycleEndsAt },
-        data: { aiCycleStartedAt: due.start, aiCycleEndsAt: due.end, aiCycleSpentMicros: 0 },
+        data: {
+          aiCycleStartedAt: due.start,
+          aiCycleEndsAt: due.end,
+          aiCycleSpentMicros: 0,
+        },
       });
       // Someone else rolled it (or an admin renewed it) in between: read what they wrote.
       row = rolled.count
-        ? { ...row, aiCycleStartedAt: due.start, aiCycleEndsAt: due.end, aiCycleSpentMicros: 0 }
+        ? {
+            ...row,
+            aiCycleStartedAt: due.start,
+            aiCycleEndsAt: due.end,
+            aiCycleSpentMicros: 0,
+          }
         : await this.row(venueId);
     }
     return this.view(row, now);
@@ -69,7 +81,11 @@ export class VenueAiCreditService {
    * Charges a model call's real cost: the window's allowance first, then top-up credit.
    * One atomic statement, so concurrent calls from the owner and staff add up correctly.
    */
-  async charge(venueId: string, view: Pick<VenueAiCreditView, 'roomMicros'>, costUsd: number): Promise<void> {
+  async charge(
+    venueId: string,
+    view: Pick<VenueAiCreditView, 'roomMicros'>,
+    costUsd: number,
+  ): Promise<void> {
     const cost = toMicros(costUsd);
     if (!cost) return;
     const room = Math.max(0, view.roomMicros);
@@ -80,7 +96,9 @@ export class VenueAiCreditService {
           "aiTopUpMicros" = GREATEST(0, "aiTopUpMicros" - GREATEST(0, "aiCycleSpentMicros" + ${cost}::int - GREATEST(${room}::int, "aiCycleSpentMicros")))
         WHERE "venueId" = ${venueId}`;
     } catch (err) {
-      this.logger.warn(`[ai-credit] could not charge ${costUsd} USD to venue ${venueId}: ${String(err)}`);
+      this.logger.warn(
+        `[ai-credit] could not charge ${costUsd} USD to venue ${venueId}: ${String(err)}`,
+      );
     }
   }
 
@@ -101,22 +119,49 @@ export class VenueAiCreditService {
   }
 
   /** Views for many venues at once, without writing (for the admin list). */
-  async views(rows: (CreditRow & { ownerId: string })[], now: Date = new Date()): Promise<VenueAiCreditView[]> {
-    const trialOwners = [...new Set(rows.filter(pooledTrial).map((r) => r.ownerId))];
+  async views(
+    rows: (CreditRow & { ownerId: string })[],
+    now: Date = new Date(),
+  ): Promise<VenueAiCreditView[]> {
+    const trialOwners = [
+      ...new Set(rows.filter(pooledTrial).map((r) => r.ownerId)),
+    ];
     const spentByVenue = new Map<string, { ownerId: string; micros: number }>();
     if (trialOwners.length) {
       const pooled = await this.prisma.venueSubscription.findMany({
-        where: { aiTrial: true, aiCreditOverrideUsd: null, venue: { ownerId: { in: trialOwners } } },
-        select: { venueId: true, aiCycleSpentMicros: true, venue: { select: { ownerId: true } } },
+        where: {
+          aiTrial: true,
+          aiCreditOverrideUsd: null,
+          venue: { ownerId: { in: trialOwners } },
+        },
+        select: {
+          venueId: true,
+          aiCycleSpentMicros: true,
+          venue: { select: { ownerId: true } },
+        },
       });
-      for (const p of pooled) spentByVenue.set(p.venueId, { ownerId: p.venue.ownerId, micros: p.aiCycleSpentMicros });
+      for (const p of pooled)
+        spentByVenue.set(p.venueId, {
+          ownerId: p.venue.ownerId,
+          micros: p.aiCycleSpentMicros,
+        });
     }
     return rows.map((row) => {
       let others = 0;
       if (pooledTrial(row)) {
-        for (const [venueId, s] of spentByVenue) if (venueId !== row.venueId && s.ownerId === row.ownerId) others += s.micros;
+        for (const [venueId, s] of spentByVenue)
+          if (venueId !== row.venueId && s.ownerId === row.ownerId)
+            others += s.micros;
       }
-      return creditView(row, { planUsd: this.planUsd(row.planKey), trialUsd: this.trialUsd(), otherTrialSpentMicros: others }, now);
+      return creditView(
+        row,
+        {
+          planUsd: this.planUsd(row.planKey),
+          trialUsd: this.trialUsd(),
+          otherTrialSpentMicros: others,
+        },
+        now,
+      );
     });
   }
 
@@ -126,7 +171,9 @@ export class VenueAiCreditService {
       {
         planUsd: this.planUsd(row.planKey),
         trialUsd: this.trialUsd(),
-        otherTrialSpentMicros: pooledTrial(row) ? await this.otherTrialSpent(row.venueId) : 0,
+        otherTrialSpentMicros: pooledTrial(row)
+          ? await this.otherTrialSpent(row.venueId)
+          : 0,
       },
       now,
     );
@@ -134,22 +181,34 @@ export class VenueAiCreditService {
 
   /** One trial credit per owner: what their other venues still on the trial credit have used. */
   private async otherTrialSpent(venueId: string): Promise<number> {
-    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { ownerId: true } });
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: venueId },
+      select: { ownerId: true },
+    });
     if (!venue) return 0;
     const sum = await this.prisma.venueSubscription.aggregate({
       _sum: { aiCycleSpentMicros: true },
-      where: { aiTrial: true, aiCreditOverrideUsd: null, venueId: { not: venueId }, venue: { ownerId: venue.ownerId } },
+      where: {
+        aiTrial: true,
+        aiCreditOverrideUsd: null,
+        venueId: { not: venueId },
+        venue: { ownerId: venue.ownerId },
+      },
     });
     return sum._sum.aiCycleSpentMicros ?? 0;
   }
 
   private async row(venueId: string): Promise<CreditRow> {
-    const row = await this.prisma.venueSubscription.findUnique({ where: { venueId }, select: CREDIT_ROW_SELECT });
+    const row = await this.prisma.venueSubscription.findUnique({
+      where: { venueId },
+      select: CREDIT_ROW_SELECT,
+    });
     return row ?? (await this.subscriptions.ensure(venueId));
   }
 }
 
-function pooledTrial(row: Pick<CreditRow, 'aiTrial' | 'aiCreditOverrideUsd'>): boolean {
+function pooledTrial(
+  row: Pick<CreditRow, 'aiTrial' | 'aiCreditOverrideUsd'>,
+): boolean {
   return row.aiTrial && row.aiCreditOverrideUsd == null;
 }
-

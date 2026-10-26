@@ -24,15 +24,31 @@ function build(stored: CreditRow | null, opts: { otherTrial?: number } = {}) {
     venueSubscription: {
       findUnique: jest.fn().mockResolvedValue(stored),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      aggregate: jest.fn().mockResolvedValue({ _sum: { aiCycleSpentMicros: opts.otherTrial ?? 0 } }),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: { aiCycleSpentMicros: opts.otherTrial ?? 0 },
+      }),
     },
     venue: { findUnique: jest.fn().mockResolvedValue({ ownerId: 'o1' }) },
     $executeRaw: jest.fn().mockResolvedValue(1),
   };
-  const values: Record<string, number> = { creditProUsd: 4, creditStarterUsd: 1.5, creditTrialUsd: 0.5 };
+  const values: Record<string, number> = {
+    creditProUsd: 4,
+    creditStarterUsd: 1.5,
+    creditTrialUsd: 0.5,
+  };
   const settings = { number: jest.fn((k: string) => values[k] ?? null) };
-  const subscriptions = { ensure: jest.fn().mockResolvedValue(row({ aiTrial: true, aiCycleStartedAt: null, aiCycleEndsAt: null })) };
-  const service = new VenueAiCreditService(prisma as never, settings as never, subscriptions as never);
+  const subscriptions = {
+    ensure: jest
+      .fn()
+      .mockResolvedValue(
+        row({ aiTrial: true, aiCycleStartedAt: null, aiCycleEndsAt: null }),
+      ),
+  };
+  const service = new VenueAiCreditService(
+    prisma as never,
+    settings as never,
+    subscriptions as never,
+  );
   return { service, prisma, settings, subscriptions };
 }
 
@@ -46,12 +62,18 @@ describe('VenueAiCreditService', () => {
 
   it('stops it when an admin switched it off, even with credit left', async () => {
     const { service } = build(row({ aiAssistantEnabled: false }));
-    expect(await service.check('v1', NOW)).toMatchObject({ ok: false, reason: 'disabled' });
+    expect(await service.check('v1', NOW)).toMatchObject({
+      ok: false,
+      reason: 'disabled',
+    });
   });
 
   it('stops it when the window’s allowance and the top-ups are used up', async () => {
     const { service } = build(row({ aiCycleSpentMicros: 4_000_000 }));
-    expect(await service.check('v1', NOW)).toMatchObject({ ok: false, reason: 'exhausted' });
+    expect(await service.check('v1', NOW)).toMatchObject({
+      ok: false,
+      reason: 'exhausted',
+    });
   });
 
   it('starts the trial for a venue that has no subscription yet', async () => {
@@ -62,19 +84,40 @@ describe('VenueAiCreditService', () => {
   });
 
   it('counts the same owner’s other trial venues against one trial credit', async () => {
-    const { service, prisma } = build(row({ aiTrial: true, aiCycleEndsAt: null }), { otherTrial: 500_000 });
-    expect(await service.check('v1', NOW)).toMatchObject({ ok: false, reason: 'exhausted' });
-    expect(prisma.venueSubscription.aggregate.mock.calls[0][0].where).toMatchObject({ aiTrial: true, venueId: { not: 'v1' }, venue: { ownerId: 'o1' } });
+    const { service, prisma } = build(
+      row({ aiTrial: true, aiCycleEndsAt: null }),
+      { otherTrial: 500_000 },
+    );
+    expect(await service.check('v1', NOW)).toMatchObject({
+      ok: false,
+      reason: 'exhausted',
+    });
+    expect(
+      prisma.venueSubscription.aggregate.mock.calls[0][0].where,
+    ).toMatchObject({
+      aiTrial: true,
+      venueId: { not: 'v1' },
+      venue: { ownerId: 'o1' },
+    });
   });
 
   it('rolls a window that ran out over once, guarded against a concurrent roll', async () => {
     const ended = new Date(NOW.getTime() - DAY);
-    const { service, prisma } = build(row({ aiCycleEndsAt: ended, aiCycleSpentMicros: 4_000_000 }));
+    const { service, prisma } = build(
+      row({ aiCycleEndsAt: ended, aiCycleSpentMicros: 4_000_000 }),
+    );
     const verdict = await service.check('v1', NOW);
     expect(verdict.ok).toBe(true);
     const call = prisma.venueSubscription.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ venueId: 'v1', aiTrial: false, aiCycleEndsAt: ended });
-    expect(call.data).toMatchObject({ aiCycleSpentMicros: 0, aiCycleStartedAt: ended });
+    expect(call.where).toEqual({
+      venueId: 'v1',
+      aiTrial: false,
+      aiCycleEndsAt: ended,
+    });
+    expect(call.data).toMatchObject({
+      aiCycleSpentMicros: 0,
+      aiCycleStartedAt: ended,
+    });
   });
 
   it('charges the real cost in one statement with the allowance room it was checked against', async () => {
@@ -91,6 +134,8 @@ describe('VenueAiCreditService', () => {
     await service.charge('v1', { roomMicros: 1 }, 0);
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
     prisma.$executeRaw.mockRejectedValueOnce(new Error('db down'));
-    await expect(service.charge('v1', { roomMicros: 1 }, 0.01)).resolves.toBeUndefined();
+    await expect(
+      service.charge('v1', { roomMicros: 1 }, 0.01),
+    ).resolves.toBeUndefined();
   });
 });

@@ -2,9 +2,17 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
-import { DAY_MS, subscriptionStanding } from '../../subscriptions/subscription-state.util';
+import {
+  DAY_MS,
+  subscriptionStanding,
+} from '../../subscriptions/subscription-state.util';
 import { VenueAiCreditService } from '../credit/venue-ai-credit.service';
-import { CREDIT_ROW_SELECT, CREDIT_WINDOW_DAYS, freshAiCycle, type VenueAiCreditView } from '../credit/venue-ai-credit';
+import {
+  CREDIT_ROW_SELECT,
+  CREDIT_WINDOW_DAYS,
+  freshAiCycle,
+  type VenueAiCreditView,
+} from '../credit/venue-ai-credit';
 import { fromMicros, toMicros } from '../ai-day';
 import type { AiCreditTopUpDto, UpdateVenueCreditDto } from './ai-admin.dto';
 
@@ -29,20 +37,36 @@ export class AiAdminCreditService {
             ],
           }
         : {},
-      select: { id: true, nameEn: true, nameAr: true, ownerId: true, owner: { select: { name: true } } },
+      select: {
+        id: true,
+        nameEn: true,
+        nameAr: true,
+        ownerId: true,
+        owner: { select: { name: true } },
+      },
       take: 300,
     });
     const ids = venues.map((v) => v.id);
     const subs = new Map(
-      (await this.prisma.venueSubscription.findMany({ where: { venueId: { in: ids } }, select: CREDIT_ROW_SELECT })).map((s) => [s.venueId, s]),
+      (
+        await this.prisma.venueSubscription.findMany({
+          where: { venueId: { in: ids } },
+          select: CREDIT_ROW_SELECT,
+        })
+      ).map((s) => [s.venueId, s]),
     );
-    for (const v of venues) if (!subs.has(v.id)) subs.set(v.id, await this.subscriptions.ensure(v.id));
+    for (const v of venues)
+      if (!subs.has(v.id))
+        subs.set(v.id, await this.subscriptions.ensure(v.id));
     const now = new Date();
     const views = await this.credit.views(
       venues.map((v) => ({ ...subs.get(v.id)!, ownerId: v.ownerId })),
       now,
     );
-    const spent = await this.realCost(ids, new Date(now.getTime() - CREDIT_WINDOW_DAYS * DAY_MS));
+    const spent = await this.realCost(
+      ids,
+      new Date(now.getTime() - CREDIT_WINDOW_DAYS * DAY_MS),
+    );
     const items = venues
       .map((v, i) => ({
         venueId: v.id,
@@ -54,7 +78,10 @@ export class AiAdminCreditService {
         realCost30dUsd: fromMicros(spent.get(v.id) ?? 0),
         ...publicView(views[i]),
       }))
-      .sort((a, b) => b.realCost30dUsd - a.realCost30dUsd || a.balanceUsd - b.balanceUsd);
+      .sort(
+        (a, b) =>
+          b.realCost30dUsd - a.realCost30dUsd || a.balanceUsd - b.balanceUsd,
+      );
     return {
       counts: {
         venues: items.length,
@@ -75,7 +102,9 @@ export class AiAdminCreditService {
     if (!venue) throw new NotFoundException('Venue not found');
     const view = await this.credit.state(venueId);
     const sub = await this.subscriptions.ensure(venueId);
-    const since = view.trial ? sub.startedAt : (view.cycleStartedAt ?? sub.startedAt);
+    const since = view.trial
+      ? sub.startedAt
+      : (view.cycleStartedAt ?? sub.startedAt);
     const [topUps, spent] = await Promise.all([
       this.prisma.aiCreditTopUp.findMany({
         where: { venueId },
@@ -119,9 +148,15 @@ export class AiAdminCreditService {
       data.aiAssistantEnabled = dto.enabled;
       changed.enabled = dto.enabled;
     }
-    if (dto.overrideUsd !== undefined && dto.overrideUsd !== sub.aiCreditOverrideUsd) {
+    if (
+      dto.overrideUsd !== undefined &&
+      dto.overrideUsd !== sub.aiCreditOverrideUsd
+    ) {
       data.aiCreditOverrideUsd = dto.overrideUsd;
-      changed.overrideUsd = { from: sub.aiCreditOverrideUsd, to: dto.overrideUsd };
+      changed.overrideUsd = {
+        from: sub.aiCreditOverrideUsd,
+        to: dto.overrideUsd,
+      };
     }
     if (dto.endTrial && sub.aiTrial) {
       Object.assign(data, freshAiCycle());
@@ -170,14 +205,17 @@ export class AiAdminCreditService {
           action: 'ai.credit.top_up',
           targetType: 'venue',
           targetId: venueId,
-          metadata: { venueId, topUpId: row.id, creditedUsd: dto.creditedUsd } as Prisma.InputJsonValue,
+          metadata: { venueId, topUpId: row.id, creditedUsd: dto.creditedUsd },
         },
       });
     });
     return this.detail(venueId);
   }
 
-  private async realCost(venueIds: string[], since: Date): Promise<Map<string, number>> {
+  private async realCost(
+    venueIds: string[],
+    since: Date,
+  ): Promise<Map<string, number>> {
     if (!venueIds.length) return new Map();
     const rows = await this.prisma.aiOwnerEventLog.groupBy({
       by: ['venueId'],
