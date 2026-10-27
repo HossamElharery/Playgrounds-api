@@ -14,6 +14,7 @@ function build(over: Record<string, unknown> = {}) {
     aiAssistantEnabled: true,
     aiCreditOverrideUsd: null,
     aiTrial: true,
+    aiTopUpMicros: 0,
     ...over,
   };
   const tx = {
@@ -95,6 +96,18 @@ describe('AiAdminCreditService', () => {
     const audit = tx.auditLogEntry.create.mock.calls[0][0].data;
     expect(audit.action).toBe('ai.credit.top_up');
     expect(JSON.stringify(audit.metadata)).not.toMatch(/received|25000/);
+  });
+
+  it('refuses a top-up that would push unused top-up credit past what the column holds', async () => {
+    const { service, tx } = build({ aiTopUpMicros: 1_999_000_000 });
+    await expect(
+      service.topUp('admin-1', 'v1', {
+        receivedAmount: 0,
+        receivedCurrency: 'EGP',
+        creditedUsd: 5,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(tx.aiCreditTopUp.create).not.toHaveBeenCalled();
   });
 
   it('switches the assistant off, sets an override and ends a trial in one audited change', async () => {

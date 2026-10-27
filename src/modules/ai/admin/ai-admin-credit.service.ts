@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ApiException } from '../../../common/errors/api-exception';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
 import {
   DAY_MS,
@@ -15,6 +16,9 @@ import {
 } from '../credit/venue-ai-credit';
 import { fromMicros, toMicros } from '../ai-day';
 import type { AiCreditTopUpDto, UpdateVenueCreditDto } from './ai-admin.dto';
+
+/** Unused top-up credit is a 32-bit column of micro-USD; this keeps it well inside it. */
+const MAX_TOP_UP_BALANCE_MICROS = 2_000_000_000;
 
 /** Admin side of the venues' AI credit: switch, monthly override, end of trial and manual top-ups. */
 @Injectable()
@@ -182,6 +186,12 @@ export class AiAdminCreditService {
   async topUp(adminId: string, venueId: string, dto: AiCreditTopUpDto) {
     const sub = await this.subscriptions.ensure(venueId);
     const creditedMicros = toMicros(dto.creditedUsd);
+    if (sub.aiTopUpMicros + creditedMicros > MAX_TOP_UP_BALANCE_MICROS)
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'AI_CREDIT_TOP_UP_TOO_LARGE',
+        `Unused top-up credit cannot go above ${fromMicros(MAX_TOP_UP_BALANCE_MICROS)} USD`,
+      );
     await this.prisma.$transaction(async (tx) => {
       const row = await tx.aiCreditTopUp.create({
         data: {
