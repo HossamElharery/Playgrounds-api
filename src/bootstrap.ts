@@ -15,6 +15,13 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { imageVariantMiddleware } from './modules/storage/image-variants';
 import { isShutdownDraining } from './common/lifecycle/shutdown-state';
 
+const VIDEO_CONTENT_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+};
+
 export function configureApp(app: INestApplication): ConfigService {
   const config = app.get(ConfigService);
 
@@ -90,6 +97,11 @@ export function configureApp(app: INestApplication): ConfigService {
     express.static(path.join(process.cwd(), 'uploads'), {
       maxAge: '1y',
       immutable: true,
+      setHeaders: (res, filePath) => {
+        // send maps .mp4 to application/mp4; crawlers and some players expect video/*.
+        const videoType = VIDEO_CONTENT_TYPES[path.extname(filePath).toLowerCase()];
+        if (videoType) res.setHeader('Content-Type', videoType);
+      },
     }),
   );
   app.use(

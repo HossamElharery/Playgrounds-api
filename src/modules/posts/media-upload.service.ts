@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createPostThumbnail } from './post-thumbnail';
+import { prepareVideo, type PreparedVideo } from './video-poster';
 import { RequestUploadDto } from './dto/request-upload.dto';
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
@@ -64,22 +65,27 @@ export class MediaUploadService {
       durationSeconds: asset.durationSeconds ?? undefined,
     });
     let thumbnail: Buffer | undefined;
+    let video: PreparedVideo = {};
     if (asset.type === 'image') {
       try {
         thumbnail = await createPostThumbnail(file.buffer);
       } catch {
         throw new BadRequestException('Invalid image or image dimensions are too large');
       }
+    } else {
+      video = await prepareVideo(file.buffer, file.mimetype);
     }
     const uploaded = await this.storage.uploadBuffer(
-      file.buffer,
+      video.video ?? file.buffer,
       file.originalname,
       file.mimetype,
       'posts',
     );
     const thumbnailUrl =
       asset.type === 'video'
-        ? await this.maybeThumbnail(uploaded.key, file.buffer)
+        ? video.poster
+          ? (await this.storage.uploadBuffer(video.poster, 'poster.jpg', 'image/jpeg', 'posts/thumbnails')).url
+          : ''
         : (await this.storage.uploadBuffer(thumbnail!, 'preview.webp', 'image/webp', 'posts/thumbnails')).url;
     return this.prisma.mediaAsset.update({
       where: { id: assetId },
@@ -133,9 +139,5 @@ export class MediaUploadService {
         throw new BadRequestException('Video must be 90 seconds or shorter');
       }
     }
-  }
-
-  private async maybeThumbnail(_key: string, _buffer: Buffer): Promise<string> {
-    return '';
   }
 }

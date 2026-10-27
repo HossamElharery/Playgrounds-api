@@ -70,3 +70,36 @@ describe('MediaUploadService image previews', () => {
     expect(storage.uploadBuffer).not.toHaveBeenCalled();
   });
 });
+
+describe('MediaUploadService video posters', () => {
+  it('stores a poster frame for a video and uses it as the thumbnail', async () => {
+    jest.resetModules();
+    jest.doMock('./video-poster', () => ({
+      prepareVideo: jest.fn().mockResolvedValue({ video: Buffer.from('fast'), poster: Buffer.from('jpg') }),
+    }));
+    const { MediaUploadService: Service } = await import('./media-upload.service');
+    const prisma = {
+      mediaAsset: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'asset', type: 'video', durationSeconds: 12 }),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)),
+      },
+    };
+    const storage = {
+      uploadBuffer: jest
+        .fn()
+        .mockResolvedValueOnce({ key: 'posts/clip.mp4', url: '/uploads/posts/clip.mp4' })
+        .mockResolvedValueOnce({ key: 'posts/thumbnails/p.jpg', url: '/uploads/posts/thumbnails/p.jpg' }),
+    };
+    const service = new Service(prisma as never, storage as never);
+    const result = await service.receiveFile('user', 'asset', {
+      buffer: Buffer.from('slow'),
+      mimetype: 'video/mp4',
+      originalname: 'clip.mp4',
+      size: 4,
+    });
+    expect(storage.uploadBuffer.mock.calls[0][0].toString()).toBe('fast');
+    expect(storage.uploadBuffer.mock.calls[1].slice(1)).toEqual(['poster.jpg', 'image/jpeg', 'posts/thumbnails']);
+    expect(result.thumbnailUrl).toBe('/uploads/posts/thumbnails/p.jpg');
+    jest.dontMock('./video-poster');
+  });
+});

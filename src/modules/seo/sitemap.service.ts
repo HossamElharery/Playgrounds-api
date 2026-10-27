@@ -19,6 +19,11 @@ export function isIndexablePost(text: string, mediaCount: number): boolean {
   return letters.length >= 12;
 }
 
+/** True when a video row has its own poster image instead of the mp4 copied into thumbnailUrl. */
+export function isPosterUrl(thumbnailUrl: string | null | undefined, url: string): boolean {
+  return !!thumbnailUrl && thumbnailUrl !== url && /\.(jpe?g|png|webp|avif)(\?|$)/i.test(thumbnailUrl);
+}
+
 const escapeXml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -34,7 +39,7 @@ export class SitemapService {
     this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
 
-  private localizedEntry(path: string, lastmod?: Date | null, images: string[] = []): string {
+  private localizedEntry(path: string, lastmod?: Date | null, images: string[] = [], extra = ''): string {
     const ar = `${this.siteUrl}/ar${path}`;
     const en = `${this.siteUrl}/en${path}`;
     return [ar, en].map((loc, index) => `
@@ -44,7 +49,7 @@ export class SitemapService {
     <xhtml:link rel="alternate" hreflang="ar-EG" href="${escapeXml(ar)}"/>
     <xhtml:link rel="alternate" hreflang="en" href="${escapeXml(en)}"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(ar)}"/>
-    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}
+    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}${extra}
   </url>`).join('');
   }
 
@@ -52,7 +57,8 @@ export class SitemapService {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml"
-        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">${entries}
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">${entries}
 </urlset>`;
   }
 
@@ -148,16 +154,54 @@ ${items}
   async posts(): Promise<string> {
     const posts = await this.prisma.post.findMany({
       where: this.publicPostWhere,
-      select: { id: true, slug: true, updatedAt: true, text: true, _count: { select: { media: true } } },
+      select: {
+        id: true,
+        slug: true,
+        updatedAt: true,
+        createdAt: true,
+        text: true,
+        media: {
+          select: { type: true, url: true, thumbnailUrl: true, durationSeconds: true },
+          orderBy: { order: 'asc' },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: SitemapService.MAX_POSTS,
     });
     return this.urlset(
       posts
-        .filter((post) => isIndexablePost(post.text, post._count?.media ?? 0))
-        .map((post) => this.localizedEntry(`/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`, post.updatedAt))
+        .filter((post) => isIndexablePost(post.text, post.media.length))
+        .map((post) => {
+          const images = post.media.filter((m) => m.type === 'image').map((m) => m.url);
+          const videos = post.media
+            .filter((m) => m.type === 'video' && isPosterUrl(m.thumbnailUrl, m.url))
+            .map((m) => this.videoEntry(post.text, post.createdAt, m))
+            .join('');
+          return this.localizedEntry(
+            `/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`,
+            post.updatedAt,
+            images,
+            videos,
+          );
+        })
         .join(''),
     );
+  }
+
+  /** Google drops a <video:video> without a real thumbnail, so callers pass only media with a poster. */
+  private videoEntry(
+    text: string,
+    createdAt: Date,
+    media: { url: string; thumbnailUrl: string; durationSeconds: number | null },
+  ): string {
+    const caption = text.replace(/\s+/g, ' ').trim();
+    const title = caption.slice(0, 100) || 'Matchena community video';
+    const description = caption.slice(0, 2048) || 'A sports video shared by a player on Matchena.';
+    const abs = (url: string) => escapeXml(new URL(url, this.siteUrl).toString());
+    const duration = media.durationSeconds && media.durationSeconds > 0
+      ? `<video:duration>${Math.min(28800, Math.round(media.durationSeconds))}</video:duration>`
+      : '';
+    return `<video:video><video:thumbnail_loc>${abs(media.thumbnailUrl)}</video:thumbnail_loc><video:title>${escapeXml(title)}</video:title><video:description>${escapeXml(description)}</video:description><video:content_loc>${abs(media.url)}</video:content_loc>${duration}<video:publication_date>${createdAt.toISOString()}</video:publication_date><video:family_friendly>yes</video:family_friendly></video:video>`;
   }
 
   async hashtags(): Promise<string> {
