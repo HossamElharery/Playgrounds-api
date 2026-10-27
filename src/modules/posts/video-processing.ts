@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,9 +28,11 @@ export function isPosterUrl(thumbnailUrl: string | null | undefined, url: string
 
 export interface PreparedVideo {
   /** The same streams with the moov index moved to the front and location tags removed (MP4/MOV only). */
-  video?: Buffer;
+  videoPath?: string;
   /** A JPEG frame, at most 1280px wide, for posters, og:image and VideoObject.thumbnailUrl. */
   poster?: Buffer;
+  /** Null when ffprobe is missing or can't read the file. */
+  probe: VideoProbe | null;
 }
 
 export interface VideoProbe {
@@ -47,7 +49,8 @@ export interface VideoProbe {
 }
 
 export interface OptimizedVideo {
-  video: Buffer;
+  videoPath: string;
+  bytes: number;
   poster?: Buffer;
   probe: VideoProbe;
   transcoded: boolean;
@@ -84,13 +87,24 @@ function extFor(mimeType: string): string {
   return mimeType === 'video/webm' ? 'webm' : mimeType === 'video/quicktime' ? 'mov' : 'mp4';
 }
 
-async function withTempDir<T>(work: (dir: string) => Promise<T>): Promise<T> {
+export async function withTempDir<T>(work: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'matchena-video-'));
   try {
     return await work(dir);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+let toolsReady: Promise<boolean> | undefined;
+
+/** Whether ffprobe runs here, so a failed probe means a bad file rather than a missing tool. */
+export function hasVideoTools(): Promise<boolean> {
+  toolsReady ??= run(FFPROBE, ['-version'], 10_000).then(
+    () => true,
+    () => false,
+  );
+  return toolsReady;
 }
 
 async function posterFrom(input: string, output: string): Promise<Buffer | undefined> {
@@ -181,74 +195,65 @@ const SCALE_FILTER =
 
 /**
  * Upload-time step, fast enough to run inside the request (a remux copies streams, no re-encode):
- * a poster frame plus a faststart copy without location tags.
+ * a poster frame plus a faststart copy without location tags, written into `dir`.
  * Search engines only index a video that has a thumbnail, and a moov atom at the end of the
  * file forces browsers and crawlers to fetch the tail before the first frame.
- * Returns an empty object when ffmpeg is missing or the file can't be read, so uploads still work.
+ * Returns no copy or poster when ffmpeg is missing or the file can't be read, so uploads still work.
  */
-export async function prepareVideo(buffer: Buffer, mimeType: string): Promise<PreparedVideo> {
-  return withTempDir(async (dir) => {
-    const ext = extFor(mimeType);
-    const input = join(dir, `in.${ext}`);
-    const remuxed = join(dir, `out.${ext}`);
-    const result: PreparedVideo = {};
-    await writeFile(input, buffer);
-    result.poster = await posterFrom(input, join(dir, 'poster.jpg'));
-    if (ext !== 'webm') {
-      // Older ffmpeg keeps rotation as a stream tag, so tags are only dropped for upright clips;
-      // the background transcode strips them from rotated ones.
-      const upright = (await probeVideo(input))?.rotation === 0;
-      try {
-        await ffmpeg(['-i', input, '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', ...(upright ? ['-map_metadata', '-1'] : []), '-movflags', '+faststart', remuxed]);
-        const out = await readFile(remuxed);
-        if (out.length > 0) result.video = out;
-      } catch {
-        // Keep the original bytes.
-      }
+export async function prepareVideo(input: string, mimeType: string, dir: string): Promise<PreparedVideo> {
+  const ext = extFor(mimeType);
+  const remuxed = join(dir, `fast.${ext}`);
+  const probe = await probeVideo(input);
+  const result: PreparedVideo = { probe, poster: await posterFrom(input, join(dir, 'poster.jpg')) };
+  if (ext !== 'webm' && probe) {
+    // Older ffmpeg keeps rotation as a stream tag, so tags are only dropped for upright clips;
+    // the background transcode strips them from rotated ones.
+    const upright = probe.rotation === 0;
+    try {
+      await ffmpeg(['-i', input, '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', ...(upright ? ['-map_metadata', '-1'] : []), '-movflags', '+faststart', remuxed]);
+      if ((await stat(remuxed)).size > 0) result.videoPath = remuxed;
+    } catch {
+      // Keep the original bytes.
     }
-    return result;
-  });
+  }
+  return result;
 }
 
 /**
  * Background step: turns any upload (HEVC from iPhones, WebM, 4K, 60+ fps, high bitrate) into
  * H.264 High / yuv420p / AAC in a faststart MP4 of at most 1080p, which plays everywhere and is
  * what Google's video indexing handles best. Files that already match are only remuxed.
- * Returns null when the file isn't a readable video or ffmpeg is unavailable.
+ * The result is written into `dir`. Returns null when the file isn't a readable video or ffmpeg is unavailable.
  */
-export async function optimizeVideo(buffer: Buffer, mimeType: string): Promise<OptimizedVideo | null> {
-  return withTempDir(async (dir) => {
-    const input = join(dir, `in.${extFor(mimeType)}`);
-    const output = join(dir, 'out.mp4');
-    await writeFile(input, buffer);
-    const source = await probeVideo(input);
-    if (!source) return null;
-    const transcoded = needsTranscode(source);
-    const common = ['-map', '0:v:0', '-map', '0:a:0?', '-map_metadata', '-1', '-movflags', '+faststart'];
-    try {
-      if (transcoded) {
-        await ffmpeg(
-          [
-            '-i', input, ...common,
-            '-vf', SCALE_FILTER, '-fpsmax', String(VIDEO_TARGET.maxFps),
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24',
-            '-maxrate', '4M', '-bufsize', '8M',
-            '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-            '-threads', THREADS,
-            output,
-          ],
-          TRANSCODE_TIMEOUT_MS,
-        );
-      } else {
-        await ffmpeg(['-i', input, ...common, '-c', 'copy', output]);
-      }
-    } catch {
-      return null;
+export async function optimizeVideo(input: string, dir: string): Promise<OptimizedVideo | null> {
+  const output = join(dir, 'web.mp4');
+  const source = await probeVideo(input);
+  if (!source) return null;
+  const transcoded = needsTranscode(source);
+  const common = ['-map', '0:v:0', '-map', '0:a:0?', '-map_metadata', '-1', '-movflags', '+faststart'];
+  try {
+    if (transcoded) {
+      await ffmpeg(
+        [
+          '-i', input, ...common,
+          '-vf', SCALE_FILTER, '-fpsmax', String(VIDEO_TARGET.maxFps),
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24',
+          '-maxrate', '4M', '-bufsize', '8M',
+          '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+          '-threads', THREADS,
+          output,
+        ],
+        TRANSCODE_TIMEOUT_MS,
+      );
+    } else {
+      await ffmpeg(['-i', input, ...common, '-c', 'copy', output]);
     }
-    const probe = await probeVideo(output);
-    const video = await readFile(output).catch(() => null);
-    if (!probe || !video?.length) return null;
-    return { video, poster: await posterFrom(output, join(dir, 'poster.jpg')), probe, transcoded };
-  });
+  } catch {
+    return null;
+  }
+  const probe = await probeVideo(output);
+  const bytes = await stat(output).then((s) => s.size, () => 0);
+  if (!probe || !bytes) return null;
+  return { videoPath: output, bytes, poster: await posterFrom(output, join(dir, 'poster.jpg')), probe, transcoded };
 }

@@ -19,8 +19,17 @@ export interface StorageProvider {
     mimeType: string,
     prefix?: string,
   ): Promise<UploadResult>;
+  /** Same as uploadBuffer, streamed from a file so large videos never sit in memory. */
+  uploadFile(
+    filePath: string,
+    originalName: string,
+    mimeType: string,
+    prefix?: string,
+  ): Promise<UploadResult>;
   deleteObject(key: string): Promise<void>;
   readObject(key: string): Promise<Buffer>;
+  /** Copies a stored object to a local file. */
+  readObjectToFile(key: string, destination: string): Promise<void>;
   urlFor(key: string): string;
   keyFromUrl(url: string): string | undefined;
   createPresignedPut?(

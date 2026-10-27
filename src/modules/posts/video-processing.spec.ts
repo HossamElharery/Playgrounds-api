@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { needsTranscode, optimizeVideo, prepareVideo, type VideoProbe } from './video-processing';
+import { needsTranscode, optimizeVideo, prepareVideo, withTempDir, type VideoProbe } from './video-processing';
 
 const hasFfmpeg = (() => {
   try {
@@ -14,13 +14,22 @@ const hasFfmpeg = (() => {
   }
 })();
 
-function clip(args: string[]): Buffer {
+function clip(args: string[], seconds = 2): Buffer {
   const dir = mkdtempSync(join(tmpdir(), 'video-spec-'));
   const file = join(dir, 'clip.mp4');
-  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '2', ...args, file], { stdio: 'ignore' });
+  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', String(seconds), ...args, file], { stdio: 'ignore' });
   const buffer = readFileSync(file);
   rmSync(dir, { recursive: true, force: true });
   return buffer;
+}
+
+/** Writes the bytes to a temp file and hands its path to `work`, like an upload on disk. */
+function onDisk<T>(bytes: Buffer, work: (file: string, dir: string) => Promise<T>): Promise<T> {
+  return withTempDir(async (dir) => {
+    const file = join(dir, 'upload.mp4');
+    writeFileSync(file, bytes);
+    return work(file, dir);
+  });
 }
 
 const moovFirst = (video: Buffer) => video.indexOf('moov') < video.indexOf('mdat');
@@ -48,30 +57,43 @@ describe('needsTranscode', () => {
 });
 
 (hasFfmpeg ? describe : describe.skip)('video files', () => {
+  // ffmpeg shares the CPU with every other suite in a full run.
+  jest.setTimeout(120_000);
+
   it('prepareVideo returns a JPEG poster and a faststart remux', async () => {
-    const result = await prepareVideo(clip(['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac']), 'video/mp4');
-    expect(result.poster?.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
-    expect(moovFirst(result.video!)).toBe(true);
+    await onDisk(clip(['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac']), async (file, dir) => {
+      const result = await prepareVideo(file, 'video/mp4', dir);
+      expect(result.poster?.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+      expect(moovFirst(readFileSync(result.videoPath!))).toBe(true);
+      expect(result.probe).toMatchObject({ width: 320, height: 240 });
+      expect(Math.round(result.probe!.durationSeconds)).toBe(2);
+    });
   });
 
   it('optimizeVideo only remuxes a web-ready file', async () => {
-    const result = await optimizeVideo(clip(['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac']), 'video/mp4');
-    expect(result?.transcoded).toBe(false);
-    expect(result?.probe).toMatchObject({ width: 320, height: 240, videoCodec: 'h264', audioCodec: 'aac' });
-    expect(moovFirst(result!.video)).toBe(true);
+    await onDisk(clip(['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac']), async (file, dir) => {
+      const result = await optimizeVideo(file, dir);
+      expect(result?.transcoded).toBe(false);
+      expect(result?.probe).toMatchObject({ width: 320, height: 240, videoCodec: 'h264', audioCodec: 'aac' });
+      expect(moovFirst(readFileSync(result!.videoPath))).toBe(true);
+    });
   });
 
   it('optimizeVideo re-encodes an oversized 4:2:2 clip to 1080p H.264 yuv420p', async () => {
     const big = clip(['-vf', 'scale=2560:1440', '-c:v', 'libx264', '-pix_fmt', 'yuv422p', '-c:a', 'aac']);
-    const result = await optimizeVideo(big, 'video/mp4');
-    expect(result?.transcoded).toBe(true);
-    expect(result?.probe).toMatchObject({ width: 1920, height: 1080, videoCodec: 'h264', pixelFormat: 'yuv420p', audioCodec: 'aac' });
-    expect(result?.poster?.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
-    expect(moovFirst(result!.video)).toBe(true);
-  }, 60_000);
+    await onDisk(big, async (file, dir) => {
+      const result = await optimizeVideo(file, dir);
+      expect(result?.transcoded).toBe(true);
+      expect(result?.probe).toMatchObject({ width: 1920, height: 1080, videoCodec: 'h264', pixelFormat: 'yuv420p', audioCodec: 'aac' });
+      expect(result?.poster?.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+      expect(moovFirst(readFileSync(result!.videoPath))).toBe(true);
+    });
+  });
 
   it('returns nothing for bytes that are not a video', async () => {
-    expect(await prepareVideo(Buffer.from('nope'), 'video/mp4')).toEqual({});
-    expect(await optimizeVideo(Buffer.from('nope'), 'video/mp4')).toBeNull();
+    await onDisk(Buffer.from('nope'), async (file, dir) => {
+      expect(await prepareVideo(file, 'video/mp4', dir)).toEqual({ probe: null, poster: undefined });
+      expect(await optimizeVideo(file, dir)).toBeNull();
+    });
   });
 });

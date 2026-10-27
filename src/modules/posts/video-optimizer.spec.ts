@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { deleteOriginalIfUnused, isOptimizedVideoUrl, optimizeStoredVideo } from './video-optimizer';
 import { optimizeVideo } from './video-processing';
 
@@ -25,10 +26,12 @@ function setup(updated = 1) {
   };
   const storage = {
     keyFromUrl: jest.fn((url: string) => url.split('/uploads/')[1]),
-    readObject: jest.fn().mockResolvedValue(Buffer.alloc(1000)),
+    readObjectToFile: jest.fn((_key: string, destination: string) => writeFile(destination, Buffer.alloc(1000))),
+    uploadFile: jest
+      .fn()
+      .mockResolvedValueOnce({ key: 'posts/videos/new.mp4', url: 'https://api.matchena.com/uploads/posts/videos/new.mp4' }),
     uploadBuffer: jest
       .fn()
-      .mockResolvedValueOnce({ key: 'posts/videos/new.mp4', url: 'https://api.matchena.com/uploads/posts/videos/new.mp4' })
       .mockResolvedValueOnce({ key: 'posts/thumbnails/p.jpg', url: 'https://api.matchena.com/uploads/posts/thumbnails/p.jpg' }),
     deleteObject: jest.fn().mockResolvedValue(undefined),
     urlFor: jest.fn(),
@@ -38,7 +41,7 @@ function setup(updated = 1) {
 
 describe('optimizeStoredVideo', () => {
   beforeEach(() => {
-    (optimizeVideo as jest.Mock).mockResolvedValue({ video: Buffer.alloc(300), poster: Buffer.from('jpg'), probe, transcoded: true });
+    (optimizeVideo as jest.Mock).mockResolvedValue({ videoPath: '/tmp/web.mp4', bytes: 300, poster: Buffer.from('jpg'), probe, transcoded: true });
   });
 
   it('stores the re-encode under posts/videos and moves every row to it with the real size and a poster', async () => {
@@ -46,7 +49,8 @@ describe('optimizeStoredVideo', () => {
     const result = await optimizeStoredVideo(prisma as never, storage as never, OLD, true);
     expect(result).toMatchObject({ outcome: 'optimized', beforeBytes: 1000, afterBytes: 300, originalKey: 'posts/raw.mp4' });
     expect(result.newUrl).toContain('/uploads/posts/videos/new.mp4');
-    expect(storage.uploadBuffer.mock.calls[0].slice(1)).toEqual(['video.mp4', 'video/mp4', 'posts/videos']);
+    expect(storage.uploadFile.mock.calls[0]).toEqual(['/tmp/web.mp4', 'video.mp4', 'video/mp4', 'posts/videos']);
+    expect(storage.uploadBuffer.mock.calls[0].slice(1)).toEqual(['poster.jpg', 'image/jpeg', 'posts/thumbnails']);
     const swap = calls.find((c) => c.model === 'mediaAsset' && c.args.data.url)!;
     expect(swap.args).toEqual({
       where: { url: OLD },
@@ -61,7 +65,7 @@ describe('optimizeStoredVideo', () => {
     const { prisma, storage } = setup();
     const result = await optimizeStoredVideo(prisma as never, storage as never, OLD, false);
     expect(result.outcome).toBe('optimized');
-    expect(storage.uploadBuffer).not.toHaveBeenCalled();
+    expect(storage.uploadFile).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -78,6 +82,8 @@ describe('optimizeStoredVideo', () => {
     expect((await optimizeStoredVideo(prisma as never, storage as never, 'https://x/uploads/posts/videos/a.mp4', true)).outcome).toBe('already-optimized');
     expect((await optimizeStoredVideo(prisma as never, storage as never, 'https://cdn.example/a.mp4', true)).outcome).toBe('not-stored-here');
     (optimizeVideo as jest.Mock).mockResolvedValue(null);
+    expect((await optimizeStoredVideo(prisma as never, storage as never, OLD, true)).outcome).toBe('unreadable');
+    storage.readObjectToFile.mockRejectedValueOnce(new Error('gone'));
     expect((await optimizeStoredVideo(prisma as never, storage as never, OLD, true)).outcome).toBe('unreadable');
     expect(isOptimizedVideoUrl('https://api.matchena.com/uploads/posts/videos/a.mp4')).toBe(true);
   });

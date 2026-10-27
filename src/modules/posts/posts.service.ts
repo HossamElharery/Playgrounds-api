@@ -5,6 +5,7 @@ import {
   GoneException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   PostAuthorKind,
@@ -16,6 +17,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AnalyticsService } from './analytics.service';
 import { HashtagService } from './hashtag.service';
+import { IndexNowService } from '../seo/index-now.service';
+import { isIndexablePost, postContentLang } from '../seo/sitemap.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CreatePostReportDto } from './dto/create-report.dto';
@@ -48,6 +51,7 @@ export class PostsService {
     private readonly notifications: NotificationsService,
     private readonly analytics: AnalyticsService,
     private readonly hashtags: HashtagService,
+    @Optional() private readonly indexNow?: IndexNowService,
   ) {}
 
   async assertCanPost(userId: string) {
@@ -233,7 +237,19 @@ export class PostsService {
     }
 
     this.analytics.emit('post_created', userId, { postId: post.id, media: assets.length });
+    this.pingSearchEngines(post, assets.length);
     return this.toDto(post, userId);
+  }
+
+  /** Tells Bing (and through it ChatGPT search and Copilot) about a new public post right away. */
+  private pingSearchEngines(
+    post: { id: string; slug: string; text: string; status: string; visibility: string; autoHidden: boolean; flagged: boolean },
+    mediaCount: number,
+  ): void {
+    if (post.status !== 'active' || post.visibility !== 'public' || post.autoHidden || post.flagged) return;
+    if (!isIndexablePost(post.text, mediaCount)) return;
+    const path = `/${postContentLang(post.text)}/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`;
+    void this.indexNow?.notifyUrls([path]).catch(() => undefined);
   }
 
   async getByParam(param: string, viewer?: PostViewer) {
