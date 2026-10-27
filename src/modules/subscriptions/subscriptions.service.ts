@@ -15,10 +15,11 @@ import {
   subscriptionStanding,
   type SubscriptionState,
 } from './subscription-state.util';
-import { DEFAULT_PLAN_KEY, planListPrice } from './subscription-plans';
+import { ANNUAL_PAID_MONTHS, DEFAULT_PLAN_KEY, planListPrice } from './subscription-plans';
 import { freshAiCycle } from '../ai/credit/venue-ai-credit';
 
 export const DEFAULT_LIST_PRICE = planListPrice(DEFAULT_PLAN_KEY, 'EGP') ?? 0; // 2,000 EGP in piasters
+/** Fallback only: the trial length is PlatformSetting.trialDays, set by the admin. */
 export const DEFAULT_TRIAL_DAYS = 15;
 
 function localDate(now: Date, timeZone: string): string {
@@ -43,13 +44,42 @@ export class SubscriptionsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  /** The free trial a new venue gets, as the admin set it. */
+  async trialDays(db: Prisma.TransactionClient | PrismaService = this.prisma): Promise<number> {
+    const row = await db.platformSetting.findUnique({ where: { id: 1 }, select: { trialDays: true } });
+    return row?.trialDays ?? DEFAULT_TRIAL_DAYS;
+  }
+
+  /** What the website and the admin approval form need: public, no venue data. */
+  async publicTerms() {
+    return { trialDays: await this.trialDays(), annualPaidMonths: ANNUAL_PAID_MONTHS };
+  }
+
+  async setTrialDays(admin: AuthenticatedUser, trialDays: number) {
+    const before = await this.trialDays();
+    await this.prisma.$transaction([
+      this.prisma.platformSetting.upsert({ where: { id: 1 }, update: { trialDays }, create: { id: 1, trialDays } }),
+      this.prisma.auditLogEntry.create({
+        data: {
+          actorUserId: admin.id,
+          action: 'subscription.trial_days_updated',
+          targetType: 'platform',
+          targetId: 'platform',
+          metadata: { before, after: trialDays } as Prisma.InputJsonValue,
+        },
+      }),
+    ]);
+    return this.publicTerms();
+  }
+
   async ensure(
     venueId: string,
-    days = DEFAULT_TRIAL_DAYS,
+    days?: number,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<VenueSubscription> {
     const existing = await db.venueSubscription.findUnique({ where: { venueId } });
     if (existing) return existing;
+    days ??= await this.trialDays(db);
     return db.venueSubscription.create({
       data: {
         venueId,
@@ -126,12 +156,20 @@ export class SubscriptionsService {
     await assertVenueAccess(this.prisma, user, venueId, { write: false });
     const sub = await this.ensure(venueId);
     const standing = subscriptionStanding(sub);
+    // Still on the free trial until the first real payment is recorded.
+    const paid = await this.prisma.subscriptionPayment.count({ where: { subscriptionId: sub.id, amount: { gt: 0 } } });
+    // The same price the /partners pricing page shows for this plan in this currency; a
+    // currency without public prices shows the admin's quote (0 = not agreed yet).
+    const catalog = planListPrice(sub.planKey, sub.currency);
     return {
       venueId,
       planKey: sub.planKey,
-      listPriceAmount: sub.listPriceAmount,
+      listPriceAmount: catalog ?? sub.listPriceAmount,
+      hasPublicPrice: catalog != null,
+      annualPaidMonths: ANNUAL_PAID_MONTHS,
       currency: sub.currency,
-      isFree: true,
+      onTrial: paid === 0,
+      isFree: paid === 0,
       currentPeriodEnd: sub.currentPeriodEnd,
       graceDays: sub.graceDays,
       graceEndsAt: standing.graceEndsAt,

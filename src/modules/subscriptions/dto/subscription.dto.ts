@@ -79,3 +79,12 @@ export class UpdateSubscriptionTermsDto {
   @MaxLength(2000)
   notes?: string | null;
 }
+
+export class UpdateTrialDaysDto {
+  @ApiPropertyOptional({ description: 'Free trial a new venue gets, 1–365 days' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  trialDays!: number;
+}

@@ -4,9 +4,10 @@ import { AuthGuard } from '../../common/guards/auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { OwnerOnly } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import { SubscriptionsService } from './subscriptions.service';
-import { ExtendSubscriptionDto, UpdateSubscriptionTermsDto } from './dto/subscription.dto';
+import { ExtendSubscriptionDto, UpdateSubscriptionTermsDto, UpdateTrialDaysDto } from './dto/subscription.dto';
 
 @ApiTags('subscriptions')
 @ApiBearerAuth()
@@ -14,6 +15,19 @@ import { ExtendSubscriptionDto, UpdateSubscriptionTermsDto } from './dto/subscri
 @Controller()
 export class SubscriptionsController {
   constructor(private readonly subscriptions: SubscriptionsService) {}
+
+  /** Trial length and billing terms for the website's pricing pages. */
+  @Public()
+  @Get('subscriptions/terms')
+  publicTerms() {
+    return this.subscriptions.publicTerms();
+  }
+
+  @Roles('admin')
+  @Patch('admin/subscriptions/terms')
+  setTrialDays(@CurrentUser() admin: AuthenticatedUser, @Body() dto: UpdateTrialDaysDto) {
+    return this.subscriptions.setTrialDays(admin, dto.trialDays);
+  }
 
   @Roles('owner', 'admin')
   @OwnerOnly()

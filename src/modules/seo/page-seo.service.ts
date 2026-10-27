@@ -3,6 +3,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePageSeoDto } from './page-seo.dto';
 
 const PAGE_KEYS = new Set(['homepage', 'about', 'partners']);
+/** Placeholder an admin can write in marketing SEO copy; replaced by PlatformSetting.trialDays. */
+export const TRIAL_TOKEN = '{trialDays}';
+const DEFAULT_TRIAL_DAYS = 15;
 
 @Injectable()
 export class PageSeoService {
@@ -14,7 +17,18 @@ export class PageSeoService {
     if (!PAGE_KEYS.has(key)) throw new BadRequestException('Unknown marketing page');
     const page = await this.prisma.pageSeoOverride.findUnique({ where: { key } });
     if (!page) throw new NotFoundException('Page SEO not configured');
-    return page;
+    // "{trialDays}" in the copy follows the admin's free-trial setting, so SEO never quotes a stale length.
+    if (![page.titleAr, page.titleEn, page.descriptionAr, page.descriptionEn].some((v) => v.includes(TRIAL_TOKEN))) return page;
+    const setting = await this.prisma.platformSetting.findUnique({ where: { id: 1 }, select: { trialDays: true } });
+    const days = String(setting?.trialDays ?? DEFAULT_TRIAL_DAYS);
+    const fill = (v: string) => v.split(TRIAL_TOKEN).join(days);
+    return {
+      ...page,
+      titleAr: fill(page.titleAr),
+      titleEn: fill(page.titleEn),
+      descriptionAr: fill(page.descriptionAr),
+      descriptionEn: fill(page.descriptionEn),
+    };
   }
 
   update(adminId: string, key: string, dto: UpdatePageSeoDto) {

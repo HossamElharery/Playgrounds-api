@@ -40,7 +40,8 @@ function build(subs: any[]) {
       findUnique: jest.fn().mockResolvedValue({ id: 'v1', nameEn: 'Arena', nameAr: 'الساحة' }),
       findUniqueOrThrow: jest.fn().mockResolvedValue(subs[0]?.venue),
     },
-    subscriptionPayment: { ...tx.subscriptionPayment, findMany: jest.fn().mockResolvedValue([]) },
+    subscriptionPayment: { ...tx.subscriptionPayment, findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+    platformSetting: { findUnique: jest.fn().mockResolvedValue({ trialDays: 15 }) },
     user: { findMany: jest.fn().mockResolvedValue([{ id: 'admin-1' }]) },
     notification: { findFirst: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(async (fn: any) => (typeof fn === 'function' ? fn(tx) : Promise.all(fn))),
@@ -83,6 +84,37 @@ describe('SubscriptionsService', () => {
     expect(eg).toMatchObject({ currency: 'EGP', listPriceAmount: 200000 });
   });
 
+  it('a new venue gets the trial length the admin set', async () => {
+    const { svc, prisma } = build([]);
+    prisma.venueSubscription.findUnique.mockResolvedValue(null);
+    prisma.venueSubscription.create = jest.fn(async ({ data }: any) => data);
+    prisma.venue.findUnique.mockResolvedValue({ currency: 'EGP' });
+    prisma.platformSetting.findUnique.mockResolvedValue({ trialDays: 21 });
+    jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const created: any = await svc.ensure('v-new');
+      expect(created.currentPeriodEnd.getTime()).toBe(at(21).getTime());
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('the owner sees the catalog price of their plan in their currency, and the trial until the first payment', async () => {
+    const { svc, prisma } = build([sub({ currency: 'SAR', listPriceAmount: 100000 })]);
+    const owner = { id: 'owner-1', phone: '', name: 'Owner', roles: ['admin'] } as never;
+    const trial: any = await svc.forOwner(owner, 'v1');
+    expect(trial).toMatchObject({ planKey: 'pro', currency: 'SAR', listPriceAmount: 19900, hasPublicPrice: true, onTrial: true });
+    expect(trial).not.toHaveProperty('agreedPriceAmount');
+    prisma.subscriptionPayment.count.mockResolvedValue(1);
+    expect(await svc.forOwner(owner, 'v1')).toMatchObject({ onTrial: false });
+  });
+
+  it('a currency without public prices shows the admin quote', async () => {
+    const { svc } = build([sub({ currency: 'KWD', listPriceAmount: 4500 })]);
+    const owner = { id: 'owner-1', phone: '', name: 'Owner', roles: ['admin'] } as never;
+    expect(await svc.forOwner(owner, 'v1')).toMatchObject({ listPriceAmount: 4500, hasPublicPrice: false });
+  });
+
   it('switching plan in a currency without a price list keeps the current list price', async () => {
     const { svc, prisma } = build([sub({ currency: 'QAR', listPriceAmount: 0 })]);
     await svc.updateTerms(admin, 'v1', { planKey: 'starter' });
@@ -103,16 +135,16 @@ describe('SubscriptionsService', () => {
     expect(prisma.venueSubscription.update.mock.calls[0][0].data).toMatchObject({ planKey: 'business', listPriceAmount: 500000 });
   });
 
-  it('the owner view shows the struck-through list price and never the agreed one', async () => {
-    const { svc, prisma } = build([sub()]);
+  it('the owner view shows the plan catalog price and never the agreed one', async () => {
+    const { svc, prisma } = build([sub({ agreedPriceAmount: 250000 })]);
     prisma.venue.findUnique.mockResolvedValue({ id: 'v1', ownerId: 'owner-1' });
     jest.useFakeTimers({ now, doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
     const view = await svc
       .forOwner({ id: 'owner-1', phone: '', name: 'O', roles: ['owner'] } as never, 'v1')
       .finally(() => jest.useRealTimers());
-    expect(view).toMatchObject({ listPriceAmount: 100000, isFree: true, state: 'expiring' });
+    expect(view).toMatchObject({ listPriceAmount: 200000, onTrial: true, state: 'expiring' });
     expect(JSON.stringify(view)).not.toContain('agreedPrice');
-    expect(JSON.stringify(view)).not.toContain('200000');
+    expect(JSON.stringify(view)).not.toContain('250000');
   });
 
   describe('morning reminders', () => {
