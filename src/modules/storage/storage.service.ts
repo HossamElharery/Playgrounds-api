@@ -21,8 +21,25 @@ export class StorageService {
     return this.provider.uploadBuffer(buffer, originalName, mimeType, prefix);
   }
 
+  uploadFile(
+    filePath: string,
+    originalName: string,
+    mimeType: string,
+    prefix?: string,
+  ): Promise<UploadResult> {
+    return this.provider.uploadFile(filePath, originalName, mimeType, prefix);
+  }
+
   deleteObject(key: string): Promise<void> {
     return this.provider.deleteObject(key);
+  }
+
+  readObject(key: string): Promise<Buffer> {
+    return this.provider.readObject(key);
+  }
+
+  readObjectToFile(key: string, destination: string): Promise<void> {
+    return this.provider.readObjectToFile(key, destination);
   }
 
   urlFor(key: string): string {

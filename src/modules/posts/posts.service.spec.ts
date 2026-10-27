@@ -112,3 +112,41 @@ describe('PostsService.like', () => {
     expect(analytics.emit).toHaveBeenCalledWith('post_liked', 'u1', { postId: 'p1' });
   });
 });
+
+describe('PostsService IndexNow ping', () => {
+  const indexNow = { notifyUrls: jest.fn().mockResolvedValue(undefined) };
+  const service = new PostsService(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    indexNow as never,
+  );
+  const ping = (post: Record<string, unknown>, media = 1) =>
+    (service as unknown as { pingSearchEngines: (p: unknown, m: number) => void }).pingSearchEngines(
+      { id: 'p1', slug: 'night-padel', text: 'ماتش بادل', status: 'active', visibility: 'public', autoHidden: false, flagged: false, ...post },
+      media,
+    );
+
+  beforeEach(() => {
+    indexNow.notifyUrls.mockReset();
+    indexNow.notifyUrls.mockResolvedValue(undefined);
+  });
+
+  it('sends a new public post at its canonical URL', () => {
+    ping({});
+    ping({ text: 'Friday night padel at the club' });
+    expect(indexNow.notifyUrls.mock.calls).toEqual([
+      [['/ar/community/post/night-padel-p1']],
+      [['/en/community/post/night-padel-p1']],
+    ]);
+  });
+
+  it('skips posts that are flagged, hidden, private or too thin to index', () => {
+    ping({ flagged: true });
+    ping({ autoHidden: true });
+    ping({ visibility: 'followers' });
+    ping({ text: 'ok' }, 0);
+    expect(indexNow.notifyUrls).not.toHaveBeenCalled();
+  });
+});

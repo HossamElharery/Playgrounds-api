@@ -4,6 +4,8 @@ import { SitemapService } from './sitemap.service';
 const config = { get: () => 'https://matchena.com' } as never;
 const date = new Date('2026-09-20T00:00:00Z');
 
+let lastSportWhere: unknown;
+
 function prismaMock() {
   return {
     venue: {
@@ -26,8 +28,16 @@ function prismaMock() {
     post: {
       aggregate: async () => ({ _max: { updatedAt: date } }),
       findMany: async () => [
-        { id: 'abc', slug: 'hello', updatedAt: date, text: 'مباراة بادل الليلة في مدينة نصر', _count: { media: 0 } },
-        { id: 'thin', slug: 'heart', updatedAt: date, text: '❤️', _count: { media: 0 } },
+        { id: 'abc', slug: 'hello', updatedAt: date, createdAt: date, text: 'مباراة بادل الليلة في مدينة نصر', media: [] },
+        { id: 'thin', slug: 'heart', updatedAt: date, createdAt: date, text: '❤️', media: [] },
+        {
+          id: 'vid', slug: 'dunk', updatedAt: date, createdAt: date, text: 'Dunk & finish',
+          media: [{ type: 'video', url: 'https://api.matchena.com/uploads/posts/v.mp4', thumbnailUrl: 'https://api.matchena.com/uploads/posts/thumbnails/v-poster.jpg', durationSeconds: 30 }],
+        },
+        {
+          id: 'noposter', slug: 'clip', updatedAt: date, createdAt: date, text: '',
+          media: [{ type: 'video', url: 'https://api.matchena.com/uploads/posts/n.mp4', thumbnailUrl: 'https://api.matchena.com/uploads/posts/n.mp4', durationSeconds: null }],
+        },
       ],
     },
     hashtag: {
@@ -37,7 +47,10 @@ function prismaMock() {
     },
     sportCategory: {
       aggregate: async () => ({ _max: { createdAt: date } }),
-      findMany: async () => [{ slug: 'padel', nameEn: 'Padel', nameAr: 'بادل', createdAt: date }],
+      findMany: async (args?: { where?: unknown }) => {
+        lastSportWhere = args?.where;
+        return [{ slug: 'padel', nameEn: 'Padel', nameAr: 'بادل', createdAt: date }];
+      },
     },
     governorate: { findMany: async () => [{ slug: 'cairo' }] },
     district: { findMany: async () => [{ slug: 'nasr-city' }] },
@@ -68,6 +81,26 @@ describe('SitemapService', () => {
     expect(posts).not.toContain('heart-thin');
     const index = await svc.index();
     expect(index).toMatch(/sitemaps\/static\.xml<\/loc><\/sitemap>/);
+  });
+
+  it('lists videos with a poster as <video:video> and skips videos without one', async () => {
+    const xml = await svc.posts();
+    expect(xml).toContain('xmlns:video="http://www.google.com/schemas/sitemap-video/1.1"');
+    expect(xml).toContain('<video:thumbnail_loc>https://api.matchena.com/uploads/posts/thumbnails/v-poster.jpg</video:thumbnail_loc>');
+    expect(xml).toContain('<video:content_loc>https://api.matchena.com/uploads/posts/v.mp4</video:content_loc>');
+    expect(xml).toContain('<video:title>Dunk &amp; finish</video:title>');
+    expect(xml).toContain('<video:duration>30</video:duration>');
+    expect(xml).toContain('https://matchena.com/en/community/post/dunk-vid</loc>');
+    expect(xml).not.toContain('/ar/community/post/dunk-vid');
+    expect(xml).toContain('https://matchena.com/ar/community/post/clip-noposter</loc>');
+    expect(xml).toContain('https://matchena.com/ar/community/post/hello-abc</loc>');
+    expect(xml).not.toContain('/en/community/post/hello-abc');
+    expect(xml).not.toContain('n.mp4</video:content_loc>');
+  });
+
+  it('lists only sports that a public venue offers', async () => {
+    expect(await svc.sports()).toContain('/ar/sports/padel');
+    expect(lastSportWhere).toEqual({ venueSports: { some: { venue: { status: 'active', ownerListingEnabled: true, adminHidden: false } } } });
   });
 
   it('posts and hashtags use the frontend url shapes', async () => {

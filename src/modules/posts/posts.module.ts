@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { StorageModule } from '../storage/storage.module';
 import { RewardsModule } from '../rewards/rewards.module';
+import { SeoDiscoveryModule } from '../seo/seo-discovery.module';
 import { AnalyticsService } from './analytics.service';
 import { CoinsRewardService } from './coins-reward.service';
 import { FollowService } from './follow.service';
@@ -12,9 +13,10 @@ import { PostModerationController } from './post-moderation.controller';
 import { PostModerationService } from './post-moderation.service';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
+import { VideoOptimizerService } from './video-optimizer.service';
 
 @Module({
-  imports: [NotificationsModule, StorageModule, RewardsModule],
+  imports: [NotificationsModule, StorageModule, RewardsModule, SeoDiscoveryModule],
   controllers: [PostsController, MediaUploadController, PostModerationController],
   providers: [
     PostsService,
@@ -24,6 +26,7 @@ import { PostsService } from './posts.service';
     PostModerationService,
     CoinsRewardService,
     AnalyticsService,
+    VideoOptimizerService,
   ],
   exports: [PostsService, FollowService, CoinsRewardService],
 })

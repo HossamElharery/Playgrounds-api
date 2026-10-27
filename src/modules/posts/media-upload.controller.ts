@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -14,7 +16,11 @@ import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user.interface';
 import type { MulterFile } from '../../common/types/multer-file.type';
-import { MediaUploadService } from './media-upload.service';
+import {
+  MediaUploadService,
+  SINGLE_UPLOAD_MAX_BYTES,
+  UPLOAD_CHUNK_BYTES,
+} from './media-upload.service';
 import { RequestUploadDto } from './dto/request-upload.dto';
 import { memoryStorage } from 'multer';
 
@@ -43,7 +49,7 @@ export class MediaUploadController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 80 * 1024 * 1024 },
+      limits: { fileSize: SINGLE_UPLOAD_MAX_BYTES },
     }),
   )
   receive(
@@ -52,6 +58,35 @@ export class MediaUploadController {
     @UploadedFile() file: MulterFile,
   ) {
     return this.media.receiveFile(user.id, id, file);
+  }
+
+  @Get('uploads/:id/chunks')
+  chunkStatus(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.media.chunkStatus(user.id, id);
+  }
+
+  /** One slice of a large video: `chunk` is the bytes, `offset` where they start. */
+  @Post('uploads/:id/chunks')
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('chunk', {
+      storage: memoryStorage(),
+      limits: { fileSize: UPLOAD_CHUNK_BYTES },
+    }),
+  )
+  receiveChunk(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Query('offset') offset: string,
+    @UploadedFile() chunk: MulterFile,
+  ) {
+    return this.media.receiveChunk(user.id, id, offset ? Number(offset) : Number.NaN, chunk?.buffer);
+  }
+
+  @Post('uploads/:id/chunks/finish')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  finishChunks(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.media.finishChunks(user.id, id);
   }
 
   @Post('uploads/:id/complete')

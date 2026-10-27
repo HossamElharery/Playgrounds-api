@@ -37,6 +37,21 @@ export class LocalDiskStorageProvider implements StorageProvider {
     return { key, url: this.urlFor(key) };
   }
 
+  async uploadFile(
+    filePath: string,
+    originalName: string,
+    _mimeType: string,
+    prefix = 'misc',
+  ): Promise<UploadResult> {
+    const ext = path.extname(originalName) || '';
+    const key = `${prefix}/${randomUUID()}${ext}`;
+    const fullPath = path.join(this.root, key);
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.copyFile(filePath, fullPath);
+    void warmImageVariants(this.root, key).catch(() => undefined);
+    return { key, url: this.urlFor(key) };
+  }
+
   async deleteObject(key: string): Promise<void> {
     await fs.rm(path.join(this.root, key), { force: true });
     for (const width of imageVariantWidths(key)) {
@@ -44,6 +59,20 @@ export class LocalDiskStorageProvider implements StorageProvider {
         force: true,
       });
     }
+  }
+
+  readObject(key: string): Promise<Buffer> {
+    return fs.readFile(this.pathFor(key));
+  }
+
+  readObjectToFile(key: string, destination: string): Promise<void> {
+    return fs.copyFile(this.pathFor(key), destination);
+  }
+
+  private pathFor(key: string): string {
+    const fullPath = path.resolve(this.root, key);
+    if (!fullPath.startsWith(`${this.root}${path.sep}`)) throw new Error('Key outside the upload root');
+    return fullPath;
   }
 
   urlFor(key: string): string {

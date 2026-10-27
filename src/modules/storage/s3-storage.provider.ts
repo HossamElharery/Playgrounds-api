@@ -2,10 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
+import { createReadStream } from 'node:fs';
+import { open, stat } from 'node:fs/promises';
 import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
@@ -49,10 +52,50 @@ export class S3StorageProvider implements StorageProvider {
     return { key, url: this.urlFor(key) };
   }
 
+  async uploadFile(
+    filePath: string,
+    originalName: string,
+    mimeType: string,
+    prefix = 'misc',
+  ): Promise<UploadResult> {
+    const ext = path.extname(originalName) || '';
+    const key = `${prefix}/${randomUUID()}${ext}`;
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: (await stat(filePath)).size,
+        ContentType: mimeType,
+        ServerSideEncryption: 'AES256',
+        CacheControl: 'public, max-age=31536000, immutable',
+      }),
+    );
+    return { key, url: this.urlFor(key) };
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );
+  }
+
+  async readObject(key: string): Promise<Buffer> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!res.Body) throw new Error(`Empty object: ${key}`);
+    return Buffer.from(await res.Body.transformToByteArray());
+  }
+
+  async readObjectToFile(key: string, destination: string): Promise<void> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!res.Body) throw new Error(`Empty object: ${key}`);
+    // In Node the body is a readable stream; write it piece by piece instead of buffering it.
+    const file = await open(destination, 'w');
+    try {
+      for await (const chunk of res.Body as AsyncIterable<Uint8Array>) await file.write(chunk);
+    } finally {
+      await file.close();
+    }
   }
 
   urlFor(key: string): string {

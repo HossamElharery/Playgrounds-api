@@ -15,6 +15,13 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { imageVariantMiddleware } from './modules/storage/image-variants';
 import { isShutdownDraining } from './common/lifecycle/shutdown-state';
 
+const VIDEO_CONTENT_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+};
+
 export function configureApp(app: INestApplication): ConfigService {
   const config = app.get(ConfigService);
 
@@ -78,6 +85,14 @@ export function configureApp(app: INestApplication): ConfigService {
     }),
   );
   app.use(cookieParser());
+  // The API host is not a website: keep its JSON and root page out of search results,
+  // while uploads (photos, videos, posters) stay indexable for image and video search.
+  app.use(
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (!req.path.startsWith('/uploads/')) res.setHeader('X-Robots-Tag', 'noindex');
+      next();
+    },
+  );
   app.use(
     '/uploads/posts/thumbnails',
     express.static(path.join(process.cwd(), 'uploads/posts/thumbnails'), {
@@ -90,6 +105,11 @@ export function configureApp(app: INestApplication): ConfigService {
     express.static(path.join(process.cwd(), 'uploads'), {
       maxAge: '1y',
       immutable: true,
+      setHeaders: (res, filePath) => {
+        // send maps .mp4 to application/mp4; crawlers and some players expect video/*.
+        const videoType = VIDEO_CONTENT_TYPES[path.extname(filePath).toLowerCase()];
+        if (videoType) res.setHeader('Content-Type', videoType);
+      },
     }),
   );
   app.use(

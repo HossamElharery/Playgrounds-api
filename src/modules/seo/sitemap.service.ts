@@ -3,6 +3,7 @@ import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocalLandingService } from './local-landing.service';
+import { isPosterUrl } from '../posts/video-processing';
 
 /** Venue-owner landing pages under /partners. Keep in sync with PARTNER_TOPIC_SLUGS in the web app. */
 export const PARTNER_TOPIC_PATHS = [
@@ -17,6 +18,11 @@ export function isIndexablePost(text: string, mediaCount: number): boolean {
   if (mediaCount > 0) return true;
   const letters = text.replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[#@]\S+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
   return letters.length >= 12;
+}
+
+/** The language a post is canonical in; must match contentLang in the web app's post-detail page. */
+export function postContentLang(text: string): 'ar' | 'en' {
+  return /\p{Script=Arabic}/u.test(text) || !/\p{L}/u.test(text) ? 'ar' : 'en';
 }
 
 const escapeXml = (value: string) =>
@@ -34,7 +40,7 @@ export class SitemapService {
     this.siteUrl = (config.get<string>('SITE_URL') || 'https://matchena.com').replace(/\/$/, '');
   }
 
-  private localizedEntry(path: string, lastmod?: Date | null, images: string[] = []): string {
+  private localizedEntry(path: string, lastmod?: Date | null, images: string[] = [], extra = ''): string {
     const ar = `${this.siteUrl}/ar${path}`;
     const en = `${this.siteUrl}/en${path}`;
     return [ar, en].map((loc, index) => `
@@ -44,15 +50,26 @@ export class SitemapService {
     <xhtml:link rel="alternate" hreflang="ar-EG" href="${escapeXml(ar)}"/>
     <xhtml:link rel="alternate" hreflang="en" href="${escapeXml(en)}"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(ar)}"/>
-    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}
+    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}${extra}
   </url>`).join('');
+  }
+
+  /** One URL without an hreflang pair, for pages whose content has a single language (user posts). */
+  private singleEntry(path: string, lastmod?: Date | null, images: string[] = [], extra = ''): string {
+    return `
+  <url>
+    <loc>${escapeXml(`${this.siteUrl}${path}`)}</loc>
+    ${lastmod ? `<lastmod>${lastmod.toISOString()}</lastmod>` : ''}
+    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}${extra}
+  </url>`;
   }
 
   private urlset(entries: string): string {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml"
-        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">${entries}
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">${entries}
 </urlset>`;
   }
 
@@ -114,7 +131,11 @@ ${items}
   }
 
   async sports(): Promise<string> {
-    const sports = await this.prisma.sportCategory.findMany({ select: { slug: true, createdAt: true } });
+    // The sport hub is noindex while no public venue offers the sport; listing it here would contradict that.
+    const sports = await this.prisma.sportCategory.findMany({
+      where: { venueSports: { some: { venue: publicVenueWhere() } } },
+      select: { slug: true, createdAt: true },
+    });
     return this.urlset(
       sports.map((sport) => this.localizedEntry(`/sports/${encodeURIComponent(sport.slug)}`, sport.createdAt)).join(''),
     );
@@ -148,16 +169,54 @@ ${items}
   async posts(): Promise<string> {
     const posts = await this.prisma.post.findMany({
       where: this.publicPostWhere,
-      select: { id: true, slug: true, updatedAt: true, text: true, _count: { select: { media: true } } },
+      select: {
+        id: true,
+        slug: true,
+        updatedAt: true,
+        createdAt: true,
+        text: true,
+        media: {
+          select: { type: true, url: true, thumbnailUrl: true, durationSeconds: true },
+          orderBy: { order: 'asc' },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: SitemapService.MAX_POSTS,
     });
     return this.urlset(
       posts
-        .filter((post) => isIndexablePost(post.text, post._count?.media ?? 0))
-        .map((post) => this.localizedEntry(`/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`, post.updatedAt))
+        .filter((post) => isIndexablePost(post.text, post.media.length))
+        .map((post) => {
+          const images = post.media.filter((m) => m.type === 'image').map((m) => m.url);
+          const videos = post.media
+            .filter((m) => m.type === 'video' && isPosterUrl(m.thumbnailUrl, m.url))
+            .map((m) => this.videoEntry(post.text, post.createdAt, m))
+            .join('');
+          return this.singleEntry(
+            `/${postContentLang(post.text)}/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`,
+            post.updatedAt,
+            images,
+            videos,
+          );
+        })
         .join(''),
     );
+  }
+
+  /** Google drops a <video:video> without a real thumbnail, so callers pass only media with a poster. */
+  private videoEntry(
+    text: string,
+    createdAt: Date,
+    media: { url: string; thumbnailUrl: string; durationSeconds: number | null },
+  ): string {
+    const caption = text.replace(/\s+/g, ' ').trim();
+    const title = caption.slice(0, 100) || 'Matchena community video';
+    const description = caption.slice(0, 2048) || 'A sports video shared by a player on Matchena.';
+    const abs = (url: string) => escapeXml(new URL(url, this.siteUrl).toString());
+    const duration = media.durationSeconds && media.durationSeconds > 0
+      ? `<video:duration>${Math.min(28800, Math.round(media.durationSeconds))}</video:duration>`
+      : '';
+    return `<video:video><video:thumbnail_loc>${abs(media.thumbnailUrl)}</video:thumbnail_loc><video:title>${escapeXml(title)}</video:title><video:description>${escapeXml(description)}</video:description><video:content_loc>${abs(media.url)}</video:content_loc>${duration}<video:publication_date>${createdAt.toISOString()}</video:publication_date><video:family_friendly>yes</video:family_friendly></video:video>`;
   }
 
   async hashtags(): Promise<string> {
