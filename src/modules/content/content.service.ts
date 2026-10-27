@@ -47,11 +47,23 @@ export class ContentService {
     status?: string,
     categoryId?: string,
     relatedSportSlug?: string,
+    search?: string,
   ) {
+    const searchTerm = search?.trim();
     const where = {
       ...(status ? { status: status as PublishStatus } : {}),
       ...(categoryId ? { categoryId } : {}),
       ...(relatedSportSlug ? { relatedSportSlug } : {}),
+      ...(searchTerm
+        ? {
+            OR: [
+              { titleAr: { contains: searchTerm, mode: 'insensitive' as const } },
+              { titleEn: { contains: searchTerm, mode: 'insensitive' as const } },
+              { subtitleAr: { contains: searchTerm, mode: 'insensitive' as const } },
+              { subtitleEn: { contains: searchTerm, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
     };
     const [items, total] = await Promise.all([
       this.prisma.blogPost.findMany({

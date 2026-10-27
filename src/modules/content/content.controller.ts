@@ -129,6 +129,8 @@ export class ContentController {
       q.perPage,
       q.status,
       q.categoryId,
+      undefined,
+      q.search,
     );
     return { message: 'ok', result: items, pagination };
   }

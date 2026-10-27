@@ -23,6 +23,11 @@ export class ListBlogQueryDto extends PageQueryDto {
   @IsString()
   relatedSportSlug?: string;
 
+  @ApiPropertyOptional({ description: 'Admin-only. Case-insensitive match against the Arabic/English title or subtitle.' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({
     enum: ['true', 'false'],
     description: 'Card view: omit the article HTML and send readingMinutesAr/En instead (lists stay small).',
