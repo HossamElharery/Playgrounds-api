@@ -37,6 +37,8 @@ import { ImportService } from './import/import.service';
 import { AssistantNluService } from './assistant/assistant-nlu.service';
 import { OwnerAssistantService } from './assistant/owner-assistant.service';
 import { OwnerAssistantExecutorService } from './assistant/owner-assistant-executor.service';
+import { OwnerAssistantSpeechService } from './assistant/owner-assistant-speech.service';
+import { OwnerAssistantPreferencesService } from './assistant/owner-assistant-preferences.service';
 import { AssistantRemindersService } from './assistant/assistant-reminders.service';
 import { CommandCentreService } from './command/command-centre.service';
 import { ActivityService } from './activity/activity.service';
@@ -51,6 +53,8 @@ import { ActivityService } from './activity/activity.service';
     AssistantNluService,
     OwnerAssistantService,
     OwnerAssistantExecutorService,
+    OwnerAssistantSpeechService,
+    OwnerAssistantPreferencesService,
     AssistantRemindersService,
     OwnerBookingsService,
     OwnerSummaryService,

@@ -9,6 +9,7 @@ import {
   IsIn,
   IsInt,
   IsObject,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -52,6 +53,62 @@ export class AssistantAskDto {
   @IsOptional()
   @IsObject()
   draft?: Record<string, unknown>;
+}
+
+export class AssistantSpeechDto {
+  @ApiProperty()
+  @IsUUID()
+  venueId!: string;
+
+  @ApiProperty({ minLength: 1, maxLength: 600 })
+  @IsString()
+  @Length(1, 600)
+  text!: string;
+
+  @ApiPropertyOptional({ enum: ['female', 'male'], default: 'female' })
+  @IsOptional()
+  @IsIn(['female', 'male'])
+  voice?: 'female' | 'male';
+
+  @ApiPropertyOptional({ minimum: 0.8, maximum: 1.2, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0.8)
+  @Max(1.2)
+  rate?: number;
+}
+
+export class UpdateAssistantPreferencesDto {
+  @ApiProperty()
+  @IsUUID()
+  venueId!: string;
+
+  @ApiProperty({ default: false })
+  @IsBoolean()
+  voiceEnabled!: boolean;
+
+  @ApiProperty({ default: true })
+  @IsBoolean()
+  autoSendAfterSpeech!: boolean;
+
+  @ApiProperty({ default: true })
+  @IsBoolean()
+  continueAfterReply!: boolean;
+
+  @ApiProperty({ default: false })
+  @IsBoolean()
+  allowVoiceConfirmations!: boolean;
+
+  @ApiProperty({ enum: ['female', 'male'], default: 'female' })
+  @IsIn(['female', 'male'])
+  voice!: 'female' | 'male';
+
+  @ApiProperty({ minimum: 0.8, maximum: 1.2, default: 1 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.8)
+  @Max(1.2)
+  speechRate!: number;
 }
 
 export class AssistantActionDto {

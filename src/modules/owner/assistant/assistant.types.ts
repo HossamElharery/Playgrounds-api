@@ -10,6 +10,11 @@ export type AssistantIntentKind =
   | 'expense' // record a cost
   | 'agenda'
   | 'attention'
+  | 'next_booking' // nearest upcoming booking
+  | 'late_arrivals' // confirmed bookings that have not checked in
+  | 'booking_details' // details for one named/timed booking
+  | 'cash_drawer' // cash received and expected today
+  | 'occupancy' // occupancy and quiet-hour insight
   | 'move' // change an existing booking's time / court / length / price
   | 'help'
   | 'unknown';

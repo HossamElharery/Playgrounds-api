@@ -19,7 +19,11 @@ function build(courts: Court[], read: AssistantReading, extras: { bookings?: unk
   const prisma = {
     venue: { findUnique: jest.fn().mockResolvedValue({ id: 'v1', ownerId: 'u1', nameAr: 'مكان', nameEn: 'Place', currency: 'EGP', country: { timezone: 'Africa/Cairo' } }) },
     court: { findMany: jest.fn().mockResolvedValue(rows) },
-    booking: { findMany: jest.fn().mockResolvedValue(extras.bookings ?? []) },
+    booking: {
+      findMany: jest.fn().mockResolvedValue(extras.bookings ?? []),
+      count: jest.fn().mockResolvedValue(0),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     calendarBlock: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const summary = { getSummary: jest.fn().mockResolvedValue(extras.summary) };
@@ -33,6 +37,16 @@ const club = [court('t1', 'Table 1', 'table-game', 'بلياردو'), court('t2'
 const padel = [court('p1', 'Court 1', 'racket-court', 'بادل'), court('p2', 'Court 2', 'racket-court', 'بادل')];
 
 describe('the assistant speaks the owner\'s own business', () => {
+  it('answers venue news with a short, named daily brief instead of the help examples', async () => {
+    const { service, prisma } = build(padel, reading({ intent: 'attention' }));
+    prisma.booking.count.mockResolvedValueOnce(4).mockResolvedValueOnce(2);
+    const plan = await service.ask(user, 'v1', 'قولي إيه الأخبار النهاردة عندي في الملعب');
+    expect(plan.intent).toBe('attention');
+    expect(plan.reply.ar).toContain('مكان: عندك 4 حجوزات النهارده');
+    expect(plan.reply.ar).toContain('بكرة عندك حجزين');
+    expect(plan.reply.ar).not.toContain('اطلب بالعامية');
+  });
+
   it('help gives examples with the venue\'s own units, never another sport\'s', async () => {
     const { service } = build(lounge, reading({ intent: 'help' }));
     const plan = await service.ask(user, 'v1', 'ساعدني');
@@ -115,7 +129,7 @@ describe('"how much did I make today?" matches the drawer', () => {
   it('says what was really received, and why it differs from the game revenue', async () => {
     const summary = { totals, cashbook: { received: 30000, advance: 10000, late: 0 } };
     const plan = await build(lounge, reading({ intent: 'money', rangeKey: 'today' }), { summary }).service.ask(user, 'v1', 'عملت كام النهاردة');
-    expect(plan.reply.ar).toContain('إيراد ألعابها 200 ج.م');
+    expect(plan.reply.ar).toContain('إيراد اللعب 200 ج.م');
     expect(plan.reply.ar).toContain('اتقبض فعليًا 300 ج.م (منها 100 ج.م عربون لحجوزات جاية)');
     expect(plan.reply.en).toContain('Actually received: 300 EGP');
   });

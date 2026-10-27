@@ -91,6 +91,18 @@ describe('AiProviderService', () => {
     expect(calls).toEqual(['google/gemini-3.8-flash', 'google/gemini-3.6-flash']);
   });
 
+  it('skips the remaining OpenRouter models after a key-wide auth failure', async () => {
+    const { service } = build();
+    const { fn, calls } = routed({
+      'google/gemini-3.8-flash': () => fail(403),
+      'gemini-direct': () => gmOk(GOOD),
+    });
+    global.fetch = fn as never;
+    const res = await service.getStructuredIntent({ ...REQUEST, profile: 'owner' });
+    expect(res.provider).toBe('gemini');
+    expect(calls).toEqual(['google/gemini-3.8-flash', 'gemini-direct']);
+  });
+
   it('keeps the owner assistant on Google models: never DeepSeek, never a free model', async () => {
     const { service } = build();
     const { fn, calls } = routed({

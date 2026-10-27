@@ -14,6 +14,7 @@ import { VenueAiCreditService, type CreditVerdict } from '../../ai/credit/venue-
 import { OwnerBookingsService } from '../owner-bookings.service';
 import { OwnerSummaryService } from '../owner-summary.service';
 import { ExpensesService } from '../expenses/expenses.service';
+import { CashService } from '../cash/cash.service';
 import {
   AssistantNluService,
   type NluCourtRef,
@@ -60,15 +61,56 @@ import {
   zonedDayBounds,
 } from '../../../common/utils/timezone.util';
 
-const MIN_CONFIDENCE = 0.35;
-const MIN_CONFIDENCE_WRITE = 0.6;
+// Self-reported model confidence is not a calibrated probability. Keep the
+// threshold deliberately conservative, especially when noisy speech has been
+// transcribed into a command that can change venue data.
+const MIN_CONFIDENCE = 0.5;
+const MIN_CONFIDENCE_WRITE = 0.78;
 const WRITES_MONEY: ReadonlySet<AssistantReading['intent']> = new Set([
   'book',
   'pay',
   'cancel',
   'move',
   'expense',
+  'block',
+  'unblock',
 ]);
+
+function bookingCountAr(count: number): string {
+  if (count === 1) return 'حجز واحد';
+  if (count === 2) return 'حجزين';
+  if (count >= 3 && count <= 10) return `${count} حجوزات`;
+  return `${count} حجز`;
+}
+
+function dayLabelAr(date: string, tz: string): string {
+  const today = todayIn(tz);
+  if (date === today) return 'النهارده';
+  if (date === nextDay(today)) return 'بكرة';
+  const [year, month, day] = date.split('-').map(Number);
+  return new Intl.DateTimeFormat('ar-EG', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function lateCountAr(count: number): string {
+  if (count === 1) return 'في حجز متأخر أكتر من ربع ساعة:';
+  if (count === 2) return 'في حجزين متأخرين أكتر من ربع ساعة:';
+  return `في ${bookingCountAr(count)} متأخرين أكتر من ربع ساعة:`;
+}
+
+function fastReadIntent(text: string): AssistantReading['intent'] | null {
+  const t = normalizeName(text).replace(/[؟?،,.!]/g, ' ');
+  if (/(^|\s)(ايه )?الاخبار(\s|$)|طمني.*(الملعب|المكان)|الدنيا عامله ايه/.test(t)) return 'attention';
+  if (/(الحجز.*(الجاي|اللي بعده|التالي)|مين جاي بعد|اقرب حجز)/.test(t)) return 'next_booking';
+  if (/(مين.*(اتاخر|متاخر|موصلش)|في حد مجاش|اللي اتاخر)/.test(t)) return 'late_arrivals';
+  if (/((الدرج|الخزنه).*(كام|مفروض|فيها)|المفروض.*(الدرج|الخزنه)|قبضنا كاش كام)/.test(t)) return 'cash_drawer';
+  if (/(زحمه ولا هادي|نسبه الاشغال|الساعات الهاديه|انهي.*شغال اكتر|الاشغال كام)/.test(t)) return 'occupancy';
+  return null;
+}
 
 // Kept for the callers and specs that always imported them from here.
 export { completeReading, isAffirmative, nextDay };
@@ -88,6 +130,7 @@ export class OwnerAssistantService {
     @Optional() private readonly logs?: AiLogService,
     @Optional() private readonly transcript?: AssistantTranscriptService,
     @Optional() private readonly credit?: VenueAiCreditService,
+    @Optional() private readonly cash?: CashService,
   ) {}
 
   get enabled(): boolean {
@@ -160,6 +203,23 @@ export class OwnerAssistantService {
     if (clean.length < 2 || clean.length > 400) {
       throw new BadRequestException('text must be 2-400 characters');
     }
+    // High-frequency, read-only operational questions are product features,
+    // not AI calls. They keep working when the model is off or its credit is
+    // exhausted, and they never consume the venue's AI balance.
+    const tz = await this.venueTz(venueId);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    const fast = fastReadIntent(clean);
+    if (fast === 'attention')
+      return this.attention(user, venueId, tz, venue.currency, venue.nameAr || venue.nameEn);
+    if (fast === 'next_booking')
+      return this.planNextBooking(user, venueId, tz, venue.currency);
+    if (fast === 'late_arrivals')
+      return this.planLateArrivals(user, venueId, tz, venue.currency);
+    if (fast === 'cash_drawer')
+      return this.planCashDrawer(user, venueId, venue.currency);
+    if (fast === 'occupancy')
+      return this.planOccupancy(user, venueId, venue.currency, 'today');
+
     if (!this.nlu.enabled)
       return this.blank('unknown', bi('', ''), { available: false });
 
@@ -193,10 +253,6 @@ export class OwnerAssistantService {
       );
     }
 
-    const tz = await this.venueTz(venueId);
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
-      new Date(),
-    );
     const [courtRows, openBalances] = await Promise.all([
       this.prisma.court.findMany({
         where: { venueId },
@@ -269,7 +325,23 @@ export class OwnerAssistantService {
         case 'agenda':
           return await this.planAgenda(user, venueId, tz, currency, reading);
         case 'attention':
-          return await this.attention(user, venueId, tz, currency);
+          return await this.attention(
+            user,
+            venueId,
+            tz,
+            currency,
+            venue.nameAr || venue.nameEn,
+          );
+        case 'next_booking':
+          return await this.planNextBooking(user, venueId, tz, currency);
+        case 'late_arrivals':
+          return await this.planLateArrivals(user, venueId, tz, currency);
+        case 'booking_details':
+          return await this.planBookingDetails(user, venueId, tz, currency, reading);
+        case 'cash_drawer':
+          return await this.planCashDrawer(user, venueId, currency);
+        case 'occupancy':
+          return await this.planOccupancy(user, venueId, currency, reading.rangeKey ?? 'today');
         case 'money':
           return await this.planMoney(user, venueId, currency, reading);
         case 'debts':
@@ -773,7 +845,7 @@ export class OwnerAssistantService {
     const label = this.rangeLabel(range);
     const lines: Bi[] = [
       bi(
-        `${label.ar}: ${t.bookings} حجز، إيراد ألعابها ${fmt(t.collectedRevenue, currency).ar}.`,
+        `${label.ar} عندك ${bookingCountAr(t.bookings)}، وإيراد اللعب ${fmt(t.collectedRevenue, currency).ar}.`,
         `${label.en}: ${t.bookings} bookings, ${fmt(t.collectedRevenue, currency).en} of game revenue.`,
       ),
     ];
@@ -1054,7 +1126,7 @@ export class OwnerAssistantService {
     if (!rows.length) {
       return this.blank(
         'agenda',
-        bi(`مفيش حجوزات يوم ${r.date}.`, `No bookings on ${r.date}.`),
+        bi(`مفيش حجوزات ${dayLabelAr(r.date, tz)}.`, `No bookings on ${r.date}.`),
         { confidence: r.confidence },
       );
     }
@@ -1074,7 +1146,7 @@ export class OwnerAssistantService {
       );
     });
     const head = bi(
-      `${refs.length} حجز يوم ${r.date}:`,
+      `${dayLabelAr(r.date, tz)} عندك ${bookingCountAr(refs.length)}:`,
       `${refs.length} bookings on ${r.date}:`,
     );
     return {
@@ -1262,75 +1334,267 @@ export class OwnerAssistantService {
     };
   }
 
-  async attention(
+  private async planNextBooking(
     user: AuthenticatedUser,
     venueId: string,
     tz: string,
     currency: string,
   ): Promise<AssistantPlan> {
+    if (!(await this.can(user, venueId, 'bookings.view'))) return this.denied('next_booking');
+    const now = new Date();
+    const booking = await this.prisma.booking.findFirst({
+      where: {
+        venueId,
+        status: { in: ['held', 'confirmed'] },
+        slotStart: { gte: now },
+      },
+      include: {
+        court: { select: { name: true } },
+        payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } },
+      },
+      orderBy: { slotStart: 'asc' },
+    });
+    if (!booking) {
+      return this.blank('next_booking', bi('مفيش حجوزات جاية حاليًا.', 'There are no upcoming bookings right now.'), { confidence: 1 });
+    }
+    const ref = this.toRef(booking);
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(booking.slotStart);
+    const due = ref.outstanding > 0
+      ? bi(`، وباقي عليه ${fmt(ref.outstanding, currency).ar}`, `, with ${fmt(ref.outstanding, currency).en} due`)
+      : bi('، والحساب خالص', ', fully paid');
+    return {
+      ...this.blank(
+        'next_booking',
+        bi(
+          `الحجز اللي جاي عندك لـ${ref.customerName ?? ref.code} ${dayLabelAr(day, tz)} الساعة ${zonedHhmm(booking.slotStart, tz)} على ${ref.courtName}${due.ar}.`,
+          `Next is ${ref.customerName ?? ref.code} on ${day} at ${zonedHhmm(booking.slotStart, tz)} on ${ref.courtName}${due.en}.`,
+        ),
+        { confidence: 1 },
+      ),
+      bookings: [ref],
+    };
+  }
+
+  private async planLateArrivals(
+    user: AuthenticatedUser,
+    venueId: string,
+    tz: string,
+    currency: string,
+  ): Promise<AssistantPlan> {
+    if (!(await this.can(user, venueId, 'bookings.view'))) return this.denied('late_arrivals');
+    const now = new Date();
+    const grace = new Date(now.getTime() - 15 * 60_000);
+    const floor = new Date(now.getTime() - 4 * 3_600_000);
+    const rows = await this.prisma.booking.findMany({
+      where: {
+        venueId,
+        status: 'confirmed',
+        checkedInAt: null,
+        slotStart: { gte: floor, lte: grace },
+      },
+      include: {
+        court: { select: { name: true } },
+        payments: { where: { status: { in: ['paid', 'refunded'] } }, select: { amount: true } },
+      },
+      orderBy: { slotStart: 'asc' },
+      take: 8,
+    });
+    if (!rows.length) {
+      return this.blank('late_arrivals', bi('مفيش حد متأخر أكتر من ربع ساعة ✅', 'Nobody is more than 15 minutes late ✅'), { confidence: 1 });
+    }
+    const refs = rows.map((row) => this.toRef(row));
+    const lines = refs.slice(0, 4).map((b) =>
+      bi(
+        `• ${b.customerName ?? b.code} — ${zonedHhmm(new Date(b.startsAt), tz)}، ${b.courtName}${b.outstanding ? `، باقي ${fmt(b.outstanding, currency).ar}` : ''}`,
+        `• ${b.customerName ?? b.code} — ${zonedHhmm(new Date(b.startsAt), tz)}, ${b.courtName}${b.outstanding ? `, ${fmt(b.outstanding, currency).en} due` : ''}`,
+      ),
+    );
+    return {
+      ...this.blank(
+        'late_arrivals',
+        joinBi([bi(lateCountAr(refs.length), `${refs.length} bookings are over 15 minutes late:`), ...lines], '\n'),
+        { confidence: 1 },
+      ),
+      bookings: refs,
+    };
+  }
+
+  private async planBookingDetails(
+    user: AuthenticatedUser,
+    venueId: string,
+    tz: string,
+    currency: string,
+    r: AssistantReading,
+  ): Promise<AssistantPlan> {
+    if (!(await this.can(user, venueId, 'bookings.view'))) return this.denied('booking_details');
+    const picked = this.pickOne(
+      await this.findBookings(venueId, tz, r, { onlyOwing: false, manualOnly: false }),
+      r,
+      currency,
+      tz,
+    );
+    if ('issue' in picked) return picked.plan;
+    const b = picked.booking;
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(b.startsAt));
+    const payment = b.outstanding > 0
+      ? bi(`مدفوع ${fmt(b.paidAmount, currency).ar} وباقي ${fmt(b.outstanding, currency).ar}`, `${fmt(b.paidAmount, currency).en} paid and ${fmt(b.outstanding, currency).en} due`)
+      : bi('الحساب خالص', 'fully paid');
+    return {
+      ...this.blank(
+        'booking_details',
+        bi(
+          `حجز ${b.customerName ?? b.code} على ${b.courtName} ${dayLabelAr(date, tz)} من ${zonedHhmm(new Date(b.startsAt), tz)} لـ ${zonedHhmm(new Date(b.endsAt), tz)}. الحساب ${fmt(b.totalAmount, currency).ar}؛ ${payment.ar}.`,
+          `${b.customerName ?? b.code}: ${b.courtName} on ${date}, ${zonedHhmm(new Date(b.startsAt), tz)}–${zonedHhmm(new Date(b.endsAt), tz)}, total ${fmt(b.totalAmount, currency).en}, ${payment.en}.`,
+        ),
+        { confidence: r.confidence },
+      ),
+      bookings: [b],
+    };
+  }
+
+  private async planCashDrawer(
+    user: AuthenticatedUser,
+    venueId: string,
+    currency: string,
+  ): Promise<AssistantPlan> {
+    const canReport = await this.can(user, venueId, 'reports.view');
+    const canRecord = await this.can(user, venueId, 'payments.record');
+    if (!canReport && !canRecord) return this.denied('cash_drawer');
+    const cashToday = await this.summary.cashToday(user, venueId);
+    const cashReceived = Number(cashToday.byMethod.find((row) => row.method === 'cash')?.amount ?? 0);
+    const drawer = canRecord && this.cash
+      ? await this.cash.drawer(user, venueId) as { mine?: { cash?: { expected?: number }; handover?: unknown } }
+      : null;
+    const lines = [
+      bi(`اللي اتسجل مقبوض النهارده ${fmt(cashToday.received, currency).ar}، منهم ${fmt(cashReceived, currency).ar} كاش.`, `Received today: ${fmt(cashToday.received, currency).en}, including ${fmt(cashReceived, currency).en} cash.`),
+      bi(`منهم ${fmt(cashToday.advance, currency).ar} عربون لحجوزات جاية و${fmt(cashToday.late, currency).ar} لحجوزات فاتت.`, `${fmt(cashToday.advance, currency).en} is advance money and ${fmt(cashToday.late, currency).en} is for earlier bookings.`),
+    ];
+    if (cashToday.refunds > 0) lines.push(bi(`المرتجعات ${fmt(cashToday.refunds, currency).ar}.`, `Refunds: ${fmt(cashToday.refunds, currency).en}.`));
+    const expected = drawer?.mine?.cash?.expected;
+    lines.push(
+      expected !== undefined
+        ? bi(`المفروض يكون في درجك ${fmt(expected, currency).ar}. لو قلتلي عدّيت كام، نقدر نعرف فيه عجز ولا زيادة.`, `Your drawer should contain ${fmt(expected, currency).en}. Enter the physical count to calculate any difference.`)
+        : bi('لرصيد الدرج الفعلي افتح الخزنة وسجّل العدّ؛ مش هخمن المبلغ الموجود.', 'For the actual drawer balance, open Cash and enter the counted amount; I will not guess it.'),
+    );
+    return this.blank('cash_drawer', joinBi(lines, '\n'), { confidence: 1 });
+  }
+
+  private async planOccupancy(
+    user: AuthenticatedUser,
+    venueId: string,
+    currency: string,
+    range: Exclude<AssistantReading['rangeKey'], null>,
+  ): Promise<AssistantPlan> {
+    if (!(await this.can(user, venueId, 'reports.view'))) return this.denied('occupancy');
+    const summary = await this.summary.getSummary(user, venueId, range);
+    const units = [...summary.byUnit].sort((a, b) => (b.occupancyPct ?? -1) - (a.occupancyPct ?? -1));
+    const best = units[0];
+    const quiet = summary.quietHours.slice(0, 3).map((h) => `${String(h.hour).padStart(2, '0')}:00`).join('، ');
+    const lines: Bi[] = [
+      bi(`${this.rangeLabel(range).ar}: ${bookingCountAr(summary.totals.bookings)} بإيراد ${fmt(summary.totals.collectedRevenue, currency).ar}.`, `${this.rangeLabel(range).en}: ${summary.totals.bookings} bookings and ${fmt(summary.totals.collectedRevenue, currency).en} revenue.`),
+    ];
+    if (best?.occupancyPct != null) lines.push(bi(`أكتر مكان اشتغل هو ${best.name}، بنسبة إشغال ${best.occupancyPct}%.`, `Highest occupancy: ${best.name} at ${best.occupancyPct}%.`));
+    if (quiet) lines.push(bi(`أهدى أوقات عندك: ${quiet}.`, `Quietest available hours: ${quiet}.`));
+    return this.blank('occupancy', joinBi(lines, '\n'), { confidence: 1 });
+  }
+
+  async attention(
+    user: AuthenticatedUser,
+    venueId: string,
+    tz: string,
+    currency: string,
+    venueName = '',
+  ): Promise<AssistantPlan> {
     if (!(await this.can(user, venueId, 'bookings.view')))
       return this.denied('attention');
     const canSeeMoney = (await this.can(user, venueId, 'payments.record')) || (await this.can(user, venueId, 'reports.view'));
     const now = new Date();
-    const [overdue, soon] = await Promise.all([
+    const today = zonedDayBounds(todayIn(tz), tz);
+    const tomorrow = zonedDayBounds(nextDay(todayIn(tz)), tz);
+    const [overdue, soon, todayCount, tomorrowCount, nextBooking] = await Promise.all([
       canSeeMoney ? findOwed(this.prisma, { venueId }, { kind: 'overdue', now }) : Promise.resolve([]),
       canSeeMoney ? findOwed(
         this.prisma,
         { venueId },
         { kind: 'upcoming', from: now, to: new Date(now.getTime() + 3 * 3_600_000) },
       ) : Promise.resolve([]),
+      this.prisma.booking.count({
+        where: {
+          venueId,
+          status: { in: ['held', 'confirmed'] },
+          slotStart: { gte: today.start, lt: today.end },
+        },
+      }),
+      this.prisma.booking.count({
+        where: {
+          venueId,
+          status: { in: ['held', 'confirmed'] },
+          slotStart: { gte: tomorrow.start, lt: tomorrow.end },
+        },
+      }),
+      this.prisma.booking.findFirst({
+        where: {
+          venueId,
+          status: { in: ['held', 'confirmed'] },
+          slotStart: { gte: now, lt: today.end },
+        },
+        select: {
+          code: true,
+          guestName: true,
+          slotStart: true,
+          court: { select: { name: true } },
+        },
+        orderBy: { slotStart: 'asc' },
+      }),
     ]);
-    const tomorrow = zonedDayBounds(nextDay(todayIn(tz)), tz);
-    const tomorrowCount = await this.prisma.booking.count({
-      where: {
-        venueId,
-        status: { in: ['held', 'confirmed'] },
-        slotStart: { gte: tomorrow.start, lt: tomorrow.end },
-      },
-    });
-    const lines: Bi[] = [];
+    const lines: Bi[] = [
+      bi(
+        `${venueName ? `${venueName}: ` : ''}${todayCount ? `عندك ${bookingCountAr(todayCount)} النهارده.` : 'مفيش حجوزات النهارده.'}`,
+        `${venueName ? `${venueName}: ` : ''}${todayCount ? `${todayCount} bookings today.` : 'No bookings today.'}`,
+      ),
+    ];
+    if (nextBooking) {
+      lines.push(
+        bi(
+          `الحجز اللي جاي لـ${nextBooking.guestName ?? nextBooking.code} الساعة ${zonedHhmm(nextBooking.slotStart, tz)} على ${nextBooking.court.name}.`,
+          `Next is ${nextBooking.guestName ?? nextBooking.code} at ${zonedHhmm(nextBooking.slotStart, tz)} on ${nextBooking.court.name}.`,
+        ),
+      );
+    }
     if (soon.length) {
-      lines.push(bi('⏰ جايين قريب وعليهم فلوس:', '⏰ Arriving soon with a balance:'));
-      for (const b of soon.slice(0, 5)) {
-        lines.push(
-          bi(
-            `• ${b.customerName ?? b.code} ${zonedHhmm(b.slotStart, tz)} (${b.courtName}) — باقي ${fmt(b.outstanding, currency).ar}`,
-            `• ${b.customerName ?? b.code} ${zonedHhmm(b.slotStart, tz)} (${b.courtName}) — ${fmt(b.outstanding, currency).en} due`,
-          ),
-        );
-      }
+      const first = soon[0];
+      lines.push(
+        bi(
+          `⏰ في ${bookingCountAr(soon.length)} خلال الـ3 ساعات الجايين ولسه عليهم فلوس؛ أقربهم ${first.customerName ?? first.code} الساعة ${zonedHhmm(first.slotStart, tz)}.`,
+          `⏰ ${soon.length} arriving in the next 3 hours still owe money; next is ${first.customerName ?? first.code} at ${zonedHhmm(first.slotStart, tz)}.`,
+        ),
+      );
     }
     if (overdue.length) {
       const total = overdue.reduce((sum, b) => sum + b.outstanding, 0);
       lines.push(
         bi(
-          `💰 ${overdue.length} حجز خلص وعليهم ${fmt(total, currency).ar} لسه:`,
-          `💰 ${overdue.length} finished bookings still owe ${fmt(total, currency).en}:`,
-        ),
-      );
-      for (const b of overdue.slice(-6).reverse()) {
-        lines.push(
-          bi(
-            `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).ar} (${b.courtName}، ${new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(b.slotStart)})`,
-            `• ${b.customerName ?? b.code} — ${fmt(b.outstanding, currency).en} (${b.courtName}, ${new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(b.slotStart)})`,
-          ),
-        );
-      }
-      lines.push(
-        bi(
-          'قولّي «فلان دفع» وأسجّلها، أو «مين عليه فلوس؟» للتفاصيل.',
-          'Say "<name> paid" and I will record it.',
+          `💰 في ${bookingCountAr(overdue.length)} خلصوا ولسه عليهم ${fmt(total, currency).ar}.`,
+          `💰 ${overdue.length} finished bookings still owe ${fmt(total, currency).en}.`,
         ),
       );
     }
     if (tomorrowCount) {
       lines.push(
-        bi(`📅 بكرة عندك ${tomorrowCount} حجز.`, `📅 Tomorrow: ${tomorrowCount} bookings.`),
+        bi(`📅 بكرة عندك ${bookingCountAr(tomorrowCount)}.`, `📅 Tomorrow: ${tomorrowCount} bookings.`),
       );
     }
     if (!soon.length && !overdue.length) {
-      lines.unshift(
+      lines.push(
         canSeeMoney ? bi('كله تمام ✅ مفيش فلوس متأخرة ولا حاجة محتاجة انتباه.', 'All clear ✅ nothing overdue.') : bi('تابع حجوزات منشأتك من الجدول.', 'Follow your venue bookings on the schedule.'),
+      );
+    }
+    if (soon.length || overdue.length) {
+      lines.push(
+        bi(
+          'تحب تفاصيل الحجوزات ولا الفلوس؟',
+          'Would you like booking or payment details?',
+        ),
       );
     }
     return {
@@ -1355,7 +1619,13 @@ export class OwnerAssistantService {
       write: false,
     });
     const tz = await this.venueTz(venueId);
-    return this.attention(user, venueId, tz, venue.currency);
+    return this.attention(
+      user,
+      venueId,
+      tz,
+      venue.currency,
+      venue.nameAr || venue.nameEn,
+    );
   }
 
   private async alternatives(
@@ -1463,12 +1733,12 @@ export class OwnerAssistantService {
     venueId: string,
     tz: string,
     r: AssistantReading,
-    opts: { onlyOwing: boolean },
+    opts: { onlyOwing: boolean; manualOnly?: boolean },
   ): Promise<AssistantBookingRef[]> {
     const { start, end } = zonedDayBounds(r.date, tz);
     const base: Prisma.BookingWhereInput = {
       venueId,
-      source: 'manual',
+      ...(opts.manualOnly === false ? {} : { source: 'manual' as const }),
       status: { not: 'cancelled' },
       ...(opts.onlyOwing
         ? { paymentStatus: { in: ['pending' as const, 'partial' as const] } }

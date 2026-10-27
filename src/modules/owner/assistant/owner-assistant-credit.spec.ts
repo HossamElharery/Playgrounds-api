@@ -112,14 +112,14 @@ describe('owner assistant venue credit', () => {
   it('charges the venue the real cost of the call', async () => {
     const v = view();
     const { service, credit } = build({ ok: true, view: v });
-    await service.ask(owner, 'v1', 'إيه الأخبار؟');
+    await service.ask(owner, 'v1', 'اعرض حجوزات الأسبوع');
     expect(credit.check).toHaveBeenCalledWith('v1');
     expect(credit.charge).toHaveBeenCalledWith('v1', v, 0.004);
   });
 
   it('does not charge the venue for a platform admin looking in', async () => {
     const { service, credit } = build({ ok: true, view: view() });
-    await service.ask(admin, 'v1', 'إيه الأخبار؟');
+    await service.ask(admin, 'v1', 'اعرض حجوزات الأسبوع');
     expect(credit.charge).not.toHaveBeenCalled();
   });
 
@@ -129,7 +129,7 @@ describe('owner assistant venue credit', () => {
       reason: 'disabled',
       view: view({ enabled: false }),
     });
-    const plan = await service.ask(owner, 'v1', 'إيه الأخبار؟');
+    const plan = await service.ask(owner, 'v1', 'اعرض حجوزات الأسبوع');
     expect(nlu.read).not.toHaveBeenCalled();
     expect(plan.available).toBe(true);
     expect(plan.reply.en).toContain('switched off');
@@ -147,7 +147,7 @@ describe('owner assistant venue credit', () => {
       reason: 'disabled',
       view: view({ enabled: false }),
     });
-    const plan = await service.ask(staff, 'v1', 'إيه الأخبار؟');
+    const plan = await service.ask(staff, 'v1', 'اعرض حجوزات الأسبوع');
     expect(nlu.read).not.toHaveBeenCalled();
     expect(plan.reply.en).toContain('ask the venue owner');
   });
@@ -158,7 +158,7 @@ describe('owner assistant venue credit', () => {
       reason: 'exhausted',
       view: view({ balanceUsd: 0, usedUsd: 4 }),
     });
-    const plan = await service.ask(owner, 'v1', 'إيه الأخبار؟');
+    const plan = await service.ask(owner, 'v1', 'اعرض حجوزات الأسبوع');
     expect(nlu.read).not.toHaveBeenCalled();
     expect(plan.available).toBe(true);
     expect(plan.reply.en).toContain('credit is used up');
@@ -177,7 +177,7 @@ describe('owner assistant venue credit', () => {
       reason: 'exhausted',
       view: view({ trial: true, balanceUsd: 0 }),
     });
-    const plan = await service.ask(owner, 'v1', 'إيه الأخبار؟');
+    const plan = await service.ask(owner, 'v1', 'اعرض حجوزات الأسبوع');
     expect(plan.reply.en).not.toContain('renews');
   });
 });

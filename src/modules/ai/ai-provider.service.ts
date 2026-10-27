@@ -55,6 +55,7 @@ export class AiProviderService {
   private readonly openRouterApiKey: string;
   private readonly forceFailure: string;
   private readonly breakers = new Map<string, { fails: number; openUntil: number; reason?: 'credit' | 'rate_limit' | 'auth' | 'errors' }>();
+  private openRouterAuthOpenUntil = 0;
   private readonly cache = new Map<string, { exp: number; value: StructuredIntentResult }>();
 
   constructor(
@@ -109,6 +110,7 @@ export class AiProviderService {
     const steps = this.chain(profile, req.modelsOverride);
     for (const [routeIndex, step] of steps.entries()) {
       if (Date.now() - started > TOTAL_DEADLINE_MS) break;
+      if (step.kind === 'openrouter' && Date.now() < this.openRouterAuthOpenUntil) continue;
       const id = `${step.kind}:${step.model}`;
       if (this.breakerOpen(id)) continue;
       const t0 = Date.now();
@@ -174,6 +176,7 @@ export class AiProviderService {
     const label = `${step.kind}:${step.model}`;
     if (failure.status === 401 || failure.status === 403) {
       this.logger.error(`[ai-provider] ${label} AUTH FAILURE (${failure.status}) — check the API key configuration`);
+      if (step.kind === 'openrouter') this.openRouterAuthOpenUntil = Date.now() + BREAKER_OPEN_MS;
       this.breakers.set(id, { fails: 0, openUntil: Date.now() + BREAKER_OPEN_MS, reason: 'auth' });
       return;
     }

@@ -112,8 +112,8 @@ describe('assistant guards', () => {
     expect(plan.actions).toEqual([]);
   });
 
-  it('still answers a read-only question at the lower confidence bar', async () => {
-    const { service } = build(null, reading({ intent: 'help', confidence: 0.4 }));
+  it('still answers a read-only question when confidence clears the conservative bar', async () => {
+    const { service } = build(null, reading({ intent: 'help', confidence: 0.55 }));
     const plan = await service.ask(user, 'v1', 'ازاي');
     expect(plan.intent).toBe('help');
   });

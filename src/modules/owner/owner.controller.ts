@@ -18,7 +18,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { AdminEditAuditInterceptor } from '../../common/interceptors/admin-edit-audit.interceptor';
@@ -92,9 +92,13 @@ import { OwnerAssistantExecutorService } from './assistant/owner-assistant-execu
 import {
   AssistantAskDto,
   AssistantExecuteDto,
+  AssistantSpeechDto,
+  UpdateAssistantPreferencesDto,
   UndoAssistantActionsDto,
 } from './assistant/owner-assistant.dto';
 import type { AssistantAction } from './assistant/assistant.types';
+import { OwnerAssistantSpeechService } from './assistant/owner-assistant-speech.service';
+import { OwnerAssistantPreferencesService } from './assistant/owner-assistant-preferences.service';
 
 @ApiTags('owner')
 @ApiBearerAuth()
@@ -120,6 +124,8 @@ export class OwnerController {
     private readonly quickstart: QuickstartService,
     private readonly assistant: OwnerAssistantService,
     private readonly assistantExecutor: OwnerAssistantExecutorService,
+    private readonly assistantSpeech: OwnerAssistantSpeechService,
+    private readonly assistantPreferences: OwnerAssistantPreferencesService,
     private readonly aiCredit: VenueAiCreditService,
   ) {}
 
@@ -196,6 +202,41 @@ export class OwnerController {
       history: dto.history,
       draft: dto.draft,
     });
+  }
+
+  @Throttle({ default: { limit: 24, ttl: 60_000 } })
+  @RequirePermission('bookings.view')
+  @ApiOperation({ summary: 'Synthesize an authenticated owner-assistant reply in Egyptian Arabic' })
+  @ApiProduces('audio/mpeg')
+  @Post('assistant/speech')
+  async assistantSpeechAudio(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AssistantSpeechDto,
+  ) {
+    const audio = await this.assistantSpeech.stream(user, dto);
+    return new StreamableFile(audio.stream, {
+      type: audio.contentType,
+      disposition: `inline; filename="matchena-assistant.${audio.contentType.includes('wav') ? 'wav' : 'mp3'}"`,
+      length: undefined,
+    });
+  }
+
+  @RequirePermission('bookings.view')
+  @Get('assistant/preferences')
+  assistantPreference(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('venueId') venueId: string,
+  ) {
+    return this.assistantPreferences.get(user, venueId);
+  }
+
+  @RequirePermission('bookings.view')
+  @Put('assistant/preferences')
+  updateAssistantPreference(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateAssistantPreferencesDto,
+  ) {
+    return this.assistantPreferences.update(user, dto.venueId, dto);
   }
 
   @RequirePermission('bookings.view')
