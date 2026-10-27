@@ -85,6 +85,14 @@ export function configureApp(app: INestApplication): ConfigService {
     }),
   );
   app.use(cookieParser());
+  // The API host is not a website: keep its JSON and root page out of search results,
+  // while uploads (photos, videos, posters) stay indexable for image and video search.
+  app.use(
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (!req.path.startsWith('/uploads/')) res.setHeader('X-Robots-Tag', 'noindex');
+      next();
+    },
+  );
   app.use(
     '/uploads/posts/thumbnails',
     express.static(path.join(process.cwd(), 'uploads/posts/thumbnails'), {

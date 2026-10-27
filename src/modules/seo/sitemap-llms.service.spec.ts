@@ -4,6 +4,8 @@ import { SitemapService } from './sitemap.service';
 const config = { get: () => 'https://matchena.com' } as never;
 const date = new Date('2026-09-20T00:00:00Z');
 
+let lastSportWhere: unknown;
+
 function prismaMock() {
   return {
     venue: {
@@ -45,7 +47,10 @@ function prismaMock() {
     },
     sportCategory: {
       aggregate: async () => ({ _max: { createdAt: date } }),
-      findMany: async () => [{ slug: 'padel', nameEn: 'Padel', nameAr: 'بادل', createdAt: date }],
+      findMany: async (args?: { where?: unknown }) => {
+        lastSportWhere = args?.where;
+        return [{ slug: 'padel', nameEn: 'Padel', nameAr: 'بادل', createdAt: date }];
+      },
     },
     governorate: { findMany: async () => [{ slug: 'cairo' }] },
     district: { findMany: async () => [{ slug: 'nasr-city' }] },
@@ -87,6 +92,11 @@ describe('SitemapService', () => {
     expect(xml).toContain('<video:duration>30</video:duration>');
     expect(xml).toContain('clip-noposter');
     expect(xml).not.toContain('n.mp4</video:content_loc>');
+  });
+
+  it('lists only sports that a public venue offers', async () => {
+    expect(await svc.sports()).toContain('/ar/sports/padel');
+    expect(lastSportWhere).toEqual({ venueSports: { some: { venue: { status: 'active', ownerListingEnabled: true, adminHidden: false } } } });
   });
 
   it('posts and hashtags use the frontend url shapes', async () => {

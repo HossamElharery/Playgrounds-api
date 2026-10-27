@@ -120,7 +120,11 @@ ${items}
   }
 
   async sports(): Promise<string> {
-    const sports = await this.prisma.sportCategory.findMany({ select: { slug: true, createdAt: true } });
+    // The sport hub is noindex while no public venue offers the sport; listing it here would contradict that.
+    const sports = await this.prisma.sportCategory.findMany({
+      where: { venueSports: { some: { venue: publicVenueWhere() } } },
+      select: { slug: true, createdAt: true },
+    });
     return this.urlset(
       sports.map((sport) => this.localizedEntry(`/sports/${encodeURIComponent(sport.slug)}`, sport.createdAt)).join(''),
     );
