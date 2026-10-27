@@ -48,7 +48,8 @@ export class AiAdminCreditService {
         ownerId: true,
         owner: { select: { name: true } },
       },
-      take: 300,
+      // Every venue: the counts above the table and its order (highest real cost first) need them all.
+      orderBy: { createdAt: 'asc' },
     });
     const ids = venues.map((v) => v.id);
     const subs = new Map(
