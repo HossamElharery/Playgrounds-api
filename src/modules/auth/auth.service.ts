@@ -7,6 +7,7 @@ import {
   Injectable,
   Logger,
   NotImplementedException,
+  ServiceUnavailableException,
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
@@ -16,7 +17,7 @@ import { GuestJoinDto } from './dto/guest-join.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OTP_DELIVERY, OtpDelivery } from '../sms/otp-delivery.interface';
@@ -934,26 +935,9 @@ export class AuthService {
       .map((id) => id.trim())
       .filter(Boolean);
 
-    let claims: {
-      aud?: string;
-      email?: string;
-      email_verified?: boolean;
-      name?: string;
-      picture?: string;
-      sub?: string;
-      nonce?: string;
-    };
-    try {
-      const ticket = await this.googleOAuthClient.verifyIdToken({
-        idToken: dto.idToken,
-        audience: allowed,
-      });
-      claims = ticket.getPayload() ?? {};
-    } catch {
-      throw new UnauthorizedException('Invalid Google token');
-    }
+    const claims = await this.verifyGoogleIdToken(dto.idToken, allowed);
 
-    if (dto.nonce && claims.nonce && dto.nonce !== claims.nonce) {
+    if (dto.nonce && dto.nonce !== claims.nonce) {
       throw new UnauthorizedException('Token nonce mismatch');
     }
     if (!claims.email || !claims.email_verified) {
@@ -990,7 +974,7 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Invalid Apple token');
     }
-    if (dto.nonce && claims.nonce && dto.nonce !== claims.nonce) {
+    if (dto.nonce && dto.nonce !== claims.nonce) {
       throw new UnauthorizedException('Token nonce mismatch');
     }
     const verified = claims.email_verified === true || claims.email_verified === 'true';
@@ -1022,7 +1006,7 @@ export class AuthService {
     const debugUrl =
       `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(dto.accessToken)}` +
       `&access_token=${encodeURIComponent(`${appId}|${appSecret}`)}`;
-    const debugRes = await fetch(debugUrl);
+    const debugRes = await this.fetchFacebook(debugUrl);
     if (!debugRes.ok) throw new UnauthorizedException('Invalid Facebook token');
     const debugJson = (await debugRes.json()) as {
       data?: { app_id?: string; is_valid?: boolean; user_id?: string };
@@ -1031,7 +1015,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid Facebook token');
     }
 
-    const meRes = await fetch(
+    const meRes = await this.fetchFacebook(
       `https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token=${encodeURIComponent(dto.accessToken)}`,
     );
     if (!meRes.ok) throw new UnauthorizedException('Invalid Facebook token');
@@ -1056,7 +1040,60 @@ export class AuthService {
     return { ...tokens, user: this.sanitize(user) };
   }
 
+  /**
+   * Google's signing keys are fetched over the network and cached. A failed
+   * fetch is our outage, not a bad token: retry once, then answer 503 so the
+   * app says "try again" instead of "invalid account".
+   */
+  private async verifyGoogleIdToken(idToken: string, audience: string[]): Promise<Partial<TokenPayload>> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ticket = await this.googleOAuthClient.verifyIdToken({ idToken, audience });
+        return ticket.getPayload() ?? {};
+      } catch (err) {
+        lastError = err;
+        if (!isTransientNetworkError(err)) break;
+      }
+    }
+    if (isTransientNetworkError(lastError)) {
+      this.logger.warn(`Google sign-in key fetch failed: ${String((lastError as Error)?.message ?? lastError)}`);
+      throw new ServiceUnavailableException('Google sign-in is temporarily unavailable. Try again.');
+    }
+    this.logger.warn(`Google ID token rejected: ${String((lastError as Error)?.message ?? lastError)}`);
+    throw new UnauthorizedException('Invalid Google token');
+  }
+
+  private async fetchFacebook(url: string): Promise<Response> {
+    try {
+      return await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    } catch (err) {
+      this.logger.warn(`Facebook token check failed: ${String((err as Error)?.message ?? err)}`);
+      throw new ServiceUnavailableException('Facebook sign-in is temporarily unavailable. Try again.');
+    }
+  }
+
   private async findOrCreateOAuthUser(input: {
+    provider: OAuthProvider;
+    guestUserId?: string;
+    providerUserId: string;
+    email?: string;
+    name: string;
+    avatarUrl?: string;
+  }): Promise<User> {
+    try {
+      return await this.findOrCreateOAuthUserOnce(input);
+    } catch (err) {
+      // Two sign-ins for the same new identity raced (double tap, two tabs):
+      // the other one created it, so this pass simply finds it.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return this.findOrCreateOAuthUserOnce(input);
+      }
+      throw err;
+    }
+  }
+
+  private async findOrCreateOAuthUserOnce(input: {
     provider: OAuthProvider;
     guestUserId?: string;
     providerUserId: string;
@@ -1164,4 +1201,12 @@ export class AuthService {
       return user;
     });
   }
+}
+
+function isTransientNetworkError(err: unknown): boolean {
+  const e = err as { name?: string; code?: unknown; message?: string } | null;
+  if (!e) return false;
+  if (e.name === 'GaxiosError' || e.name === 'AbortError' || e.name === 'TimeoutError') return true;
+  if (typeof e.code === 'string' && /^(E[A-Z]+|UND_ERR_\w+)$/.test(e.code)) return true;
+  return /fetch failed|network|socket hang up|timed? ?out/i.test(e.message ?? '');
 }
