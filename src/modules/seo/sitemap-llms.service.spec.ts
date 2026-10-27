@@ -90,7 +90,11 @@ describe('SitemapService', () => {
     expect(xml).toContain('<video:content_loc>https://api.matchena.com/uploads/posts/v.mp4</video:content_loc>');
     expect(xml).toContain('<video:title>Dunk &amp; finish</video:title>');
     expect(xml).toContain('<video:duration>30</video:duration>');
-    expect(xml).toContain('clip-noposter');
+    expect(xml).toContain('https://matchena.com/en/community/post/dunk-vid</loc>');
+    expect(xml).not.toContain('/ar/community/post/dunk-vid');
+    expect(xml).toContain('https://matchena.com/ar/community/post/clip-noposter</loc>');
+    expect(xml).toContain('https://matchena.com/ar/community/post/hello-abc</loc>');
+    expect(xml).not.toContain('/en/community/post/hello-abc');
     expect(xml).not.toContain('n.mp4</video:content_loc>');
   });
 

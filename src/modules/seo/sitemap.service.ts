@@ -24,6 +24,11 @@ export function isPosterUrl(thumbnailUrl: string | null | undefined, url: string
   return !!thumbnailUrl && thumbnailUrl !== url && /\.(jpe?g|png|webp|avif)(\?|$)/i.test(thumbnailUrl);
 }
 
+/** The language a post is canonical in; must match contentLang in the web app's post-detail page. */
+export function postContentLang(text: string): 'ar' | 'en' {
+  return /\p{Script=Arabic}/u.test(text) || !/\p{L}/u.test(text) ? 'ar' : 'en';
+}
+
 const escapeXml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -51,6 +56,16 @@ export class SitemapService {
     <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(ar)}"/>
     ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}${extra}
   </url>`).join('');
+  }
+
+  /** One URL without an hreflang pair, for pages whose content has a single language (user posts). */
+  private singleEntry(path: string, lastmod?: Date | null, images: string[] = [], extra = ''): string {
+    return `
+  <url>
+    <loc>${escapeXml(`${this.siteUrl}${path}`)}</loc>
+    ${lastmod ? `<lastmod>${lastmod.toISOString()}</lastmod>` : ''}
+    ${images.map((image) => `<image:image><image:loc>${escapeXml(new URL(image, this.siteUrl).toString())}</image:loc></image:image>`).join('')}${extra}
+  </url>`;
   }
 
   private urlset(entries: string): string {
@@ -181,8 +196,8 @@ ${items}
             .filter((m) => m.type === 'video' && isPosterUrl(m.thumbnailUrl, m.url))
             .map((m) => this.videoEntry(post.text, post.createdAt, m))
             .join('');
-          return this.localizedEntry(
-            `/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`,
+          return this.singleEntry(
+            `/${postContentLang(post.text)}/community/post/${encodeURIComponent(`${post.slug}-${post.id}`)}`,
             post.updatedAt,
             images,
             videos,
