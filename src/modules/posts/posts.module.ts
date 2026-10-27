@@ -12,6 +12,7 @@ import { PostModerationController } from './post-moderation.controller';
 import { PostModerationService } from './post-moderation.service';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
+import { VideoOptimizerService } from './video-optimizer.service';
 
 @Module({
   imports: [NotificationsModule, StorageModule, RewardsModule],
@@ -24,6 +25,7 @@ import { PostsService } from './posts.service';
     PostModerationService,
     CoinsRewardService,
     AnalyticsService,
+    VideoOptimizerService,
   ],
   exports: [PostsService, FollowService, CoinsRewardService],
 })

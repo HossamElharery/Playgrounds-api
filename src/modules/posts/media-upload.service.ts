@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { extname } from 'path';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createPostThumbnail } from './post-thumbnail';
-import { prepareVideo, type PreparedVideo } from './video-poster';
+import { prepareVideo, type PreparedVideo } from './video-processing';
+import { VideoOptimizerService } from './video-optimizer.service';
 import { RequestUploadDto } from './dto/request-upload.dto';
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
@@ -18,6 +19,7 @@ export class MediaUploadService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    @Optional() private readonly videoOptimizer?: VideoOptimizerService,
   ) {}
 
   async requestUpload(userId: string, dto: RequestUploadDto) {
@@ -87,7 +89,7 @@ export class MediaUploadService {
           ? (await this.storage.uploadBuffer(video.poster, 'poster.jpg', 'image/jpeg', 'posts/thumbnails')).url
           : ''
         : (await this.storage.uploadBuffer(thumbnail!, 'preview.webp', 'image/webp', 'posts/thumbnails')).url;
-    return this.prisma.mediaAsset.update({
+    const ready = await this.prisma.mediaAsset.update({
       where: { id: assetId },
       data: {
         key: uploaded.key,
@@ -97,6 +99,9 @@ export class MediaUploadService {
         status: 'ready',
       },
     });
+    // The quick remux above is playable now; the H.264 re-encode swaps the file in when done.
+    if (asset.type === 'video') this.videoOptimizer?.enqueue(ready.url);
+    return ready;
   }
 
   async complete(userId: string, assetId: string) {
@@ -108,10 +113,12 @@ export class MediaUploadService {
       asset.type === 'video' && !asset.thumbnailUrl
         ? asset.url
         : asset.thumbnailUrl || asset.url;
-    return this.prisma.mediaAsset.update({
+    const ready = await this.prisma.mediaAsset.update({
       where: { id: assetId },
       data: { status: 'ready', thumbnailUrl },
     });
+    if (asset.type === 'video') this.videoOptimizer?.enqueue(ready.url);
+    return ready;
   }
 
   private validateMeta(dto: {

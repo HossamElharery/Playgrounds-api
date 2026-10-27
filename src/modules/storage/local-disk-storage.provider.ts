@@ -46,6 +46,12 @@ export class LocalDiskStorageProvider implements StorageProvider {
     }
   }
 
+  readObject(key: string): Promise<Buffer> {
+    const fullPath = path.resolve(this.root, key);
+    if (!fullPath.startsWith(`${this.root}${path.sep}`)) throw new Error('Key outside the upload root');
+    return fs.readFile(fullPath);
+  }
+
   urlFor(key: string): string {
     return `${this.publicBase}/${key}`;
   }

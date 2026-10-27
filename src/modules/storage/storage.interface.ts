@@ -20,6 +20,7 @@ export interface StorageProvider {
     prefix?: string,
   ): Promise<UploadResult>;
   deleteObject(key: string): Promise<void>;
+  readObject(key: string): Promise<Buffer>;
   urlFor(key: string): string;
   keyFromUrl(url: string): string | undefined;
   createPresignedPut?(

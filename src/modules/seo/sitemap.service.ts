@@ -3,6 +3,7 @@ import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocalLandingService } from './local-landing.service';
+import { isPosterUrl } from '../posts/video-processing';
 
 /** Venue-owner landing pages under /partners. Keep in sync with PARTNER_TOPIC_SLUGS in the web app. */
 export const PARTNER_TOPIC_PATHS = [
@@ -17,11 +18,6 @@ export function isIndexablePost(text: string, mediaCount: number): boolean {
   if (mediaCount > 0) return true;
   const letters = text.replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[#@]\S+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
   return letters.length >= 12;
-}
-
-/** True when a video row has its own poster image instead of the mp4 copied into thumbnailUrl. */
-export function isPosterUrl(thumbnailUrl: string | null | undefined, url: string): boolean {
-  return !!thumbnailUrl && thumbnailUrl !== url && /\.(jpe?g|png|webp|avif)(\?|$)/i.test(thumbnailUrl);
 }
 
 /** The language a post is canonical in; must match contentLang in the web app's post-detail page. */

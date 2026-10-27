@@ -25,6 +25,10 @@ export class StorageService {
     return this.provider.deleteObject(key);
   }
 
+  readObject(key: string): Promise<Buffer> {
+    return this.provider.readObject(key);
+  }
+
   urlFor(key: string): string {
     return this.provider.urlFor(key);
   }
