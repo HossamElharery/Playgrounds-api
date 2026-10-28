@@ -1,6 +1,7 @@
 import { GamingSetupController } from '../../modules/owner/gaming/gaming-setup.controller';
 import { GamingOperationsController } from '../../modules/owner/gaming/gaming-operations.controller';
 import { GamingLayoutController } from '../../modules/owner/gaming/gaming-layout.controller';
+import { GamingDevicesController } from '../../modules/owner/gaming/devices/gaming-devices.controller';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import {
@@ -20,7 +21,7 @@ import { SubscriptionsController } from '../../modules/subscriptions/subscriptio
 import { ReviewsController } from '../../modules/reviews/reviews.controller';
 import { CallsController } from '../../modules/calls/calls.controller';
 
-const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController,
+const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController,GamingDevicesController,
   OwnerController,
   VenuesController,
   BookingsController,

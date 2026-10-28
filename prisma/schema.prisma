@@ -606,6 +606,9 @@ model Venue {
   gamingProductsEnabled     Boolean                    @default(false)
   gamingReceiptsEnabled     Boolean                    @default(false)
   gamingBillingPolicy       Json?
+  /// Secret in the link a smart plug (Shelly outbound WebSocket) uses to join this venue.
+  gamingDeviceToken         String?                    @unique
+  gamingDevices             GamingDevice[]
   gamingRooms               GamingRoom[]
   gamingSessions            UsageSession[]
   gamingOrders              GamingOrder[]
@@ -717,6 +720,7 @@ model Court {
   gamingRoom            GamingRoom?              @relation("GamingRoomChildren", fields: [gamingRoomId], references: [id], onDelete: Restrict)
   bookableRoom          GamingRoom?              @relation("GamingRoomCourt")
   usageSessions         UsageSession[]
+  gamingDevices         GamingDevice[]
   usageSegments         UsageSegment[]
   occupancies           ResourceOccupancy[]
   pricingRules          PricingRule[]
@@ -3550,6 +3554,61 @@ model GamingPrintJob {
   updatedAt  DateTime        @updatedAt
 
   @@index([receiptId])
+}
+
+/// A smart plug (today: Shelly Gen2+) that powers a station's screen. It joins the venue by
+/// connecting to the venue's device link; the owner then assigns it to a station. The server
+/// turns it on while a session runs and off when it ends.
+model GamingDevice {
+  id            String            @id @default(uuid())
+  venueId       String
+  venue         Venue             @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  provider      String            @default("shelly")
+  /// The device's own id, e.g. "shellyplugsg3-a1b2c3d4e5f6".
+  externalId    String
+  model         String?
+  firmware      String?
+  name          String?
+  unitId        String?
+  unit          Court?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  channel       Int               @default(0)
+  /// { enabled, autoOn, autoOff, cutAtEnd, graceMinutes, guard, invert }
+  settings      Json
+  online        Boolean           @default(false)
+  lastSeenAt    DateTime?
+  /// Last relay output the device reported (physical, before `invert`).
+  output        Boolean?
+  powerW        Float?
+  /// Set when the device refused our commands because its own password is on.
+  authError     Boolean           @default(false)
+  /// What the server last asked for ("on:<cutAt>" | "off"); a change triggers a command.
+  appliedKey    String?
+  overrideOn    Boolean?
+  overrideUntil DateTime?
+  overrideBy    String?
+  configuredAt  DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  logs          GamingDeviceLog[]
+
+  @@unique([provider, externalId])
+  @@index([venueId])
+  @@index([unitId])
+}
+
+model GamingDeviceLog {
+  id        String       @id @default(uuid())
+  deviceId  String
+  device    GamingDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  venueId   String
+  /// connected | disconnected | command | failed | guard | override | test | assigned | settings
+  kind      String
+  detail    Json?
+  actorId   String?
+  createdAt DateTime     @default(now())
+
+  @@index([deviceId, createdAt])
+  @@index([venueId, createdAt])
 }
 
 model GamingOutbox {

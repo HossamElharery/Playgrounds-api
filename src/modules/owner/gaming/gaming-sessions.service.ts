@@ -1,7 +1,7 @@
 import { gamingConfigObject, selectGamingTariff, type PlayMode } from './gaming-tariff';
 import { isoMoneyScale,rescaleMoney } from '../../../common/money/money-scale';
 import { guestPhoneForStorage } from '../../../common/utils/guest-phone.util';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import { Court, Prisma, UsageSegment, UsageSession } from '@prisma/client';
 import { AuthenticatedUser } from '../../../common/types/authenticated-user.interface';
 import { coveringPricingRule } from '../../../common/utils/pricing-rule.util';
@@ -11,11 +11,13 @@ import { loadStaffScope, scopeCan } from '../../../common/access/staff-scope';
 import { LedgerService } from '../../finance/ledger.service';
 import { GamingCommandService, jsonValue } from './gaming-command.service';
 import { ChangePlayModeDto, UnitTariffDto, BillingSettingsDto, CorrectSessionEndDto, CreateGamingUnitsDto, DuplicateGamingUnitsDto, ExtendSessionDto, GamingCapabilitiesDto, GamingMaintenanceDto, GamingCommandDto, GamingVersionDto, ReasonCommandDto, StartSessionDto, TransferSessionDto } from './gaming-operations.dto';
+import { DeviceHubService } from './devices/device-hub.service';
+import { deviceView } from './devices/gaming-devices.service';
 import { allocatePayment, calculateSessionCharge, calculateUsageCharge, SessionBillingPolicy } from './session-billing';
 const exact: SessionBillingPolicy = { version: 1, mode: 'exact-time' };
 @Injectable()
 export class GamingSessionsService {
-  constructor(private readonly commands: GamingCommandService, private readonly ledger: LedgerService) {}
+  constructor(private readonly commands: GamingCommandService, private readonly ledger: LedgerService, @Optional() private readonly hub?: DeviceHubService) {}
   private get prisma() { return this.commands.prisma; }
   async capabilities(user: AuthenticatedUser, venueId: string) {
     const venue = await this.commands.access(this.prisma,user,venueId,'bookings.view',false);
@@ -232,12 +234,14 @@ export class GamingSessionsService {
     const scope=user.roles.includes('staff')?await loadStaffScope(this.prisma,user.id):null;
     const privileged=!user.roles.includes('staff')||user.roles.includes('owner')||user.roles.includes('admin'); const money=privileged||scopeCan(scope,'reports.view')||scopeCan(scope,'payments.record'); const customers=privileged||scopeCan(scope,'customers.view');
     const now=new Date(),instant=at?new Date(at):now;if(at&&(!/(Z|[+-]\d{2}:\d{2})$/.test(at)||!Number.isFinite(instant.getTime())||Math.abs(instant.getTime()-now.getTime())>30*86400000))throw new BadRequestException({code:'SESSION_START_TIME_INVALID'});
-    const [units,sessions,bookings,blocks]=await Promise.all([
+    const [units,sessions,bookings,blocks,devices]=await Promise.all([
       this.prisma.court.findMany({where:{venueId,sport:{activityKind:{in:['gaming-station','table-game']}}},include:{gamingRoom:{select:{occupancy:true,bookableCourtId:true}},sport:{select:{activityKind:true}},pricingRules:true,venue:{include:{country:true}},bookableRoom:{include:{children:{select:{id:true}}}}},orderBy:{name:'asc'}}),
       this.prisma.usageSession.findMany({where:{venueId,state:'running'},include:{segments:{orderBy:{startedAt:'asc'}},order:{include:{lines:true,payments:{where:{status:{in:['paid','refunded']}}}}}}}),
       this.prisma.booking.findMany({where:{venueId,status:{in:['held','confirmed']},slotEnd:{gt:now}},select:{id:true,courtId:true,slotStart:true,slotEnd:true,status:true},orderBy:{slotStart:'asc'},take:1000}),
-      this.prisma.resourceOccupancy.findMany({where:{resource:{venueId},OR:[{running:true},{endsAt:{gt:now}},{endsAt:null}]},orderBy:{startsAt:'asc'}})
+      this.prisma.resourceOccupancy.findMany({where:{resource:{venueId},OR:[{running:true},{endsAt:{gt:now}},{endsAt:null}]},orderBy:{startsAt:'asc'}}),
+      this.prisma.gamingDevice.findMany({where:{venueId,unitId:{not:null}},orderBy:{createdAt:'asc'}})
     ]);
+    const deviceOf=(unitId:string)=>{const d=devices.find(x=>x.unitId===unitId);if(!d)return null;const v=deviceView(d,this.hub?.isOnline(d.externalId)??false,now);return {id:v.id,online:v.online,screenOn:v.screenOn,powerW:v.powerW,enabled:v.settings.enabled,authError:v.authError,override:v.override};};
     return {venueId,serverNow:now.toISOString(),...(at?{inspectAt:instant.toISOString()}:{}),units:units.map(u=>{
       const resources=new Set([u.id,...(u.bookableRoom?.occupancy==='exclusive'?u.bookableRoom.children.map(c=>c.id):[])]);const shared=blocks.filter(x=>resources.has(x.resourceId));
       const occupancy=shared.find(x=>x.startsAt<=instant&&(x.endsAt===null||x.endsAt>instant||x.running&&(!at||sessions.some(s=>s.id===x.sessionId&&s.expectedEnd&&s.expectedEnd<=now)))); const s=sessions.find(x=>x.id===occupancy?.sessionId);const future=shared.find(x=>x.startsAt>instant);const next=bookings.find(x=>x.id===future?.bookingId);const availableUntil=future?.startsAt??null;
@@ -247,7 +251,7 @@ export class GamingSessionsService {
       const hourlyRateMinor=rule?u.gamingHourlyRateMinor??rescaleMoney(rule.priceAmount,100,isoMoneyScale(u.venue.currency)):null;
       const base=u.pricingRules.find(r=>r.label==='base'&&r.startTime==='00:00'&&r.endTime==='24:00'&&!r.daysOfWeek.length);
       const baseHourlyRateMinor=base?u.gamingHourlyRateMinor??rescaleMoney(base.priceAmount,100,isoMoneyScale(u.venue.currency)):null;
-      return {id:u.id,name:u.name,roomParentId:u.gamingRoom?.occupancy==='exclusive'&&(gamingConfigObject(u.gamingConfig).setupWholeRoomOnly===true||gamingConfigObject(u.tableConfig).setupWholeRoomOnly===true)?u.gamingRoom.bookableCourtId:null,published:u.gamingPublished,activityKind:u.sport.activityKind,...(money?{hourlyRateMinor,baseHourlyRateMinor,multiHourlyRateMinor:gamingConfigObject(u.gamingConfig).multiHourlyRateMinor??null}:{}),supportsMulti: ['ps4','ps5','xbox-series'].includes(String(gamingConfigObject(u.gamingConfig).consoleType)) && Number(gamingConfigObject(u.gamingConfig).multiHourlyRateMinor)>0,availableUntil,blockId:occupancy?.blockId??null,state:s?'in-use':occupancy?.blockId?'maintenance':occupancy?.bookingId?'held':'available',nextBooking:next??null,currentBooking,
+      return {id:u.id,name:u.name,roomParentId:u.gamingRoom?.occupancy==='exclusive'&&(gamingConfigObject(u.gamingConfig).setupWholeRoomOnly===true||gamingConfigObject(u.tableConfig).setupWholeRoomOnly===true)?u.gamingRoom.bookableCourtId:null,published:u.gamingPublished,activityKind:u.sport.activityKind,...(money?{hourlyRateMinor,baseHourlyRateMinor,multiHourlyRateMinor:gamingConfigObject(u.gamingConfig).multiHourlyRateMinor??null}:{}),supportsMulti: ['ps4','ps5','xbox-series'].includes(String(gamingConfigObject(u.gamingConfig).consoleType)) && Number(gamingConfigObject(u.gamingConfig).multiHourlyRateMinor)>0,availableUntil,blockId:occupancy?.blockId??null,state:s?'in-use':occupancy?.blockId?'maintenance':occupancy?.bookingId?'held':'available',nextBooking:next??null,currentBooking,device:deviceOf(u.id),
         session:s?{id:s.id,unitId:s.unitId,orderId:s.orderId,version:s.version,state:s.state,startedAt:s.startedAt,expectedEnd:s.expectedEnd,bookingId:s.bookingId,playMode:gamingConfigObject(s.segments[s.segments.length-1]?.rateSnapshot).playMode??'standard',dueToEnd:!!s.expectedEnd&&s.expectedEnd<=now,policy:s.policy,
           ...(customers?{guestName:s.order.guestName,customerId:s.order.customerId}:{}),...(money?{estimatedMinor:estimate,currency:s.order.currency,receivedMinor:s.order.payments.reduce((sum,p)=>sum+rescaleMoney(p.amount,p.moneyScale,s.order.moneyScale),0),lines:s.order.lines}: {})}:null};
     })};

@@ -12,7 +12,10 @@ export const jsonValue = (v: unknown): Prisma.InputJsonValue => JSON.parse(JSON.
 const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a],[b]) => a.localeCompare(b)).map(([k,x]) => [k,canonical(x)])) : v;
 @Injectable()
 export class GamingCommandService {
+  private readonly committedListeners: ((venueId: string, operation: string) => void)[] = [];
   constructor(readonly prisma: PrismaService) {}
+  /** Called after every committed gaming command (smart plugs follow session changes from here). */
+  onCommitted(listener: (venueId: string, operation: string) => void) { this.committedListeners.push(listener); }
   async access(db: Prisma.TransactionClient | PrismaService, user: AuthenticatedUser, venueId: string, permission: PermissionKey, write: boolean, allowSports=false) {
     const venue = await assertVenueAccess(db as PrismaService, user, venueId, { write });
     await assertStaffPermission(db as PrismaService, user, permission);
@@ -45,6 +48,7 @@ export class GamingCommandService {
         await tx.auditLogEntry.create({ data: { actorUserId: user.id, action: `owner.gaming.${operation}`, targetType: 'venue', targetId: dto.venueId, metadata: { requestKey: dto.requestKey } } });
         return response as T;
       }, { maxWait: 10000, timeout: 20000 });
+      for (const listener of this.committedListeners) { try { listener(dto.venueId, operation); } catch { /* listeners must not fail the command */ } }
       await this.access(this.prisma,user,dto.venueId,permission,true,allowSports);
       if (!user.roles.includes('staff') || user.roles.includes('owner') || user.roles.includes('admin')) return result;
       const scope=await loadStaffScope(this.prisma,user.id);

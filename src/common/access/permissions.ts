@@ -31,6 +31,7 @@ export const PERMISSION_KEYS = [
   'layout.view',
   'layout.edit',
   'layout.publish',
+  'devices.manage',
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -59,6 +60,7 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   { key: 'sessions.start', group: 'gaming', labelAr: 'بدء جلسة', labelEn: 'Start sessions', hintAr: 'بدء جلسة حسب نطاق المنشأة.', hintEn: 'Start sessions within assigned venues.', requires: ['bookings.view'] },
   { key: 'layout.view', group: 'gaming', labelAr: 'عرض توزيع الأجهزة', labelEn: 'View station layout', hintAr: 'عرض الأدوار والأجهزة دون بيانات مالية.', hintEn: 'See floors and stations without financial data.', requires: ['bookings.view'] },
   { key: 'layout.edit', group: 'gaming', labelAr: 'تعديل توزيع الأجهزة', labelEn: 'Edit station layout', hintAr: 'حفظ مسودة التوزيع دون تغيير الأسعار أو الحسابات.', hintEn: 'Save layout drafts without changing prices or bills.', requires: ['layout.view'] },
+  { key: 'devices.manage', group: 'gaming', labelAr: 'التحكم في الشاشات (الفيش الذكية)', labelEn: 'Control screens (smart plugs)', hintAr: 'ربط الفيش بالأجهزة، تغيير إعداداتها، وتشغيل الشاشة أو إطفاؤها يدويًا.', hintEn: 'Link smart plugs to stations, change their settings, and switch screens on or off by hand.', requires: ['bookings.view'] },
   { key: 'layout.publish', group: 'gaming', labelAr: 'نشر توزيع الأجهزة', labelEn: 'Publish station layout', hintAr: 'اعتماد مسودة التوزيع للتشغيل.', hintEn: 'Publish a layout draft for operations.', requires: ['layout.edit'] },
 
   {
