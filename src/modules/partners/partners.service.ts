@@ -770,6 +770,12 @@ export class PartnersService {
       select: { currency: true },
     });
     if (!country) throw new ApiException(HttpStatus.BAD_REQUEST, 'UNKNOWN_COUNTRY', 'Unknown country');
+    if (existingVenueId) {
+      // A live venue's bookings and cash are in its currency; moving it would mix money.
+      const live = await tx.venue.findUnique({ where: { id: existingVenueId }, select: { countryCode: true } });
+      if (live && live.countryCode !== countryCode)
+        throw new ApiException(HttpStatus.CONFLICT, 'COUNTRY_LOCKED', 'A live venue cannot move to another country');
+    }
     const venueData = {
       ownerId,
       countryCode,
