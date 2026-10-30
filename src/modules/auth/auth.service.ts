@@ -201,14 +201,10 @@ export class AuthService {
     const match = countries
       .sort((a, b) => b.phoneCallingCode.length - a.phoneCallingCode.length)
       .find((c) => phone.startsWith(c.phoneCallingCode));
-    if (!match) {
-      throw new ApiException(
-        HttpStatus.BAD_REQUEST,
-        'PHONE_MARKET_UNSUPPORTED',
-        'countryCode is required — phone prefix did not match an active market',
-      );
-    }
-    return match.code;
+    // A phone's calling code is not the user's operating market. Keep the
+    // globally valid E.164 number and use the default market when its country
+    // is not yet represented in CountryConfig (which is an operational table).
+    return match?.code ?? 'EG';
   }
 
 

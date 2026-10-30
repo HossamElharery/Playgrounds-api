@@ -327,8 +327,9 @@ describe('AuthService', () => {
       expect(prisma.user.create.mock.calls[1][0].data.username).toBe('qa.owner');
     });
 
-    it('rejects a phone from a country with no active market using a typed 400', async () => {
+    it('accepts a globally valid phone even when its calling code is not an active market', async () => {
       prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockImplementation(async ({ data }: any) => ({ id: 'new-owner', ...data }));
       prisma.countryConfig = {
         findMany: jest.fn().mockResolvedValue([
           { code: 'EG', phoneCallingCode: '+20' },
@@ -336,11 +337,13 @@ describe('AuthService', () => {
         ]),
         findFirst: jest.fn(),
       };
-      await expect(service.registerPartner({ ...dto, phone: '+16092757733' } as never)).rejects.toMatchObject({
-        status: 400,
-        response: expect.objectContaining({ code: 'PHONE_MARKET_UNSUPPORTED' }),
+      jest.spyOn(service, 'issueTokenPair' as any).mockResolvedValue({ accessToken: 'access', refreshToken: 'refresh' } as never);
+
+      await service.registerPartner({ ...dto, phone: '+16092757733' } as never);
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ phone: '+16092757733', countryCode: 'EG' }),
       });
-      expect(prisma.user.create).not.toHaveBeenCalled();
     });
   });
   it('promotes the same guest identity atomically without replacing profile or squad',async()=>{

@@ -18,6 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { VenuesService } from '../venues/venues.service';
 import { VenueTextService } from '../venues/venue-text.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { GeoService } from '../geo/geo.service';
 import { ApiException } from '../../common/errors/api-exception';
 import { encodeGeohash } from '../../common/utils/geo.util';
 import { normalizeCountryCode } from '../../common/geo/country.util';
@@ -60,6 +61,7 @@ export class PartnersService {
     private readonly venues: VenuesService,
     private readonly subscriptions: SubscriptionsService,
     @Optional() private readonly venueTexts?: VenueTextService,
+    @Optional() private readonly geo?: GeoService,
   ) {}
 
   private async localizePublicText(payload: PartnerApplicationPayload) {
@@ -75,11 +77,13 @@ export class PartnersService {
       const arabicIsEnglish = !!ar && VenueTextService.languageOf(ar) === 'en';
       if (!en || englishIsArabic) {
         const source = ar || en;
-        if (source) payload[enKey] = (await this.venueTexts!.both(source, kind)).en;
+        if (source)
+          payload[enKey] = (await this.venueTexts!.both(source, kind)).en;
       }
       if (!ar || arabicIsEnglish) {
         const source = en || ar;
-        if (source) payload[arKey] = (await this.venueTexts!.both(source, kind)).ar;
+        if (source)
+          payload[arKey] = (await this.venueTexts!.both(source, kind)).ar;
       }
     };
     await repair('publicNameAr', 'publicNameEn', 'name');
@@ -193,7 +197,11 @@ export class PartnersService {
     if (
       editingLive &&
       isDeepStrictEqual(
-        JSON.parse(JSON.stringify(sanitizePayload(app.payload as PartnerApplicationPayload))),
+        JSON.parse(
+          JSON.stringify(
+            sanitizePayload(app.payload as PartnerApplicationPayload),
+          ),
+        ),
         JSON.parse(JSON.stringify(payload)),
       )
     ) {
@@ -447,18 +455,31 @@ export class PartnersService {
     return this.toAdminDto(updated);
   }
 
-  private async replacePhotos(tx:Prisma.TransactionClient,venueId:string,photos:{url?:string;isCover?:boolean}[]){
-    const existing=await tx.venuePhoto.findMany({where:{venueId}});
-    const incoming=[...new Map(photos.filter(p=>p.url).map(p=>[p.url!,p])).values()];
-    const urls=incoming.map(p=>p.url!);
-    await tx.venuePhoto.deleteMany({where:{venueId,url:{notIn:urls}}});
-    const added:{venueId:string;url:string;position:number}[]=[];
-    for(const [index,photo]of incoming.entries()){
-      const position=photo.isCover?0:index+1;const old=existing.find(p=>p.url===photo.url);
-      if(old)await tx.venuePhoto.update({where:{id:old.id},data:{position}});
-      else added.push({venueId,url:photo.url!,position});
+  private async replacePhotos(
+    tx: Prisma.TransactionClient,
+    venueId: string,
+    photos: { url?: string; isCover?: boolean }[],
+  ) {
+    const existing = await tx.venuePhoto.findMany({ where: { venueId } });
+    const incoming = [
+      ...new Map(photos.filter((p) => p.url).map((p) => [p.url!, p])).values(),
+    ];
+    const urls = incoming.map((p) => p.url!);
+    await tx.venuePhoto.deleteMany({
+      where: { venueId, url: { notIn: urls } },
+    });
+    const added: { venueId: string; url: string; position: number }[] = [];
+    for (const [index, photo] of incoming.entries()) {
+      const position = photo.isCover ? 0 : index + 1;
+      const old = existing.find((p) => p.url === photo.url);
+      if (old)
+        await tx.venuePhoto.update({
+          where: { id: old.id },
+          data: { position },
+        });
+      else added.push({ venueId, url: photo.url!, position });
     }
-    if(added.length)await tx.venuePhoto.createMany({data:added});
+    if (added.length) await tx.venuePhoto.createMany({ data: added });
   }
 
   private async syncVenueContent(
@@ -498,7 +519,7 @@ export class PartnersService {
       },
     });
 
-    await this.replacePhotos(tx,venueId,payload.photos??[]);
+    await this.replacePhotos(tx, venueId, payload.photos ?? []);
 
     const sportIds = Array.from(
       new Set((payload.courts ?? []).map((c) => c.sportId).filter(Boolean)),
@@ -583,7 +604,10 @@ export class PartnersService {
       await this.assertGeoAndSports(payload);
       // A venue never goes live without saying how long its subscription runs.
       const hasSubscription = app.venueId
-        ? !!(await this.prisma.venueSubscription.findUnique({ where: { venueId: app.venueId }, select: { id: true } }))
+        ? !!(await this.prisma.venueSubscription.findUnique({
+            where: { venueId: app.venueId },
+            select: { id: true },
+          }))
         : false;
       if (!hasSubscription && !dto.subscriptionDays) {
         throw new ApiException(
@@ -634,11 +658,13 @@ export class PartnersService {
           data: {
             status: nextStatus,
             venueId,
-            ...(dto.action === 'approve' ? {
-              payload: payload as Prisma.InputJsonValue,
-              publicNameEn: payload.publicNameEn,
-              publicNameAr: payload.publicNameAr,
-            } : {}),
+            ...(dto.action === 'approve'
+              ? {
+                  payload: payload as Prisma.InputJsonValue,
+                  publicNameEn: payload.publicNameEn,
+                  publicNameAr: payload.publicNameAr,
+                }
+              : {}),
             version: { increment: 1 },
             events: {
               create: {
@@ -769,12 +795,24 @@ export class PartnersService {
       where: { code: countryCode },
       select: { currency: true },
     });
-    if (!country) throw new ApiException(HttpStatus.BAD_REQUEST, 'UNKNOWN_COUNTRY', 'Unknown country');
+    if (!country)
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'UNKNOWN_COUNTRY',
+        'Unknown country',
+      );
     if (existingVenueId) {
       // A live venue's bookings and cash are in its currency; moving it would mix money.
-      const live = await tx.venue.findUnique({ where: { id: existingVenueId }, select: { countryCode: true } });
+      const live = await tx.venue.findUnique({
+        where: { id: existingVenueId },
+        select: { countryCode: true },
+      });
       if (live && live.countryCode !== countryCode)
-        throw new ApiException(HttpStatus.CONFLICT, 'COUNTRY_LOCKED', 'A live venue cannot move to another country');
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'COUNTRY_LOCKED',
+          'A live venue cannot move to another country',
+        );
     }
     const venueData = {
       ownerId,
@@ -803,14 +841,35 @@ export class PartnersService {
     };
 
     let venueId = existingVenueId;
-    const existingCourts = venueId ? await tx.court.findMany({where:{venueId},include:{sport:{select:{activityKind:true}}}}) : [];
-    const gamingCourts=existingCourts.filter(c=>['gaming-station','table-game'].includes(c.sport.activityKind??''));
-    let preserveGaming=false;
-    if(venueId&&gamingCourts.length){
-      const hall=await tx.gamingLayout.findUnique({where:{venueId}});
-      preserveGaming=!!hall?.revision||gamingCourts.some(c=>!!c.gamingRoomId||c.gamingHourlyRateMinor!=null||(c.gamingConfig as {multiHourlyRateMinor?:number}|null)?.multiHourlyRateMinor!==undefined)||!!(await tx.usageSession.findFirst({where:{venueId},select:{id:true}}));
+    const existingCourts = venueId
+      ? await tx.court.findMany({
+          where: { venueId },
+          include: { sport: { select: { activityKind: true } } },
+        })
+      : [];
+    const gamingCourts = existingCourts.filter((c) =>
+      ['gaming-station', 'table-game'].includes(c.sport.activityKind ?? ''),
+    );
+    let preserveGaming = false;
+    if (venueId && gamingCourts.length) {
+      const hall = await tx.gamingLayout.findUnique({ where: { venueId } });
+      preserveGaming =
+        !!hall?.revision ||
+        gamingCourts.some(
+          (c) =>
+            !!c.gamingRoomId ||
+            c.gamingHourlyRateMinor != null ||
+            (c.gamingConfig as { multiHourlyRateMinor?: number } | null)
+              ?.multiHourlyRateMinor !== undefined,
+        ) ||
+        !!(await tx.usageSession.findFirst({
+          where: { venueId },
+          select: { id: true },
+        }));
     }
-    const protectedIds=new Set(preserveGaming?gamingCourts.map(c=>c.id):[]);
+    const protectedIds = new Set(
+      preserveGaming ? gamingCourts.map((c) => c.id) : [],
+    );
     if (venueId) {
       await tx.venue.update({ where: { id: venueId }, data: venueData });
       await tx.venueSport.deleteMany({ where: { venueId } });
@@ -827,17 +886,47 @@ export class PartnersService {
       venueId = venue.id;
     }
 
-    const resolvedSports = await Promise.all((payload.courts ?? []).map(async (draft, index) => {
-      const rawId = draft.sportId?.trim();
-      const normalized = this.normalizeSportId(rawId);
-      const sport = rawId ? ((await tx.sportCategory.findUnique({where:{id:rawId},select:{id:true,slug:true,activityKind:true}})) ??
-        (normalized && normalized !== rawId ? await tx.sportCategory.findUnique({where:{id:normalized},select:{id:true,slug:true,activityKind:true}}) : null) ??
-        await tx.sportCategory.findUnique({where:{slug:rawId.replace(/^sport-/, '')},select:{id:true,slug:true,activityKind:true}})) : null;
-      if (!sport) throw new ApiException(HttpStatus.BAD_REQUEST, 'INVALID_SPORT', `Unknown sport on court ${index + 1}`);
-      return sport;
-    }));
-    if(payload.gamingSetup&&resolvedSports.filter(s=>!['gaming-station','table-game'].includes(s.activityKind??'')).length>20)throw new ApiException(HttpStatus.BAD_REQUEST,'TOO_MANY_COURTS','At most 20 sports courts are allowed');
-    const sportIds = [...new Set(resolvedSports.map(sport => sport.id))];
+    const resolvedSports = await Promise.all(
+      (payload.courts ?? []).map(async (draft, index) => {
+        const rawId = draft.sportId?.trim();
+        const normalized = this.normalizeSportId(rawId);
+        const sport = rawId
+          ? ((await tx.sportCategory.findUnique({
+              where: { id: rawId },
+              select: { id: true, slug: true, activityKind: true },
+            })) ??
+            (normalized && normalized !== rawId
+              ? await tx.sportCategory.findUnique({
+                  where: { id: normalized },
+                  select: { id: true, slug: true, activityKind: true },
+                })
+              : null) ??
+            (await tx.sportCategory.findUnique({
+              where: { slug: rawId.replace(/^sport-/, '') },
+              select: { id: true, slug: true, activityKind: true },
+            })))
+          : null;
+        if (!sport)
+          throw new ApiException(
+            HttpStatus.BAD_REQUEST,
+            'INVALID_SPORT',
+            `Unknown sport on court ${index + 1}`,
+          );
+        return sport;
+      }),
+    );
+    if (
+      payload.gamingSetup &&
+      resolvedSports.filter(
+        (s) => !['gaming-station', 'table-game'].includes(s.activityKind ?? ''),
+      ).length > 20
+    )
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'TOO_MANY_COURTS',
+        'At most 20 sports courts are allowed',
+      );
+    const sportIds = [...new Set(resolvedSports.map((sport) => sport.id))];
     if (sportIds.length) {
       await tx.venueSport.createMany({
         data: sportIds.map((sportId) => ({ venueId: venueId, sportId })),
@@ -860,11 +949,18 @@ export class PartnersService {
       }
     }
 
-    const resolvedCourtIds = (payload.courts ?? []).map((draft,index) => draft.id ??
-      existingCourts.find(c => c.name === (draft.name || `Court ${index+1}`) && c.sportId === resolvedSports[index].id)?.id);
+    const resolvedCourtIds = (payload.courts ?? []).map(
+      (draft, index) =>
+        draft.id ??
+        existingCourts.find(
+          (c) =>
+            c.name === (draft.name || `Court ${index + 1}`) &&
+            c.sportId === resolvedSports[index].id,
+        )?.id,
+    );
     const keepIds = new Set(resolvedCourtIds.filter(Boolean) as string[]);
     for (const court of existingCourts) {
-      if (!keepIds.has(court.id)&&!protectedIds.has(court.id)) {
+      if (!keepIds.has(court.id) && !protectedIds.has(court.id)) {
         const live = await tx.booking.count({
           where: { courtId: court.id },
         });
@@ -875,7 +971,7 @@ export class PartnersService {
       }
     }
 
-    const registrationUnits:{id:string;assetKey:SetupKind}[]=[];
+    const registrationUnits: { id: string; assetKey: SetupKind }[] = [];
     for (const [index, draft] of (payload.courts ?? []).entries()) {
       const pricing = {
         base: draft.basePriceAmount ?? 0,
@@ -884,14 +980,20 @@ export class PartnersService {
       const currency = country.currency;
 
       const sportCategory = resolvedSports[index];
-      if(preserveGaming&&['gaming-station','table-game'].includes(sportCategory.activityKind??''))continue;
+      if (
+        preserveGaming &&
+        ['gaming-station', 'table-game'].includes(
+          sportCategory.activityKind ?? '',
+        )
+      )
+        continue;
       const { gamingConfig, tableConfig, ageRating } = buildActivityFields(
         sportCategory.activityKind,
         draft.spec,
       );
 
       let courtId = resolvedCourtIds[index];
-      if(courtId&&protectedIds.has(courtId))continue;
+      if (courtId && protectedIds.has(courtId)) continue;
       if (courtId && existingCourts.some((c) => c.id === courtId)) {
         await tx.court.update({
           where: { id: courtId },
@@ -932,9 +1034,17 @@ export class PartnersService {
         courtId = created.id;
       }
 
-      if(payload.gamingSetup&&['gaming-station','table-game'].includes(sportCategory.activityKind??'')){
-        const asset=sportCategory.activityKind==='table-game'?sportCategory.slug:(gamingConfig?.consoleType as string);
-        registrationUnits.push({id:courtId,assetKey:asset as SetupKind});
+      if (
+        payload.gamingSetup &&
+        ['gaming-station', 'table-game'].includes(
+          sportCategory.activityKind ?? '',
+        )
+      ) {
+        const asset =
+          sportCategory.activityKind === 'table-game'
+            ? sportCategory.slug
+            : (gamingConfig?.consoleType as string);
+        registrationUnits.push({ id: courtId, assetKey: asset as SetupKind });
       }
       await tx.pricingRule.createMany({
         data: [
@@ -966,10 +1076,25 @@ export class PartnersService {
       });
     }
 
-    if(protectedIds.size)await tx.venueSport.createMany({data:[...new Set(gamingCourts.map(c=>c.sportId))].map(sportId=>({venueId:venueId!,sportId})),skipDuplicates:true});
-    await this.replacePhotos(tx,venueId,payload.photos??[]);
+    if (protectedIds.size)
+      await tx.venueSport.createMany({
+        data: [...new Set(gamingCourts.map((c) => c.sportId))].map(
+          (sportId) => ({ venueId: venueId!, sportId }),
+        ),
+        skipDuplicates: true,
+      });
+    await this.replacePhotos(tx, venueId, payload.photos ?? []);
 
-    if(payload.gamingSetup&&!preserveGaming)await publishRegistrationGamingPlan(tx,venueId,country.currency,adminId,payload.gamingSetup,registrationUnits,new GamingLayoutService(this.prisma));
+    if (payload.gamingSetup && !preserveGaming)
+      await publishRegistrationGamingPlan(
+        tx,
+        venueId,
+        country.currency,
+        adminId,
+        payload.gamingSetup,
+        registrationUnits,
+        new GamingLayoutService(this.prisma),
+      );
     await activateGamingDefaults(tx, venueId);
     return venueId;
   }
@@ -1076,6 +1201,11 @@ export class PartnersService {
 
   private async assertGeoAndSports(payload: PartnerApplicationPayload) {
     const countryCode = normalizeCountryCode(payload.countryCode) ?? 'EG';
+    await this.geo?.ensureCatalogLocation(
+      countryCode,
+      payload.governorateId,
+      payload.districtId,
+    );
     const sportIds = (payload.courts ?? [])
       .map((c) => this.normalizeSportId(c.sportId))
       .filter(Boolean) as string[];
@@ -1229,13 +1359,13 @@ export class PartnersService {
     if (lower.includes('unique') || lower.includes('p2002')) {
       return 'A venue with this name already exists. Rename the listing and retry.';
     }
-    if (lower.includes('null') && (lower.includes('lat') || lower.includes('lng'))) {
+    if (
+      lower.includes('null') &&
+      (lower.includes('lat') || lower.includes('lng'))
+    ) {
       return 'The map location is missing. Confirm the pin, then approve again.';
     }
-    if (
-      raw.length > 220 ||
-      /prisma|invocation|postgres|sql/i.test(raw)
-    ) {
+    if (raw.length > 220 || /prisma|invocation|postgres|sql/i.test(raw)) {
       return 'Publishing failed because the listing data is incomplete or invalid. Review courts, photos, location and hours, then retry.';
     }
     return raw || 'Publishing failed. Review the listing and retry.';

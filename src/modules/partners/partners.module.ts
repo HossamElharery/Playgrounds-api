@@ -6,9 +6,17 @@ import { StorageModule } from '../storage/storage.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { VenuesModule } from '../venues/venues.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { GeoModule } from '../geo/geo.module';
 
 @Module({
-  imports: [AuthModule, StorageModule, NotificationsModule, VenuesModule, SubscriptionsModule],
+  imports: [
+    AuthModule,
+    StorageModule,
+    NotificationsModule,
+    VenuesModule,
+    SubscriptionsModule,
+    GeoModule,
+  ],
   providers: [PartnersService],
   controllers: [PartnersController],
   exports: [PartnersService],
