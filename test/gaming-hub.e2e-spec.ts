@@ -103,6 +103,11 @@ describe('consoles follow gaming sessions through a Matchena Hub (PostgreSQL + r
     await expect(hubs.pair(user,row.id,{...key(),pin:'12345678'})).rejects.toMatchObject({response:{code:'PSN_NOT_LINKED'}});
     expect((await hubs.psnUrl(user,hubId,venueId)).url).toMatch(/^https:\/\//);
     await expect(hubs.psnLink(user,hubId,{...key(),redirectUrl:'https://example.com/nothing'})).rejects.toMatchObject({response:{code:'PSN_URL_INVALID'}});
+    // sign-in without copy/paste: the Hub opens its own window; the owner page polls the status
+    expect(await hubs.psnSignin(user,hubId,key())).toEqual({state:'waiting'});
+    await until(async()=>(await hubs.psnStatus(user,hubId,venueId)).linked,'sign-in finished');
+    expect((await db.gamingHub.findUniqueOrThrow({where:{id:hubId}})).psnLinked).toBe(true);
+    sim.psnLinked=false;sim.signinState='idle';await db.gamingHub.update({where:{id:hubId},data:{psnLinked:false}});
     await expect(hubs.psnLink(user,hubId,{...key(),redirectUrl:'https://remoteplay.dl.playstation.net/remoteplay/redirect?code=abc'})).resolves.toEqual({linked:true});
     expect((await db.gamingHub.findUniqueOrThrow({where:{id:hubId}})).psnLinked).toBe(true);
     await expect(hubs.pair(user,row.id,{...key(),pin:'00000000'})).rejects.toMatchObject({response:{code:'PIN_WRONG'}});

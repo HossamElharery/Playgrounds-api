@@ -18,6 +18,7 @@ export class HubSimulator {
   readonly calls: { op: string; args: Record<string, unknown> }[] = [];
   readonly consoles = new Map<string, SimConsole>();
   psnLinked = false;
+  signinState: 'idle' | 'waiting' | 'done' | 'error' = 'idle';
   delayMs = 30;
   /** op -> error code to answer with (until cleared). */
   fail: Record<string, string> = {};
@@ -117,6 +118,15 @@ export class HubSimulator {
         return this.res(id, { count: this.consoles.size });
       case 'psn.url':
         return this.res(id, { url: 'https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/authorize?sim=1' });
+      case 'psn.signin':
+        this.signinState = 'waiting';
+        setTimeout(() => { if (this.signinState === 'waiting') { this.psnLinked = true; this.signinState = 'done'; } }, this.delayMs * 4);
+        return this.res(id, { state: 'waiting' });
+      case 'psn.status':
+        return this.res(id, { state: this.signinState, error: null, linked: this.psnLinked });
+      case 'psn.cancel':
+        this.signinState = 'error';
+        return this.res(id, {});
       case 'psn.link':
         if (!String(args.redirectUrl).includes('code=')) return this.err(id, 'PSN_URL_INVALID');
         this.psnLinked = true;

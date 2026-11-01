@@ -147,6 +147,35 @@ export class GamingHubsController {
   ) {
     return this.hubs.psnUrl(u, id, q.venueId);
   }
+  @Post(':hubId/psn/signin')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  psnSignin(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('hubId', ParseUUIDPipe) id: string,
+    @Body() d: GamingCommandDto,
+  ) {
+    return this.hubs.psnSignin(u, id, d);
+  }
+  @Get(':hubId/psn/status')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  psnStatus(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('hubId', ParseUUIDPipe) id: string,
+    @Query() q: GamingQueryDto,
+  ) {
+    return this.hubs.psnStatus(u, id, q.venueId);
+  }
+  @Post(':hubId/psn/cancel')
+  @RequirePermission('devices.manage')
+  psnCancel(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('hubId', ParseUUIDPipe) id: string,
+    @Body() d: GamingCommandDto,
+  ) {
+    return this.hubs.psnCancel(u, id, d);
+  }
   @Post(':hubId/psn')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @RequirePermission('devices.manage')

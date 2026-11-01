@@ -438,10 +438,62 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
   async psnUrl(user: AuthenticatedUser, hubId: string, venueId: string) {
     await this.access(user, venueId);
     await this.ownedHub(this.prisma, venueId, hubId);
-    const data = await this.callHub(hubId, 'psn.url', {}, 10_000);
+    const override = this.config.get<string>('PSN_LOGIN_URL')?.trim();
+    const data = override
+      ? { url: override }
+      : await this.callHub(hubId, 'psn.url', {}, 10_000);
     if (typeof data.url !== 'string' || !data.url.startsWith('https://'))
       throw new BadRequestException({ code: 'HUB_ERROR' });
     return { url: data.url };
+  }
+
+  /** Open the sign-in window on the shop PC; the Hub reports progress through psnStatus. */
+  async psnSignin(
+    user: AuthenticatedUser,
+    hubId: string,
+    dto: GamingCommandDto,
+  ) {
+    await this.access(user, dto.venueId);
+    await this.ownedHub(this.prisma, dto.venueId, hubId);
+    // Server-controlled address: if Sony changes the sign-in page it can be corrected here without a new Hub.
+    const url = this.config.get<string>('PSN_LOGIN_URL')?.trim();
+    const data = await this.callHub(
+      hubId,
+      'psn.signin',
+      url ? { url } : {},
+      15_000,
+    );
+    return { state: typeof data.state === 'string' ? data.state : 'waiting' };
+  }
+
+  async psnStatus(user: AuthenticatedUser, hubId: string, venueId: string) {
+    await this.access(user, venueId);
+    await this.ownedHub(this.prisma, venueId, hubId);
+    const data = await this.callHub(hubId, 'psn.status', {}, 10_000);
+    const linked = data.linked === true;
+    if (linked) {
+      const updated = await this.prisma.gamingHub.updateMany({
+        where: { id: hubId, psnLinked: false },
+        data: { psnLinked: true },
+      });
+      if (updated.count) await this.event(venueId, hubId);
+    }
+    return {
+      state: typeof data.state === 'string' ? data.state : 'idle',
+      error: typeof data.error === 'string' ? data.error.slice(0, 40) : null,
+      linked,
+    };
+  }
+
+  async psnCancel(
+    user: AuthenticatedUser,
+    hubId: string,
+    dto: GamingCommandDto,
+  ) {
+    await this.access(user, dto.venueId);
+    await this.ownedHub(this.prisma, dto.venueId, hubId);
+    await this.callHub(hubId, 'psn.cancel', {}, 8_000);
+    return { ok: true };
   }
 
   async psnLink(user: AuthenticatedUser, hubId: string, dto: PsnLinkDto) {
