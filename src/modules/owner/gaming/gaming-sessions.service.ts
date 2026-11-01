@@ -12,12 +12,13 @@ import { LedgerService } from '../../finance/ledger.service';
 import { GamingCommandService, jsonValue } from './gaming-command.service';
 import { ChangePlayModeDto, UnitTariffDto, BillingSettingsDto, CorrectSessionEndDto, CreateGamingUnitsDto, DuplicateGamingUnitsDto, ExtendSessionDto, GamingCapabilitiesDto, GamingMaintenanceDto, GamingCommandDto, GamingVersionDto, ReasonCommandDto, StartSessionDto, TransferSessionDto } from './gaming-operations.dto';
 import { DeviceHubService } from './devices/device-hub.service';
+import { ConsoleHubService } from './devices/console-hub.service';
 import { deviceView } from './devices/gaming-devices.service';
 import { allocatePayment, calculateSessionCharge, calculateUsageCharge, SessionBillingPolicy } from './session-billing';
 const exact: SessionBillingPolicy = { version: 1, mode: 'exact-time' };
 @Injectable()
 export class GamingSessionsService {
-  constructor(private readonly commands: GamingCommandService, private readonly ledger: LedgerService, @Optional() private readonly hub?: DeviceHubService) {}
+  constructor(private readonly commands: GamingCommandService, private readonly ledger: LedgerService, @Optional() private readonly hub?: DeviceHubService, @Optional() private readonly consoleHub?: ConsoleHubService) {}
   private get prisma() { return this.commands.prisma; }
   async capabilities(user: AuthenticatedUser, venueId: string) {
     const venue = await this.commands.access(this.prisma,user,venueId,'bookings.view',false);
@@ -241,7 +242,7 @@ export class GamingSessionsService {
       this.prisma.resourceOccupancy.findMany({where:{resource:{venueId},OR:[{running:true},{endsAt:{gt:now}},{endsAt:null}]},orderBy:{startsAt:'asc'}}),
       this.prisma.gamingDevice.findMany({where:{venueId,unitId:{not:null}},orderBy:{createdAt:'asc'}})
     ]);
-    const deviceOf=(unitId:string)=>{const d=devices.find(x=>x.unitId===unitId);if(!d)return null;const v=deviceView(d,this.hub?.isOnline(d.externalId)??false,now);return {id:v.id,online:v.online,screenOn:v.screenOn,powerW:v.powerW,enabled:v.settings.enabled,authError:v.authError,override:v.override};};
+    const deviceOf=(unitId:string)=>{const own=devices.filter(x=>x.unitId===unitId);const d=own.find(x=>x.provider==='ps')??own[0];if(!d)return null;const online=d.provider==='ps'?(!!d.hubId&&(this.consoleHub?.isOnline(d.hubId)??false)):(this.hub?.isOnline(d.externalId)??false);const v=deviceView(d,online,now);return {id:v.id,provider:v.provider,paired:v.paired,consoleState:v.consoleState,online:v.online,screenOn:v.screenOn,powerW:v.powerW,enabled:v.settings.enabled,authError:v.authError,override:v.override};};
     return {venueId,serverNow:now.toISOString(),...(at?{inspectAt:instant.toISOString()}:{}),units:units.map(u=>{
       const resources=new Set([u.id,...(u.bookableRoom?.occupancy==='exclusive'?u.bookableRoom.children.map(c=>c.id):[])]);const shared=blocks.filter(x=>resources.has(x.resourceId));
       const occupancy=shared.find(x=>x.startsAt<=instant&&(x.endsAt===null||x.endsAt>instant||x.running&&(!at||sessions.some(s=>s.id===x.sessionId&&s.expectedEnd&&s.expectedEnd<=now)))); const s=sessions.find(x=>x.id===occupancy?.sessionId);const future=shared.find(x=>x.startsAt>instant);const next=bookings.find(x=>x.id===future?.bookingId);const availableUntil=future?.startsAt??null;

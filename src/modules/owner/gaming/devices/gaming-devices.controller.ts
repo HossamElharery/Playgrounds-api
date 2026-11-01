@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../../../common/guards/auth.guard';
+import { Throttle } from '@nestjs/throttler';
 import { Roles } from '../../../../common/decorators/roles.decorator';
 import { RequirePermission } from '../../../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
@@ -20,9 +21,11 @@ import { AdminEditAuditInterceptor } from '../../../../common/interceptors/admin
 import { AuthenticatedUser } from '../../../../common/types/authenticated-user.interface';
 import { GamingCommandDto, GamingQueryDto } from '../gaming-operations.dto';
 import { GamingDevicesService } from './gaming-devices.service';
+import { GamingHubsService } from './gaming-hubs.service';
 import {
   DeviceOverrideDto,
   DeviceTestDto,
+  PairConsoleDto,
   UpdateGamingDeviceDto,
 } from './gaming-devices.dto';
 
@@ -33,7 +36,10 @@ import {
 @Roles('owner', 'staff', 'admin')
 @Controller('owner/gaming/devices')
 export class GamingDevicesController {
-  constructor(private readonly devices: GamingDevicesService) {}
+  constructor(
+    private readonly devices: GamingDevicesService,
+    private readonly hubs: GamingHubsService,
+  ) {}
   @Get() @RequirePermission('devices.manage') list(
     @CurrentUser() u: AuthenticatedUser,
     @Query() q: GamingQueryDto,
@@ -80,5 +86,25 @@ export class GamingDevicesController {
     @Query() q: GamingQueryDto,
   ) {
     return this.devices.logs(u, q.venueId, id);
+  }
+  @Post(':id/pair')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  pair(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() d: PairConsoleDto,
+  ) {
+    return this.hubs.pair(u, id, d);
+  }
+  @Post(':id/check')
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  check(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() d: GamingCommandDto,
+  ) {
+    return this.hubs.check(u, id, d);
   }
 }

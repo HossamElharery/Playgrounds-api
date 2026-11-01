@@ -615,6 +615,8 @@ model Venue {
   /// Secret in the link a smart plug (Shelly outbound WebSocket) uses to join this venue.
   gamingDeviceToken         String?                    @unique
   gamingDevices             GamingDevice[]
+  gamingHubs                GamingHub[]
+  gamingHubClaims           GamingHubClaim[]
   gamingRooms               GamingRoom[]
   gamingSessions            UsageSession[]
   gamingOrders              GamingOrder[]
@@ -3581,6 +3583,14 @@ model GamingDevice {
   unitId        String?
   unit          Court?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
   channel       Int               @default(0)
+  /// Console devices (provider "ps") are driven by a Matchena Hub on the venue LAN.
+  hubId         String?
+  hub           GamingHub?        @relation(fields: [hubId], references: [id], onDelete: SetNull)
+  /// Console only: Remote Play credentials are stored on the hub; false = discovered but not linked yet.
+  paired        Boolean           @default(true)
+  /// Console only: LAN address and last reported power state ("awake" | "standby" | "unreachable").
+  address       String?
+  consoleState  String?
   /// { enabled, autoOn, autoOff, cutAtEnd, graceMinutes, guard, invert }
   settings      Json
   online        Boolean           @default(false)
@@ -3603,6 +3613,43 @@ model GamingDevice {
   @@unique([provider, externalId])
   @@index([venueId])
   @@index([unitId])
+  @@index([hubId])
+}
+
+/// A Matchena Hub: the small LAN agent on the venue's PC that wakes PlayStation consoles and puts them
+/// in rest mode. It dials the API over WebSocket; the API stores only a hash of its token.
+model GamingHub {
+  id         String         @id @default(uuid())
+  venueId    String
+  venue      Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  name       String?
+  tokenHash  String         @unique
+  hostname   String?
+  platform   String?
+  hubVersion String?
+  psnLinked  Boolean        @default(false)
+  online     Boolean        @default(false)
+  lastSeenAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  devices    GamingDevice[]
+
+  @@index([venueId])
+}
+
+/// One-time code an owner types (or the web page hands over) to attach a Hub to the venue.
+model GamingHubClaim {
+  id        String    @id @default(uuid())
+  venueId   String
+  venue     Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  createdBy String?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([venueId])
+  @@index([expiresAt])
 }
 
 model GamingDeviceLog {

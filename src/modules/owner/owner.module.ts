@@ -13,6 +13,12 @@ import { GamingLayoutService } from './gaming/gaming-layout.service';
 import { DeviceHubService } from './gaming/devices/device-hub.service';
 import { GamingDevicesService } from './gaming/devices/gaming-devices.service';
 import { GamingDevicesController } from './gaming/devices/gaming-devices.controller';
+import { ConsoleHubService } from './gaming/devices/console-hub.service';
+import { GamingHubsService } from './gaming/devices/gaming-hubs.service';
+import {
+  GamingHubClaimController,
+  GamingHubsController,
+} from './gaming/devices/gaming-hubs.controller';
 import { Module } from '@nestjs/common';
 import { OwnerService } from './owner.service';
 import { OwnerController } from './owner.controller';
@@ -47,10 +53,27 @@ import { CommandCentreService } from './command/command-centre.service';
 import { ActivityService } from './activity/activity.service';
 
 @Module({
-  imports: [RealtimeModule, BookingsModule, AiModule, VenueAiCreditModule, FinanceModule, NotificationsModule],
+  imports: [
+    RealtimeModule,
+    BookingsModule,
+    AiModule,
+    VenueAiCreditModule,
+    FinanceModule,
+    NotificationsModule,
+  ],
   providers: [
-    GamingLayoutService, GamingSetupService,
-    GamingOutboxService, GamingAlertsService, GamingCommandService, GamingSessionsService, GamingCommerceService, GamingReceiptsService, DeviceHubService, GamingDevicesService,
+    GamingLayoutService,
+    GamingSetupService,
+    GamingOutboxService,
+    GamingAlertsService,
+    GamingCommandService,
+    GamingSessionsService,
+    GamingCommerceService,
+    GamingReceiptsService,
+    DeviceHubService,
+    ConsoleHubService,
+    GamingHubsService,
+    GamingDevicesService,
     OwnerService,
     GeminiNluService,
     AssistantNluService,
@@ -74,7 +97,12 @@ import { ActivityService } from './activity/activity.service';
     VenueHealthService,
   ],
   controllers: [
-    GamingLayoutController, GamingDevicesController, GamingOperationsController, GamingSetupController,
+    GamingLayoutController,
+    GamingHubsController,
+    GamingHubClaimController,
+    GamingDevicesController,
+    GamingOperationsController,
+    GamingSetupController,
     OwnerController,
     PlatformRequestsController,
     VenueHealthController,

@@ -13,6 +13,8 @@ import { LedgerService } from '../src/modules/finance/ledger.service';
 import { AuthenticatedUser } from '../src/common/types/authenticated-user.interface';
 import { DeviceHubService } from '../src/modules/owner/gaming/devices/device-hub.service';
 import { GamingDevicesService } from '../src/modules/owner/gaming/devices/gaming-devices.service';
+import { ConsoleHubService } from '../src/modules/owner/gaming/devices/console-hub.service';
+import { GamingHubsService } from '../src/modules/owner/gaming/devices/gaming-hubs.service';
 import { ShellySimulator } from './support/shelly-simulator';
 jest.setTimeout(120000);
 
@@ -24,7 +26,7 @@ async function until(check:()=>boolean|Promise<boolean>,label:string,ms=8000){
 
 describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>{
   const db=new PrismaService();const commands=new GamingCommandService(db);const ledger=new LedgerService(db,new CommissionService(db,{} as never));
-  let server:Server;let hub:DeviceHubService;let devices:GamingDevicesService;let sessions:GamingSessionsService;
+  let server:Server;let hub:DeviceHubService;let consoleHub:ConsoleHubService;let devices:GamingDevicesService;let sessions:GamingSessionsService;
   const notifications={create:jest.fn().mockResolvedValue(null)};
   let user:AuthenticatedUser;let venueId:string;let units:string[];let url:string;
   const sims:ShellySimulator[]=[];
@@ -42,12 +44,14 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
     await new Promise<void>(r=>server.listen(0,'127.0.0.1',()=>r()));
     const port=(server.address() as AddressInfo).port;
     hub=new DeviceHubService({httpAdapter:{getHttpServer:()=>server}} as never,db);hub.onApplicationBootstrap();
-    devices=new GamingDevicesService(db,hub,commands,notifications as never,{get:(k:string,d?:unknown)=>k==='API_PUBLIC_URL'?`http://127.0.0.1:${port}`:d} as never);devices.onModuleInit();
+    const config={get:(k:string,d?:unknown)=>k==='API_PUBLIC_URL'?`http://127.0.0.1:${port}`:d} as never;
+    consoleHub=new ConsoleHubService({httpAdapter:{getHttpServer:()=>server}} as never,db);consoleHub.onApplicationBootstrap();
+    devices=new GamingDevicesService(db,hub,consoleHub,new GamingHubsService(db,consoleHub,commands,config),commands,notifications as never,config);devices.onModuleInit();
     sessions=new GamingSessionsService(commands,ledger,hub);
     const overview=await devices.overview(user,venueId);
     url=overview.link.url;
   });
-  afterAll(async()=>{sims.forEach(s=>s.close());hub.onApplicationShutdown();await new Promise(r=>server.close(()=>r(null)));await db.$disconnect();});
+  afterAll(async()=>{sims.forEach(s=>s.close());hub.onApplicationShutdown();consoleHub.onApplicationShutdown();await new Promise(r=>server.close(()=>r(null)));await db.$disconnect();});
 
   it('builds a ws link for the venue and refuses unknown tokens',async()=>{
     expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/api\/v1\/gaming\/devices\/shelly\/[A-Za-z0-9_-]{32}$/);
@@ -56,7 +60,9 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
   });
 
   it('a new plug shows up unassigned and is never switched until it is linked to a station',async()=>{
-    const {sim,device}=await plug('shellyplugsg3-aaaaaaaaaaa1',{output:true});
+    const {sim}=await plug('shellyplugsg3-aaaaaaaaaaa1',{output:true});
+    await until(async()=>(await db.gamingDevice.findFirstOrThrow({where:{externalId:'shellyplugsg3-aaaaaaaaaaa1'}})).output===true,'first status stored');
+    const device=await db.gamingDevice.findFirstOrThrow({where:{externalId:'shellyplugsg3-aaaaaaaaaaa1'}});
     expect(device).toMatchObject({venueId,unitId:null,model:'shellyplugsg3',output:true});
     await devices.reconcileVenue(venueId);
     expect(sim.calledWith('Switch.Set')).toHaveLength(0);
