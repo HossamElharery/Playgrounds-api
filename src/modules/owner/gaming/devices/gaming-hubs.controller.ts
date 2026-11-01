@@ -30,7 +30,12 @@ import { AdminEditAuditInterceptor } from '../../../../common/interceptors/admin
 import { AuthenticatedUser } from '../../../../common/types/authenticated-user.interface';
 import { GamingCommandDto, GamingQueryDto } from '../gaming-operations.dto';
 import { GamingHubsService } from './gaming-hubs.service';
-import { ClaimHubDto, PsnLinkDto, RenameHubDto } from './gaming-devices.dto';
+import {
+  ClaimHubDto,
+  commandFrom,
+  PsnLinkDto,
+  RenameHubDto,
+} from './gaming-devices.dto';
 
 /** What a Matchena Hub calls (no user session: the one-time code is the credential). */
 @ApiTags('gaming-hub')
@@ -116,9 +121,10 @@ export class GamingHubsController {
   @Delete(':hubId') @RequirePermission('devices.manage') remove(
     @CurrentUser() u: AuthenticatedUser,
     @Param('hubId', ParseUUIDPipe) id: string,
-    @Query() d: GamingCommandDto,
+    @Query() q: Record<string, unknown>,
+    @Body() b: Record<string, unknown>,
   ) {
-    return this.hubs.remove(u, id, d);
+    return this.hubs.remove(u, id, commandFrom(q, b));
   }
   @Post(':hubId/scan')
   @Throttle({ default: { limit: 20, ttl: 60_000 } })

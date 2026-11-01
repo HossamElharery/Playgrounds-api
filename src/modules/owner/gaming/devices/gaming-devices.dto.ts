@@ -1,4 +1,5 @@
-import { Type } from 'class-transformer';
+import { BadRequestException } from '@nestjs/common';
+import { plainToInstance, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -9,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  validateSync,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -62,4 +64,22 @@ export class ClaimHubDto {
   @IsOptional() @IsString() @MaxLength(80) hostname?: string;
   @IsOptional() @IsString() @MaxLength(24) platform?: string;
   @IsOptional() @IsString() @MaxLength(24) hubVersion?: string;
+}
+
+/**
+ * DELETE has no standard body, and clients differ: the owner web sends venueId/requestKey as a JSON body,
+ * curl and older callers as a query string. Accept either and validate the result as a normal command.
+ */
+export function commandFrom(query: unknown, body: unknown): GamingCommandDto {
+  const raw = {
+    ...(body && typeof body === 'object' ? body : {}),
+    ...(query && typeof query === 'object' ? query : {}),
+  };
+  const dto = plainToInstance(GamingCommandDto, {
+    venueId: (raw as Record<string, unknown>).venueId,
+    requestKey: (raw as Record<string, unknown>).requestKey,
+  });
+  if (validateSync(dto).length)
+    throw new BadRequestException({ code: 'INVALID_REQUEST' });
+  return dto;
 }

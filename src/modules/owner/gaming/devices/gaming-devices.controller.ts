@@ -26,6 +26,7 @@ import {
   DeviceOverrideDto,
   DeviceTestDto,
   PairConsoleDto,
+  commandFrom,
   UpdateGamingDeviceDto,
 } from './gaming-devices.dto';
 
@@ -62,9 +63,10 @@ export class GamingDevicesController {
   @Delete(':id') @RequirePermission('devices.manage') remove(
     @CurrentUser() u: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
-    @Query() d: GamingCommandDto,
+    @Query() q: Record<string, unknown>,
+    @Body() b: Record<string, unknown>,
   ) {
-    return this.devices.remove(u, id, d);
+    return this.devices.remove(u, id, commandFrom(q, b));
   }
   @Post(':id/test') @RequirePermission('devices.manage') test(
     @CurrentUser() u: AuthenticatedUser,
