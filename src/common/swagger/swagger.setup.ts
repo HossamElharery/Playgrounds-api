@@ -12,13 +12,6 @@ const GUIDE = `
 6. Click **Authorize** at the top, paste: \`Bearer <token>\` or just the token, then Authorize.
 7. Locked endpoints (lock icon) will now send your token automatically.
 
-### Seed accounts (already in the database)
-
-| Role | Email | Password |
-| --- | --- | --- |
-| Admin | \`admin@matchena.com\` | \`Password123!\` |
-| Venue owner | \`owner@matchena.com\` | \`Password123!\` |
-
 Player login is phone OTP: \`POST /auth/otp/request\` with \`"phone": "+201001234567"\`. In development the code is printed in the **API server terminal** (not returned in the HTTP response). Then \`POST /auth/otp/verify\` with that 4-digit code.
 
 ### Typical booking flow
