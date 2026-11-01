@@ -82,16 +82,31 @@ export function geohashPrefixesForBbox(
   east: number,
   north: number,
   precision = 4,
+  maxPrefixes = 32,
 ): string[] {
-  const prefixes = new Set<string>();
-  const latStep = (north - south) / 4 || 0.01;
-  const lngStep = (east - west) / 4 || 0.01;
-  for (let lat = south; lat <= north; lat += latStep) {
-    for (let lng = west; lng <= east; lng += lngStep) {
-      prefixes.add(ngeohash.encode(lat, lng, precision));
-    }
+  if (
+    ![west, south, east, north].every(Number.isFinite) ||
+    west > east ||
+    south > north ||
+    south < -90 ||
+    north > 90 ||
+    maxPrefixes < 1
+  ) {
+    return [];
   }
-  return Array.from(prefixes);
+
+  // Sampling points inside the viewport creates false negatives: a venue can
+  // be inside the numeric lat/lng bounds while its geohash is not one of the
+  // sampled cells. Start with a coarse, complete cover and only increase the
+  // precision while the complete cover remains small enough for the query.
+  let prefixes = ngeohash.bboxes(south, west, north, east, 1);
+  const targetPrecision = Math.max(1, Math.floor(precision));
+  for (let current = 2; current <= targetPrecision; current += 1) {
+    const finer = ngeohash.bboxes(south, west, north, east, current);
+    if (finer.length > maxPrefixes) break;
+    prefixes = finer;
+  }
+  return prefixes.length <= maxPrefixes ? prefixes : [];
 }
 
 export function bboxFromRadiusKm(

@@ -87,6 +87,11 @@ model User {
   trustVenueId         String?
   /// Admin switch: this account earns no engagement coins and cannot become trusted.
   rewardsBlockedAt     DateTime?
+  /// Temporary booking-only restriction applied by the cancellation-abuse policy.
+  /// It never disables login, chat, or access to existing bookings.
+  bookingBlockedUntil  DateTime?
+  bookingBlockLevel    Int                   @default(0)
+  bookingBlockReason   String?
   /// Prepaid EGP wallet in minor units (piasters). Player bookings, bundles,
   /// and memberships debit this — they never charge a PSP directly. Top-up
   /// is the only player flow that uses card / Vodafone / InstaPay / Fawry.
@@ -219,6 +224,7 @@ model User {
   morphProfile              UserMorphProfile?
   morphRolls                MorphRoll[]
 
+  @@index([bookingBlockedUntil])
   @@index([isGuest, createdAt])
   @@index([guestSource, createdAt])
   @@index([trustVenueId, trustCandidateAt])
@@ -868,6 +874,8 @@ model Booking {
   checkedInByUserId   String?
   cancelledAt         DateTime?
   cancellationReason  String?
+  /// player | venue | admin | system. Null on historical rows.
+  cancellationActor   String?
   guestName           String?
   guestPhone          String?
   recurringSeriesId   String?
@@ -923,6 +931,7 @@ model Booking {
   @@index([venueId, source, slotStart])
   @@index([importBatchId])
   @@index([venueId, status, slotStart])
+  @@index([userId, cancellationActor, cancelledAt])
 }
 
 enum SplitShareStatus {

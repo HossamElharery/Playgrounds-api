@@ -426,8 +426,10 @@ export class CaptainService {
       district: near ? undefined : (f.district ?? undefined),
       center: near && coords ? `${coords.lat},${coords.lng}` : undefined,
       radiusKm: near ? NEAR_ME_RADIUS_KM : undefined,
-      // Prices are stored in whole EGP, so a stated ceiling is passed as said.
-      priceMax: f.priceMax ?? undefined,
+      // Venue prices are minor units (piasters). NLU deliberately reads the
+      // player's words in major units ("250 pounds"), so convert at this API
+      // boundary before asking the catalogue.
+      priceMax: f.priceMax === null ? undefined : Math.round(f.priceMax * 100),
       ratingMin: f.minRating ?? undefined,
       instantBook: f.instantOnly ? true : undefined,
       sort,
@@ -468,7 +470,11 @@ export class CaptainService {
       nameAr: c.nameAr,
       nameEn: c.nameEn,
       reason: parts.length ? parts.join(' · ') : ar ? 'قريب من طلبك' : 'a close match',
-      priceFrom: c.priceFrom,
+      // Captain's public response follows the web app Money contract (major
+      // units), even though catalogue persistence is in minor units.
+      priceFrom: c.priceFrom
+        ? { amount: Math.round((c.priceFrom.amount / 100) * 100) / 100, currency: c.priceFrom.currency }
+        : null,
       ratingAvg: c.ratingCount > 0 ? c.ratingAvg : null,
       ratingCount: c.ratingCount,
       districtAr: c.district?.nameAr ?? null,
@@ -489,7 +495,7 @@ export class CaptainService {
     const name = b.lang === 'ar' ? top.nameAr : top.nameEn;
     const n = cards.length;
     const price = top.priceFrom
-      ? b.t(` وبيبدأ من ${top.priceFrom.amount} ${currencyAr(top.priceFrom.currency)}`, ` starting from ${top.priceFrom.amount} ${top.priceFrom.currency}`)
+      ? ` ${b.t('وبيبدأ من', 'starting from')} ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(top.priceFrom.amount)} ${currencyLabel(top.priceFrom.currency, b.lang, b.lang === 'ar')}`
       : '';
     const scope = this.scopeText(f, b);
     let line: string;

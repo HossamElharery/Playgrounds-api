@@ -34,7 +34,7 @@ const card = (slug: string, over: Record<string, unknown> = {}) => ({
   instantBook: true,
   hasOffers: false,
   photo: null,
-  priceFrom: { amount: 300, currency: 'EGP' },
+  priceFrom: { amount: 30000, currency: 'EGP' },
   district: { nameAr: 'المعادي', nameEn: 'Maadi' },
   ...over,
 });
@@ -82,10 +82,18 @@ describe('Captain', () => {
     expect(q.priceMax).toBeUndefined();
   });
 
-  it('passes a stated ceiling in whole EGP', async () => {
+  it('converts a stated major-unit ceiling to the catalogue minor-unit contract', async () => {
     const { service, searchExplore } = build({ read: reading({ priceMax: 250 }) });
     await service.ask(dto('تحت 250'), user);
-    expect(searchExplore.mock.calls[0][0].priceMax).toBe(250);
+    expect(searchExplore.mock.calls[0][0].priceMax).toBe(25000);
+  });
+
+  it('formats catalogue minor units instead of telling the player 20,000 pounds', async () => {
+    const { service } = build({ results: [[card('rawad', { nameAr: 'الرواد بلاي', priceFrom: { amount: 20000, currency: 'EGP' } })]] });
+    const res = await service.ask(dto('ملعب قريب مني', { location: { lat: 30, lng: 31 } }), user);
+    expect(res.reply).toContain('200 جنيه');
+    expect(res.reply).not.toContain('20000');
+    expect(res.venues[0].priceFrom?.amount).toBe(200);
   });
 
   it('loosens the strict filters when nothing matches, and says so', async () => {

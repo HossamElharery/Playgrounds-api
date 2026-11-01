@@ -55,6 +55,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CommissionService } from '../finance/commission.service';
 import { LedgerService } from '../finance/ledger.service';
 import { ApiException } from '../../common/errors/api-exception';
+import { cancellationRestriction } from './cancellation-abuse-policy';
 import {
   bookingSnapshotFields,
   computeBookingMoney,
@@ -64,6 +65,8 @@ const HOLD_DURATION_MS = 2 * 60 * 1000; // 2 minutes, per §19.4's "60-120 secon
 const FIRST_BOOKING_BONUS_COINS = 200;
 const FIRST_BOOKING_MIN_TOTAL = 5000;
 const MAX_ADVANCE_DAYS = 90;
+const CANCELLATION_WINDOW_MS = 30 * 86_400_000;
+const CANCELLATION_BURST_MS = 24 * 3_600_000;
 // Player checkout is pay-at-venue unless the active payment provider reports
 // itself live (PaymentsConfigService.isOnlinePaymentsLive). This is derived, not a
 // hand-flipped constant: with no live provider nothing online can be offered.
@@ -230,7 +233,7 @@ export class BookingsService {
 
     const account = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { status: true },
+      select: { status: true, bookingBlockedUntil: true },
     });
     if (!account) throw new NotFoundException('User not found');
     if (account.status !== 'active') {
@@ -238,6 +241,14 @@ export class BookingsService {
         code: 'ACCOUNT_RESTRICTED',
         message: 'Your account cannot make bookings right now',
       });
+    }
+    if (account.bookingBlockedUntil && account.bookingBlockedUntil > new Date()) {
+      throw new ApiException(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'BOOKING_TEMPORARILY_BLOCKED',
+        'Booking is temporarily paused because of repeated cancellations',
+        { blockedUntil: account.bookingBlockedUntil.toISOString() },
+      );
     }
 
     const slotStart = new Date(dto.slotStart);
@@ -764,7 +775,7 @@ export class BookingsService {
     await this.prisma.$transaction(async (tx) => {
       const released = await tx.booking.updateMany({
         where: { id: booking.id, status: 'held' },
-        data: { status: 'cancelled', holdExpiresAt: null },
+        data: { status: 'cancelled', holdExpiresAt: null, cancellationActor: 'system' },
       });
       if (released.count !== 1) return;
       if (booking.coinsRedeemed > 0) {
@@ -1341,6 +1352,8 @@ export class BookingsService {
       booking.paymentStatus === 'paid' || booking.paymentStatus === 'partial';
     let refundAmount = 0;
     let refundRef: string | undefined;
+    let bookingRestriction: { until: Date; level: number } | null = null;
+    let cancellationWarning = false;
     const refundToWallet = booking.paymentMethod === 'wallet';
     if (wasPaid && refundPct > 0) {
       refundAmount = Math.round((booking.totalAmount * refundPct) / 100);
@@ -1360,6 +1373,7 @@ export class BookingsService {
           status: 'cancelled',
           cancelledAt: new Date(),
           cancellationReason: reason,
+          cancellationActor: cancelledByPlayer ? 'player' : adminActorId ? 'admin' : 'venue',
           paymentStatus: wasPaid ? 'refunded' : booking.paymentStatus,
         },
       });
@@ -1449,6 +1463,30 @@ export class BookingsService {
           },
         });
       }
+      // Count only player-initiated cancellations of confirmed reservations.
+      // Checkout expiry and venue/admin cancellations are operational events,
+      // not evidence that the player is abusing inventory.
+      if (cancelledByPlayer && booking.status === 'confirmed') {
+        const now = new Date();
+        const [count24h, count30d] = await Promise.all([
+          tx.booking.count({
+            where: { userId: booking.userId, cancellationActor: 'player', cancelledAt: { gte: new Date(now.getTime() - CANCELLATION_BURST_MS) } },
+          }),
+          tx.booking.count({
+            where: { userId: booking.userId, cancellationActor: 'player', cancelledAt: { gte: new Date(now.getTime() - CANCELLATION_WINDOW_MS) } },
+          }),
+        ]);
+        const decision = cancellationRestriction(count24h, count30d, now);
+        cancellationWarning = count24h === 2;
+        if (decision) {
+          const { level, until } = decision;
+          await tx.user.update({
+            where: { id: booking.userId },
+            data: { bookingBlockedUntil: until, bookingBlockLevel: level, bookingBlockReason: 'repeated_player_cancellations' },
+          });
+          bookingRestriction = { until, level };
+        }
+      }
       if (adminActorId) await tx.auditLogEntry.create({ data: {
         actorUserId: adminActorId, action: 'admin.booking.cancel', targetType: 'booking', targetId: booking.id,
         metadata: { venueId: booking.venueId, reason: reason ?? '', previousStatus: booking.status, refundAmount },
@@ -1479,6 +1517,37 @@ export class BookingsService {
       .catch((error: unknown) =>
         this.logger.warn(`Player cancel notice failed for ${booking.id}: ${String(error)}`),
       );
+    // TypeScript does not track assignments made inside Prisma's transaction
+    // callback, so capture the post-transaction value explicitly.
+    const restriction = bookingRestriction as { until: Date; level: number } | null;
+    if (cancellationWarning && !restriction) {
+      await this.notifications.create({
+        dedupKey: `booking-cancellation-warning:${booking.userId}:${booking.id}`,
+        userId: booking.userId,
+        category: 'bookings',
+        titleAr: 'تنبيه بخصوص الإلغاءات',
+        titleEn: 'Cancellation warning',
+        bodyAr: 'ألغيت حجزين مؤكدين خلال 24 ساعة. إلغاء حجز مؤكد آخر خلال هذه المدة سيوقف الحجوزات الجديدة مؤقتًا لمدة 24 ساعة.',
+        bodyEn: 'You cancelled two confirmed bookings in 24 hours. Cancelling another confirmed booking in this window will pause new bookings for 24 hours.',
+        deepLink: '/app/bookings',
+        payload: { kind: 'booking_cancellation_warning', cancellations24h: 2 },
+      }).catch((error: unknown) => this.logger.warn(`Cancellation warning failed for ${booking.userId}: ${String(error)}`));
+    }
+    if (restriction) {
+      const untilAr = restriction.until.toLocaleString('ar-EG-u-nu-latn', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' });
+      const untilEn = restriction.until.toLocaleString('en-GB', { timeZone: 'Africa/Cairo', dateStyle: 'medium', timeStyle: 'short' });
+      await this.notifications.create({
+        dedupKey: `booking-restricted:${booking.userId}:${restriction.until.toISOString()}`,
+        userId: booking.userId,
+        category: 'bookings',
+        titleAr: 'تم إيقاف الحجوزات مؤقتًا',
+        titleEn: 'Bookings temporarily paused',
+        bodyAr: `بسبب تكرار إلغاء الحجوزات، يمكنك الحجز مجددًا بعد ${untilAr}. حجوزاتك الحالية وحسابك ما زالا متاحين.`,
+        bodyEn: `Because of repeated cancellations, you can book again after ${untilEn}. Your account and existing bookings remain available.`,
+        deepLink: '/app/bookings',
+        payload: { kind: 'booking_restricted', blockedUntil: restriction.until.toISOString(), level: restriction.level },
+      }).catch((error: unknown) => this.logger.warn(`Booking restriction notice failed for ${booking.userId}: ${String(error)}`));
+    }
     if (booking.status === 'confirmed') await this.notifier.notifyVenueSide(booking.id, 'booking_cancelled');
     return settled;
   }

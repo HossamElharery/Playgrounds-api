@@ -419,7 +419,7 @@ describe('BookingsService', () => {
         response: expect.objectContaining({ code: 'VENUE_UNAVAILABLE' }),
       });
       expect(prisma.booking.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: 'cancelled', holdExpiresAt: null } }),
+        expect.objectContaining({ data: expect.objectContaining({ status: 'cancelled', holdExpiresAt: null }) }),
       );
     });
   });
