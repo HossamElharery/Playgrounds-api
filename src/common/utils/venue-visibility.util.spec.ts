@@ -3,6 +3,7 @@ import {
   assertVenueBookable,
   computeVenueState,
   publicVenueWhere,
+  withoutInternalVenueFields,
   type VenueStateInput,
 } from './venue-visibility.util';
 
@@ -64,6 +65,11 @@ describe('venue visibility policy', () => {
 
   it('builds the Prisma filter every public query shares', () => {
     expect(publicVenueWhere()).toEqual({ status: 'active', ownerListingEnabled: true, adminHidden: false });
+  });
+
+  it('does not expose the gaming device pairing credential on public venues', () => {
+    const venue = { slug: 'public-venue', gamingDeviceToken: 'private-pairing-secret' };
+    expect(withoutInternalVenueFields(venue)).toEqual({ slug: 'public-venue' });
   });
 
   describe('assertVenueBookable', () => {

@@ -131,6 +131,9 @@ const INTERNAL_VENUE_FIELDS = [
   'moderatedAt',
   'listingChangedById',
   'listingChangedAt',
+  // Smart-plug pairing credential. Public venue details and search responses
+  // must never expose it to browsers, crawlers, or agent tools.
+  'gamingDeviceToken',
 ] as const;
 
 export function withoutInternalVenueFields<T extends object>(venue: T): Omit<T, (typeof INTERNAL_VENUE_FIELDS)[number]> {
