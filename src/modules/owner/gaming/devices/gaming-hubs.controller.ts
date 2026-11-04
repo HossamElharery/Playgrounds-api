@@ -16,7 +16,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -103,6 +103,7 @@ export class GamingHubClaimController {
       'Content-Disposition',
       `attachment; filename="${basename(full)}"`,
     );
+    res.setHeader('Content-Length', String(statSync(full).size));
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(createReadStream(full), {
