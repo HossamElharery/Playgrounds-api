@@ -92,6 +92,7 @@ describe('consoles follow gaming sessions through a Matchena Hub (PostgreSQL + r
     const overview=await devices.overview(user,venueId);
     expect(overview.hubs[0]).toMatchObject({id:hubId,online:true,hostname:'SIM-PC',hubVersion:'1.0.0-test',psnLinked:false});
     expect(overview.downloads.win).toMatch(/\/api\/v1\/gaming\/hub\/download\/MatchenaHub-win-x64\.exe$/);expect(overview.downloads.mac).toContain('MatchenaHub-macos.zip');
+    expect(overview.downloads.installCommandWin).toContain('install.ps1');const ps1=hubs.installScriptWindows();expect(ps1).toContain('MatchenaHub-win-x64.exe');expect(ps1).toContain('Unblock-File');expect(ps1).toContain('\r\n');
     expect(hubs.downloadPath('../../etc/passwd')).toBeNull();expect(hubs.downloadPath('MatchenaHub-win-x64.exe/../x')).toBeNull();expect(hubs.downloadPath('__proto__')).toBeNull();
     const one=overview.devices.find(d=>d.externalId==='PS5AAAA1')!;
     expect(one).toMatchObject({provider:'ps',online:true,paired:false,consoleType:'PS5',consoleState:'standby',screenOn:false,unitId:null,name:'PS5-ONE'});

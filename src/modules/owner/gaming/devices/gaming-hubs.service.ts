@@ -124,6 +124,7 @@ export class GamingHubsService {
     const api = this.apiBase();
     return {
       installCommand: `curl -fsSL ${api}/api/v1/gaming/hub/install.sh | sh`,
+      installCommandWin: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ${api}/api/v1/gaming/hub/install.ps1 | iex"`,
       win: `${base}/MatchenaHub-win-x64.exe`,
       mac: `${base}/MatchenaHub-macos.zip`,
       linux: `${base}/MatchenaHub-linux-x64.tar.gz`,
@@ -148,6 +149,36 @@ export class GamingHubsService {
     return host === 'matchena.com' || host.endsWith('.matchena.com')
       ? ''
       : `MATCHENA_API_URL="${this.apiBase()}" `;
+  }
+
+  /**
+   * Windows installer for owners whose browser or SmartScreen blocks the .exe: PowerShell downloads the file
+   * itself (no "downloaded from the internet" mark, so no SmartScreen prompt), starts it, and the Hub takes over.
+   */
+  installScriptWindows() {
+    const base = this.downloadBase();
+    const env = new URL(this.apiBase()).hostname;
+    const dev =
+      env === 'matchena.com' || env.endsWith('.matchena.com')
+        ? ''
+        : `$env:MATCHENA_API_URL='${this.apiBase()}'\r\n`;
+    return [
+      '# Matchena Hub installer (Windows). Downloads the Hub, starts it, and opens Matchena to finish.',
+      "$ErrorActionPreference = 'Stop'",
+      "$ProgressPreference = 'SilentlyContinue'",
+      '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12',
+      `$base = '${base}'`,
+      "$dir = Join-Path $env:LOCALAPPDATA 'MatchenaHubDownload'",
+      'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
+      "$exe = Join-Path $dir 'MatchenaHub.exe'",
+      "Write-Host 'Downloading Matchena Hub...'",
+      'Invoke-WebRequest -UseBasicParsing -Uri "$base/MatchenaHub-win-x64.exe" -OutFile "$exe"',
+      'Unblock-File -Path $exe',
+      "Write-Host 'Starting Matchena Hub...'",
+      `${dev}Start-Process -FilePath $exe`,
+      "Write-Host 'Done. Matchena opens in your browser. Keep this PC on and on the same network as the consoles.'",
+      '',
+    ].join('\r\n');
   }
 
   /** One-line installer for macOS / Linux: picks the right build, installs it and starts it. */

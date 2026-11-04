@@ -50,6 +50,21 @@ export class GamingHubClaimController {
     return this.hubs.claim(dto);
   }
 
+  /** Text of the PowerShell installer (Windows). */
+  @Public()
+  @Get('install.ps1')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  installScriptWindows(@Res({ passthrough: true }) res: Response) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    return new StreamableFile(
+      Buffer.from(this.hubs.installScriptWindows(), 'utf8'),
+      {
+        type: 'text/plain; charset=utf-8',
+      },
+    );
+  }
+
   /** What the newest Hub release is; hubs poll this to update themselves. */
   @Public()
   @Get('latest')

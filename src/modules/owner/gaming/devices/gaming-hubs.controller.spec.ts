@@ -34,6 +34,7 @@ describe('Hub routes are really registered (the service tests do not prove that)
     expect(route(p, 'claim').path).toBe('claim');
     expect(route(p, 'latest').path).toBe('latest');
     expect(route(p, 'installScript').path).toBe('install.sh');
+    expect(route(p, 'installScriptWindows').path).toBe('install.ps1');
     expect(route(p, 'download').path).toBe('download/:file');
   });
 });
