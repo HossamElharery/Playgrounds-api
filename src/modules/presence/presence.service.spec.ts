@@ -31,4 +31,17 @@ describe('PresenceService', () => {
     presence.setInSquad('u1', true);
     expect(presence.stateFor('u1', new Date())).toBe('in_squad');
   });
+
+  it('exposes an admin-safe snapshot of active connections', () => {
+    presence.markConnected('u1', 's1', { path: '/ar/community', device: 'mobile' });
+    presence.updateContext('u1', 's1', { path: '/ar/squad/abc', device: 'mobile' });
+
+    expect(presence.connectedUserIds()).toEqual(['u1']);
+    expect(presence.snapshot('u1')).toEqual(expect.objectContaining({
+      connected: true,
+      connectionCount: 1,
+      path: '/ar/squad/abc',
+      device: 'mobile',
+    }));
+  });
 });

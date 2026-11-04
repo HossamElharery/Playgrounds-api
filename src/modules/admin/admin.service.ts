@@ -9,10 +9,17 @@ import { CreateReportDto } from './dto/create-report.dto';
 import { ResolveReportDto } from './dto/resolve-report.dto';
 import { UpsertFeatureFlagDto } from './dto/feature-flag.dto';
 import { buildPagination } from '../../common/dto/page-query.dto';
+import { Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PresenceService, PRESENCE_ONLINE_WINDOW_MS } from '../presence/presence.service';
+import { ListOnlineUsersDto } from './dto/list-online-users.dto';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly presence?: PresenceService,
+  ) {}
 
   async overview() {
     const now = new Date();
@@ -32,6 +39,7 @@ export class AdminService {
       topVenues,
       matchPostsTotal,
       matchPostsFilled,
+      onlineNow,
     ] = await Promise.all([
       this.prisma.booking.aggregate({
         where: { status: 'completed' },
@@ -55,6 +63,13 @@ export class AdminService {
       this.prisma.matchPost.count({
         where: { status: { in: ['full', 'played'] } },
       }),
+      this.prisma.user.count({
+        where: {
+          status: 'active',
+          deletedAt: null,
+          lastSeenAt: { gte: new Date(Date.now() - PRESENCE_ONLINE_WINDOW_MS) },
+        },
+      }),
     ]);
 
     return {
@@ -67,6 +82,105 @@ export class AdminService {
       matchPostFillRatePct: matchPostsTotal
         ? Math.round((matchPostsFilled / matchPostsTotal) * 100)
         : 0,
+      onlineNow,
+    };
+  }
+
+  async onlineUsers(query: ListOnlineUsersDto) {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - PRESENCE_ONLINE_WINDOW_MS);
+    const connectedIds = this.presence?.connectedUserIds() ?? [];
+    const squadIds = this.presence?.inSquadUserIds() ?? [];
+    const onlineClause: Prisma.UserWhereInput = {
+      OR: [
+        { lastSeenAt: { gte: cutoff } },
+        ...(connectedIds.length ? [{ id: { in: connectedIds } }] : []),
+      ],
+    };
+    const stateClause: Prisma.UserWhereInput =
+      query.state === 'live'
+        ? { id: { in: connectedIds } }
+        : query.state === 'in_squad'
+          ? { id: { in: squadIds } }
+          : query.state === 'recent'
+            ? { ...onlineClause, id: { notIn: connectedIds } }
+            : onlineClause;
+    const search = query.search?.trim();
+    const where: Prisma.UserWhereInput = {
+      status: 'active',
+      deletedAt: null,
+      AND: [
+        stateClause,
+        ...(search
+          ? [{
+              OR: [
+                { name: { contains: search, mode: 'insensitive' as const } },
+                { username: { contains: search, mode: 'insensitive' as const } },
+                { phone: { contains: search } },
+                { email: { contains: search, mode: 'insensitive' as const } },
+              ],
+            }]
+          : []),
+      ],
+      ...(query.role ? { roles: { has: query.role } } : {}),
+    };
+    const page = query.page || 1;
+    const perPage = query.perPage || 25;
+    const [users, total, onlineTotal, liveTotal, squadTotal] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip: (page - 1) * perPage,
+        take: perPage,
+        orderBy: [{ lastSeenAt: 'desc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          avatarUrl: true,
+          phone: true,
+          email: true,
+          roles: true,
+          lastSeenAt: true,
+          createdAt: true,
+          country: { select: { code: true, nameAr: true, nameEn: true } },
+          governorate: { select: { nameAr: true, nameEn: true } },
+          district: { select: { nameAr: true, nameEn: true } },
+        },
+      }),
+      this.prisma.user.count({ where }),
+      this.prisma.user.count({
+        where: { status: 'active', deletedAt: null, ...onlineClause },
+      }),
+      connectedIds.length
+        ? this.prisma.user.count({ where: { id: { in: connectedIds }, status: 'active', deletedAt: null } })
+        : Promise.resolve(0),
+      squadIds.length
+        ? this.prisma.user.count({ where: { id: { in: squadIds }, status: 'active', deletedAt: null } })
+        : Promise.resolve(0),
+    ]);
+
+    return {
+      generatedAt: now.toISOString(),
+      onlineWindowSeconds: Math.round(PRESENCE_ONLINE_WINDOW_MS / 1000),
+      summary: {
+        online: onlineTotal,
+        live: liveTotal,
+        recent: Math.max(onlineTotal - liveTotal, 0),
+        inSquad: squadTotal,
+      },
+      items: users.map((user) => {
+        const snapshot = this.presence?.snapshot(user.id);
+        return {
+          ...user,
+          presence: snapshot?.inSquad ? 'in_squad' : snapshot?.connected ? 'live' : 'recent',
+          connectionCount: snapshot?.connectionCount ?? 0,
+          connectedAt: snapshot?.connectedAt ?? null,
+          lastActivityAt: snapshot?.lastActivityAt ?? user.lastSeenAt,
+          currentPath: snapshot?.path ?? null,
+          device: snapshot?.device ?? 'unknown',
+        };
+      }),
+      pagination: buildPagination(page, perPage, total),
     };
   }
 

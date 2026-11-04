@@ -100,7 +100,7 @@ export class RealtimeGateway
       await client.join(`user:${userId}`);
       await client.join('presence');
       await client.join('pulse');
-      this.presence.markConnected(userId, client.id);
+      this.presence.markConnected(userId, client.id, this.clientContext(client));
       await this.prisma.user.update({
         where: { id: userId },
         data: { lastSeenAt: new Date() },
@@ -158,10 +158,20 @@ export class RealtimeGateway
   }
 
   @SubscribeMessage('presence.heartbeat')
-  async heartbeat(@ConnectedSocket() client: Socket) {
+  async heartbeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() context?: { path?: unknown; device?: unknown },
+  ) {
     await this.authReady(client);
     const userId = this.authedUserId(client);
     if (!userId) return;
+    (this.presence as Partial<PresenceService>).updateContext?.(userId, client.id, {
+      path: typeof context?.path === 'string' ? context.path : undefined,
+      device:
+        context?.device === 'mobile' || context?.device === 'tablet' || context?.device === 'desktop'
+          ? context.device
+          : 'unknown',
+    });
     const now = Date.now();
     const previous = this.lastPresenceWriteAt.get(userId) ?? 0;
     if (now - previous < PRESENCE_DB_WRITE_MS) return;
@@ -171,6 +181,18 @@ export class RealtimeGateway
     });
     this.lastPresenceWriteAt.set(userId, now);
     this.scheduleEmotePrune();
+  }
+
+  private clientContext(client: Socket) {
+    const userAgent = String(client.handshake.headers['user-agent'] ?? '').toLowerCase();
+    const device = /ipad|tablet/.test(userAgent)
+      ? 'tablet' as const
+      : /mobile|iphone|android/.test(userAgent)
+        ? 'mobile' as const
+        : userAgent
+          ? 'desktop' as const
+          : 'unknown' as const;
+    return { device };
   }
 
   @SubscribeMessage('chat.thread.join')

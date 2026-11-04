@@ -23,6 +23,7 @@ import { PageQueryDto } from '../../common/dto/page-query.dto';
 import { ListReportsQueryDto } from './dto/list-reports-query.dto';
 import { AdminFinanceService } from './admin-finance.service';
 import { Throttle } from '@nestjs/throttler';
+import { ListOnlineUsersDto } from './dto/list-online-users.dto';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -53,6 +54,12 @@ export class AdminController {
       this.finance.platformKpis(),
     ]);
     return { ...base, finance };
+  }
+
+  @Roles('admin')
+  @Get('admin/presence')
+  onlineUsers(@Query() query: ListOnlineUsersDto) {
+    return this.admin.onlineUsers(query);
   }
 
   @Roles('admin')
