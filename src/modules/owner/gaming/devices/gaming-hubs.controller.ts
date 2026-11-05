@@ -34,6 +34,7 @@ import {
   ClaimHubDto,
   commandFrom,
   PsnLinkDto,
+  PsnSigninDto,
   RenameHubDto,
 } from './gaming-devices.dto';
 
@@ -175,7 +176,7 @@ export class GamingHubsController {
   psnSignin(
     @CurrentUser() u: AuthenticatedUser,
     @Param('hubId', ParseUUIDPipe) id: string,
-    @Body() d: GamingCommandDto,
+    @Body() d: PsnSigninDto,
   ) {
     return this.hubs.psnSignin(u, id, d);
   }

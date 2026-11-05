@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { plainToInstance, Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -50,6 +51,10 @@ export class DeviceOverrideDto extends GamingCommandDto {
 
 export class RenameHubDto extends GamingCommandDto {
   @IsString() @MaxLength(60) name!: string;
+}
+export class PsnSigninDto extends GamingCommandDto {
+  /** Language of the owner page; the Sony sign-in window follows it. */
+  @IsOptional() @IsIn(['ar', 'en']) lang?: 'ar' | 'en';
 }
 export class PsnLinkDto extends GamingCommandDto {
   /** The address Sony redirects to after sign-in (carries a one-time code). */

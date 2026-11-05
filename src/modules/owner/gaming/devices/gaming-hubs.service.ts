@@ -29,6 +29,7 @@ import {
 import {
   ClaimHubDto,
   PairConsoleDto,
+  PsnSigninDto,
   PsnLinkDto,
   RenameHubDto,
 } from './gaming-devices.dto';
@@ -175,7 +176,7 @@ export class GamingHubsService {
       'Invoke-WebRequest -UseBasicParsing -Uri "$base/MatchenaHub-win-x64.exe" -OutFile "$exe"',
       'Unblock-File -Path $exe',
       "Write-Host 'Starting Matchena Hub...'",
-      `${dev}Start-Process -FilePath $exe`,
+      `${dev}Start-Process -FilePath $exe -WindowStyle Hidden`,
       "Write-Host 'Done. Matchena opens in your browser. Keep this PC on and on the same network as the consoles.'",
       '',
     ].join('\r\n');
@@ -373,6 +374,23 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
         name: dto.hostname?.trim().slice(0, 60) || null,
       },
     });
+    // Re-installing on the same PC must not leave a trail of "offline" hubs: remove this PC's older entries.
+    // Their consoles stay (the FK only clears the link) and this new Hub adopts them when it reports in.
+    if (hub.hostname) {
+      const stale = await this.prisma.gamingHub.findMany({
+        where: {
+          venueId: claim.venueId,
+          hostname: hub.hostname,
+          id: { not: hub.id },
+        },
+        select: { id: true },
+      });
+      const gone = stale
+        .map((h) => h.id)
+        .filter((id) => !this.hubs.isOnline(id));
+      if (gone.length)
+        await this.prisma.gamingHub.deleteMany({ where: { id: { in: gone } } });
+    }
     await this.commands
       .event(
         this.prisma as unknown as Prisma.TransactionClient,
@@ -479,19 +497,20 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
   }
 
   /** Open the sign-in window on the shop PC; the Hub reports progress through psnStatus. */
-  async psnSignin(
-    user: AuthenticatedUser,
-    hubId: string,
-    dto: GamingCommandDto,
-  ) {
+  async psnSignin(user: AuthenticatedUser, hubId: string, dto: PsnSigninDto) {
     await this.access(user, dto.venueId);
     await this.ownedHub(this.prisma, dto.venueId, hubId);
     // Server-controlled address: if Sony changes the sign-in page it can be corrected here without a new Hub.
     const url = this.config.get<string>('PSN_LOGIN_URL')?.trim();
+    // The Sony window follows the owner's language; PSN_SIGNIN_LOCALE=off keeps Sony's default if it misbehaves.
+    const lang =
+      dto.lang && this.config.get<string>('PSN_SIGNIN_LOCALE') !== 'off'
+        ? dto.lang
+        : undefined;
     const data = await this.callHub(
       hubId,
       'psn.signin',
-      url ? { url } : {},
+      { ...(url ? { url } : {}), ...(lang ? { lang } : {}) },
       15_000,
     );
     return { state: typeof data.state === 'string' ? data.state : 'waiting' };

@@ -283,4 +283,14 @@ describe('consoles follow gaming sessions through a Matchena Hub (PostgreSQL + r
     expect(await db.gamingDevice.count({where:{venueId,externalId:'PS5OTHER9'}})).toBe(0);
     sim3.close();await sim3.closed();
   });
+
+  it('re-installing on the same PC replaces its older offline entries and keeps their consoles',async()=>{
+    const old=await db.gamingHub.create({data:{venueId,tokenHash:'old-'+randomUUID(),hostname:'SAME-PC',name:'old install'}});
+    const dev=await db.gamingDevice.create({data:{venueId,hubId:old.id,provider:'ps',externalId:'PS5SAME01',model:'PS5',settings:{},paired:true}});
+    const {code}=await hubs.createCode(user,key());
+    await hubs.claim({code,hostname:'SAME-PC'});
+    expect(await db.gamingHub.count({where:{venueId,hostname:'SAME-PC'}})).toBe(1);
+    expect(await db.gamingHub.findUnique({where:{id:old.id}})).toBeNull();
+    expect(await db.gamingDevice.findUniqueOrThrow({where:{id:dev.id}})).toMatchObject({hubId:null,paired:true});
+  });
 });
