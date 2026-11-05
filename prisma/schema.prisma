@@ -3583,14 +3583,16 @@ model GamingDevice {
   unitId        String?
   unit          Court?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
   channel       Int               @default(0)
-  /// Console devices (provider "ps") are driven by a Matchena Hub on the venue LAN.
+  /// Console devices (provider "ps") and smart TVs (provider "tv", model = brand) are driven by a Matchena Hub on the venue LAN.
   hubId         String?
   hub           GamingHub?        @relation(fields: [hubId], references: [id], onDelete: SetNull)
   /// Console only: Remote Play credentials are stored on the hub; false = discovered but not linked yet.
   paired        Boolean           @default(true)
-  /// Console only: LAN address and last reported power state ("awake" | "standby" | "unreachable").
+  /// Console / TV: LAN address and last reported power state ("awake" | "standby" | "unreachable").
   address       String?
   consoleState  String?
+  /// TV only: { brand?, canWake, pairing } as reported by the hub.
+  meta          Json?
   /// { enabled, autoOn, autoOff, cutAtEnd, graceMinutes, guard, invert }
   settings      Json
   online        Boolean           @default(false)

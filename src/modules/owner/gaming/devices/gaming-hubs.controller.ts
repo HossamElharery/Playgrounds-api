@@ -31,6 +31,7 @@ import { AuthenticatedUser } from '../../../../common/types/authenticated-user.i
 import { GamingCommandDto, GamingQueryDto } from '../gaming-operations.dto';
 import { GamingHubsService } from './gaming-hubs.service';
 import {
+  AddTvDto,
   ClaimHubDto,
   commandFrom,
   PsnLinkDto,
@@ -152,6 +153,16 @@ export class GamingHubsController {
     @Body() d: GamingCommandDto,
   ) {
     return this.hubs.scan(u, id, d);
+  }
+  @Post(':hubId/tv/add')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  tvAdd(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('hubId', ParseUUIDPipe) id: string,
+    @Body() d: AddTvDto,
+  ) {
+    return this.hubs.tvAdd(u, id, d);
   }
   @Post(':hubId/update')
   @Throttle({ default: { limit: 6, ttl: 60_000 } })

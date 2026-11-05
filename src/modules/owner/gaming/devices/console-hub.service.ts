@@ -15,6 +15,7 @@ import {
   HUB_SOCKET_PATH,
   HubConsole,
   HubFrame,
+  HubTv,
   hubRequest,
   hubWelcome,
   parseHubFrame,
@@ -45,6 +46,7 @@ export interface ConsoleHubHandler {
     frame: Extract<HubFrame, { kind: 'hello' }>,
   ): Promise<void>;
   consoles(hubId: string, venueId: string, list: HubConsole[]): Promise<void>;
+  tvs(hubId: string, venueId: string, list: HubTv[]): Promise<void>;
   closed(hubId: string, venueId: string): Promise<void>;
 }
 
@@ -237,7 +239,9 @@ export class ConsoleHubService
     void this.serial(link.hubId, () =>
       frame.kind === 'hello'
         ? this.handler?.hello(link.hubId, link.venueId, frame)
-        : this.handler?.consoles(link.hubId, link.venueId, frame.list),
+        : frame.kind === 'tvs'
+          ? this.handler?.tvs(link.hubId, link.venueId, frame.list)
+          : this.handler?.consoles(link.hubId, link.venueId, frame.list),
     );
   }
 

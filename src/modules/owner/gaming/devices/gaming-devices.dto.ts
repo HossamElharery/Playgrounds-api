@@ -64,6 +64,22 @@ export class PairConsoleDto extends GamingCommandDto {
   /** The 8-digit code the console shows under Remote Play > Link Device. */
   @IsString() @Matches(/^\d{8}$/) pin!: string;
 }
+export class PairTvDto extends GamingCommandDto {
+  /** Sony: the pre-shared key the owner set in the TV's network settings. Samsung / LG / Roku need nothing. */
+  @IsOptional() @IsString() @MaxLength(64) secret?: string;
+}
+export class AddTvDto extends GamingCommandDto {
+  @Matches(/^\d{1,3}(\.\d{1,3}){3}$/) address!: string;
+  @IsOptional() @IsIn(['samsung', 'lg', 'sony', 'roku']) brand?:
+    | 'samsung'
+    | 'lg'
+    | 'sony'
+    | 'roku';
+  /** Optional hardware address, only needed when the hub cannot learn it (switch-on from standby). */
+  @IsOptional()
+  @Matches(/^[0-9a-fA-F]{2}([:-]?[0-9a-fA-F]{2}){5}$/)
+  mac?: string;
+}
 export class ClaimHubDto {
   @IsString() @MaxLength(40) code!: string;
   @IsOptional() @IsString() @MaxLength(80) hostname?: string;

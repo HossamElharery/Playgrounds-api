@@ -18,7 +18,13 @@ import {
   ConsoleHubService,
   HubRpcError,
 } from './console-hub.service';
-import { HubConsole, HubFrame } from './hub-protocol';
+import {
+  HubConsole,
+  HubFrame,
+  HubTv,
+  TvBrand,
+  TvPairing,
+} from './hub-protocol';
 import { GamingHubsService } from './gaming-hubs.service';
 import {
   DeviceHubHandler,
@@ -33,6 +39,7 @@ import {
   deviceSettings,
   DeviceSettings,
   PolicySession,
+  relayFor,
   screenFromRelay,
 } from './device-policy';
 import {
@@ -64,18 +71,53 @@ export interface DeviceView {
   settings: DeviceSettings;
   online: boolean;
   lastSeenAt: Date | null;
-  /** "shelly" = smart plug on the screen, "ps" = a PlayStation driven by a Matchena Hub. */
+  /** "shelly" = smart plug on the screen, "ps" = a PlayStation and "tv" = a smart TV, both driven by a Matchena Hub. */
   provider: string;
   hubId: string | null;
   paired: boolean;
   consoleType: 'PS4' | 'PS5' | null;
   address: string | null;
+  /** Smart TV only: brand, how it is linked, and whether the hub can switch it on from standby. */
+  tvBrand: TvBrand | null;
+  tvPairing: TvPairing | null;
+  canWake: boolean | null;
+  /** Console / TV power as the hub last reported it ("awake" = on). */
   consoleState: 'awake' | 'standby' | 'unreachable' | null;
-  /** Plug: the screen is powered. Console: it is awake (not in rest mode). */
+  /** Plug: the screen is powered. Console: it is awake (not in rest mode). TV: the screen is on. */
   screenOn: boolean | null;
   powerW: number | null;
   authError: boolean;
   override: { on: boolean; until: Date } | null;
+}
+
+const TV_BRAND_SET = new Set<string>(['samsung', 'lg', 'sony', 'roku']);
+function tvBrandOf(model: string | null): TvBrand | null {
+  return model && TV_BRAND_SET.has(model) ? (model as TvBrand) : null;
+}
+function metaOf(d: GamingDevice): { canWake: boolean; pairing: TvPairing } {
+  const m =
+    d.meta && typeof d.meta === 'object' && !Array.isArray(d.meta)
+      ? (d.meta as Record<string, unknown>)
+      : {};
+  return {
+    canWake: m.canWake === true,
+    pairing:
+      m.pairing === 'secret' || m.pairing === 'none' ? m.pairing : 'prompt',
+  };
+}
+/** Hub-driven devices (console, TV) are switched through the hub link, not a plug socket. */
+export const isHubDevice = (d: Pick<GamingDevice, 'provider'>) =>
+  d.provider === 'ps' || d.provider === 'tv';
+
+/**
+ * A station has one console and one screen. Giving a station a new device frees the one it replaces: a console
+ * replaces a console, a TV replaces a TV or a plug, a plug replaces a TV (two plugs may still share a station,
+ * one per monitor). Without this a plug and a TV would fight over the same screen.
+ */
+export function rivalProviders(provider: string): string[] {
+  if (provider === 'ps') return ['ps'];
+  if (provider === 'tv') return ['tv', 'shelly'];
+  return ['tv'];
 }
 
 export function deviceView(
@@ -102,8 +144,11 @@ export function deviceView(
         ? d.model
         : null,
     address: d.address,
+    tvBrand: d.provider === 'tv' ? tvBrandOf(d.model) : null,
+    tvPairing: d.provider === 'tv' ? metaOf(d).pairing : null,
+    canWake: d.provider === 'tv' ? metaOf(d).canWake : null,
     consoleState:
-      d.provider === 'ps' &&
+      d.provider !== 'shelly' &&
       (d.consoleState === 'awake' ||
         d.consoleState === 'standby' ||
         d.consoleState === 'unreachable')
@@ -111,7 +156,7 @@ export function deviceView(
         : null,
     screenOn: online
       ? screenFromRelay(d.output, {
-          invert: d.provider === 'ps' ? false : settings.invert,
+          invert: d.provider === 'shelly' ? settings.invert : false,
         })
       : null,
     powerW: online ? d.powerW : null,
@@ -251,6 +296,7 @@ export class GamingDevicesService
     id: string,
     dto: UpdateGamingDeviceDto,
   ) {
+    const freed: GamingDevice[] = [];
     const result = await this.commands.command(
       user,
       'devices.manage',
@@ -277,6 +323,42 @@ export class GamingDevicesService
             })
           : deviceSettings(device.settings);
         const unitId = dto.unitId === undefined ? device.unitId : dto.unitId;
+        const rivals =
+          unitId && unitId !== device.unitId
+            ? await tx.gamingDevice.findMany({
+                where: {
+                  venueId: dto.venueId,
+                  unitId,
+                  id: { not: id },
+                  provider: { in: rivalProviders(device.provider) },
+                },
+              })
+            : [];
+        for (const rival of rivals) {
+          await tx.gamingDevice.update({
+            where: { id: rival.id },
+            data: { unitId: null, appliedKey: null, configuredAt: null },
+          });
+          await tx.gamingDeviceLog.create({
+            data: {
+              deviceId: rival.id,
+              venueId: dto.venueId,
+              kind: 'assigned',
+              actorId: user.id,
+              detail: jsonValue({ unitId: null, replacedBy: id }),
+            },
+          });
+          await this.commands.event(
+            tx,
+            dto.venueId,
+            rival.id,
+            null,
+            'device.changed',
+          );
+          freed.push(rival);
+        }
+        if (device.provider === 'shelly' && device.unitId && !unitId)
+          freed.push(device);
         const updated = await tx.gamingDevice.update({
           where: { id },
           data: {
@@ -302,10 +384,40 @@ export class GamingDevicesService
           },
         });
         await this.commands.event(tx, dto.venueId, id, null, 'device.changed');
-        return deviceView(updated, this.onlineOf(updated));
+        return {
+          ...deviceView(updated, this.onlineOf(updated)),
+          replaced: rivals.map((r) => ({ id: r.id, name: r.name })),
+        };
       },
     );
+    // After the commit: a plug that no longer looks after a screen must give the screen its power back,
+    // otherwise a TV the owner now controls directly would stay dark.
+    for (const plug of freed)
+      if (plug.provider === 'shelly') await this.restorePower(plug);
     return result;
+  }
+
+  /** Best effort: switch a released plug on so its screen works normally again. */
+  private async restorePower(plug: GamingDevice) {
+    if (plug.provider !== 'shelly' || !this.hub.isOnline(plug.externalId))
+      return;
+    try {
+      const settings = deviceSettings(plug.settings);
+      await this.hub.call(
+        plug.externalId,
+        'Switch.Set',
+        switchSetParams(plug.channel, relayFor(true, settings), null),
+      );
+      await this.prisma.gamingDevice.update({
+        where: { id: plug.id },
+        data: { appliedKey: null, output: relayFor(true, settings) },
+      });
+      await this.log(plug, 'command', { screenOn: true, reason: 'released' });
+    } catch (error) {
+      this.logger.debug(
+        `plug release skipped ${plug.externalId}: ${(error as Error).message}`,
+      );
+    }
   }
 
   async remove(
@@ -329,11 +441,17 @@ export class GamingDevicesService
     );
     // After the delete is committed: the hub's next report must find the console gone, not half there.
     const device = removed as GamingDevice | null;
+    if (device?.provider === 'shelly' && device.unitId)
+      await this.restorePower(device);
     if (device)
       setTimeout(
         () =>
-          device.provider === 'ps'
-            ? void this.hubsService.forget(device.hubId, device.externalId)
+          isHubDevice(device)
+            ? void this.hubsService.forget(
+                device.hubId,
+                device.externalId,
+                device.provider,
+              )
             : this.hub.disconnect(device.externalId),
         0,
       );
@@ -349,9 +467,10 @@ export class GamingDevicesService
       dto,
       async (tx, now) => {
         const device = await this.owned(tx, dto.venueId, id);
-        // A console needs 10-30 s to wake: a shorter test would end before it started.
-        const seconds =
-          device.provider === 'ps' ? Math.max(dto.seconds, 90) : dto.seconds;
+        // A console or TV needs 10-45 s to wake: a shorter test would end before it started.
+        const seconds = isHubDevice(device)
+          ? Math.max(dto.seconds, 90)
+          : dto.seconds;
         await tx.gamingDevice.update({
           where: { id },
           data: {
@@ -577,7 +696,11 @@ export class GamingDevicesService
         unitId: { not: null },
         OR: [
           { provider: 'shelly', externalId: { in: ids } },
-          { provider: 'ps', hubId: { in: hubIds }, paired: true },
+          {
+            provider: { in: ['ps', 'tv'] },
+            hubId: { in: hubIds },
+            paired: true,
+          },
         ],
       },
       select: { venueId: true },
@@ -603,7 +726,10 @@ export class GamingDevicesService
       where: {
         venueId,
         unitId: { not: null },
-        OR: [{ provider: 'shelly' }, { provider: 'ps', paired: true }],
+        OR: [
+          { provider: 'shelly' },
+          { provider: { in: ['ps', 'tv'] }, paired: true },
+        ],
       },
       include: {
         unit: {
@@ -616,7 +742,7 @@ export class GamingDevicesService
     });
     const live = devices.filter((d) => this.onlineOf(d));
     const offlineConsoles = devices.filter(
-      (d) => d.provider === 'ps' && !this.onlineOf(d),
+      (d) => isHubDevice(d) && !this.onlineOf(d),
     );
     if (!live.length && !offlineConsoles.length) return;
     const sessions = await this.prisma.usageSession.findMany({
@@ -627,14 +753,23 @@ export class GamingDevicesService
     // while someone is standing at the counter, instead of letting the customer find a console in Rest Mode.
     for (const device of offlineConsoles) {
       if (!sessions.some((x) => x.unitId === device.unitId)) continue;
-      await this.alert(
-        device,
-        'hub-offline',
-        'تعذّر تشغيل الجهاز: Matchena Hub غير متصل',
-        'Can’t start the console: Matchena Hub is offline',
-        'بدأت جلسة على محطة جهازها غير متصل، لذا لن يعمل الجهاز تلقائيًا. شغّله يدويًا، وتحقق من تشغيل كمبيوتر المحل واتصاله بالإنترنت.',
-        'A session started on a station whose console is offline, so it will not start by itself. Start it by hand, and check that the shop PC is on and online.',
-      );
+      await (device.provider === 'tv'
+        ? this.alert(
+            device,
+            'hub-offline',
+            'تعذّر تشغيل الشاشة: Matchena Hub غير متصل',
+            'Can’t start the screen: Matchena Hub is offline',
+            'بدأت جلسة على محطة شاشتها غير متصلة، لذا لن تعمل الشاشة تلقائيًا. شغّلها يدويًا، وتحقق من تشغيل كمبيوتر المحل واتصاله بالإنترنت.',
+            'A session started on a station whose screen is offline, so it will not start by itself. Turn it on by hand, and check that the shop PC is on and online.',
+          )
+        : this.alert(
+            device,
+            'hub-offline',
+            'تعذّر تشغيل الجهاز: Matchena Hub غير متصل',
+            'Can’t start the console: Matchena Hub is offline',
+            'بدأت جلسة على محطة جهازها غير متصل، لذا لن يعمل الجهاز تلقائيًا. شغّله يدويًا، وتحقق من تشغيل كمبيوتر المحل واتصاله بالإنترنت.',
+            'A session started on a station whose console is offline, so it will not start by itself. Start it by hand, and check that the shop PC is on and online.',
+          ));
     }
     if (!live.length) return;
     for (const device of live) {
@@ -666,7 +801,7 @@ export class GamingDevicesService
       throw new ForbiddenException({ code: 'DEVICE_NOT_ACCESSIBLE' });
     if (!this.onlineOf(device))
       return { ok: false, error: 'offline', device: deviceView(device, false) };
-    if (device.provider === 'ps' && !device.paired)
+    if (isHubDevice(device) && !device.paired)
       return {
         ok: false,
         error: 'not-paired',
@@ -692,7 +827,7 @@ export class GamingDevicesService
       true,
     );
     // A console wake can legitimately take a minute; the wait is only for an apply already in flight.
-    const patience = device.provider === 'ps' ? 400 : 20;
+    const patience = isHubDevice(device) ? 400 : 20;
     for (let i = 0; outcome === 'busy' && i < patience; i++) {
       await new Promise((r) => setTimeout(r, 250));
       const latest = await this.prisma.gamingDevice.findUniqueOrThrow({
@@ -722,7 +857,8 @@ export class GamingDevicesService
     if (!device.unitId && !unassignedOk) return 'idle';
     this.busy.add(device.id);
     try {
-      const isConsole = device.provider === 'ps';
+      const isConsole = isHubDevice(device);
+      const isTv = device.provider === 'tv';
       const settings = {
         ...deviceSettings(device.settings),
         ...(isConsole ? { invert: false } : {}),
@@ -756,14 +892,23 @@ export class GamingDevicesService
         if (now.getTime() - since < this.unloggedGraceMs) return 'idle';
         unlogged = true;
         if (!settings.guard) {
-          await this.alert(
-            device,
-            'unlogged',
-            'جهاز يعمل دون جلسة',
-            'Console is on without a session',
-            'الجهاز يعمل ولا توجد جلسة مسجلة له في ماتشنا، لذا لا يُحتسب أي وقت. ابدأ جلسة، أو فعّل «الحماية» من إعدادات الجهاز ليعود إلى وضع الراحة تلقائيًا.',
-            'The console is on, but no session is running in Matchena, so no time is being billed. Start a session, or turn on Guard in the device settings to return it to Rest Mode automatically.',
-          );
+          await (isTv
+            ? this.alert(
+                device,
+                'unlogged',
+                'شاشة تعمل دون جلسة',
+                'Screen is on without a session',
+                'الشاشة تعمل ولا توجد جلسة مسجلة لها في ماتشنا، لذا لا يُحتسب أي وقت. ابدأ جلسة، أو فعّل «الحماية» من إعدادات الشاشة لتُطفأ تلقائيًا.',
+                'The screen is on, but no session is running in Matchena, so no time is being billed. Start a session, or turn on Guard in the screen settings to switch it off automatically.',
+              )
+            : this.alert(
+                device,
+                'unlogged',
+                'جهاز يعمل دون جلسة',
+                'Console is on without a session',
+                'الجهاز يعمل ولا توجد جلسة مسجلة له في ماتشنا، لذا لا يُحتسب أي وقت. ابدأ جلسة، أو فعّل «الحماية» من إعدادات الجهاز ليعود إلى وضع الراحة تلقائيًا.',
+                'The console is on, but no session is running in Matchena, so no time is being billed. Start a session, or turn on Guard in the device settings to return it to Rest Mode automatically.',
+              ));
           return 'idle';
         }
       } else if (isConsole) this.awakeSince.delete(device.id);
@@ -798,7 +943,7 @@ export class GamingDevicesService
       });
       await this.changed(device.venueId, device.id);
       if (guardFired)
-        await (isConsole
+        await (isConsole && !isTv
           ? this.alert(
               device,
               'guard',
@@ -1023,6 +1168,141 @@ export class GamingDevicesService
       await this.reconcileVenue(venueId, 'hub');
   }
 
+  /** The hub's full list of smart TVs (same rules as consoles: another venue's TV is never taken over by a report). */
+  async tvs(hubId: string, venueId: string, list: HubTv[]) {
+    const now = new Date();
+    let touched = false;
+    const existing = await this.prisma.gamingDevice.findMany({
+      where: {
+        provider: 'tv',
+        OR: [{ hubId }, { externalId: { in: list.map((t) => t.id) } }],
+      },
+    });
+    const byId = new Map(existing.map((d) => [d.externalId, d]));
+    const listed = new Set(list.map((t) => t.id));
+    const power = (t: HubTv) =>
+      t.state === 'on'
+        ? 'awake'
+        : t.state === 'standby'
+          ? 'standby'
+          : 'unreachable';
+    for (const t of list) {
+      const output =
+        t.state === 'on' ? true : t.state === 'standby' ? false : null;
+      const meta = { canWake: t.canWake, pairing: t.pairing };
+      const device = byId.get(t.id);
+      if (
+        device &&
+        device.hubId &&
+        device.hubId !== hubId &&
+        device.venueId === venueId &&
+        this.consoleHub.isOnline(device.hubId)
+      )
+        continue;
+      if (
+        device &&
+        device.venueId !== venueId &&
+        (device.unitId ||
+          (device.lastSeenAt &&
+            now.getTime() - device.lastSeenAt.getTime() < 7 * 86_400_000))
+      )
+        continue;
+      if (!device) {
+        const created = await this.prisma.gamingDevice.create({
+          data: {
+            venueId,
+            hubId,
+            provider: 'tv',
+            externalId: t.id,
+            model: t.brand,
+            name: t.name,
+            settings: jsonValue(deviceSettings(null)),
+            online: true,
+            paired: t.paired,
+            address: t.address || null,
+            consoleState: power(t),
+            meta: jsonValue(meta),
+            output,
+            lastSeenAt: now,
+          },
+        });
+        await this.log(created, 'connected', {
+          brand: t.brand,
+          paired: t.paired,
+        });
+        touched = true;
+        await this.changed(venueId, created.id);
+        continue;
+      }
+      const moved = device.venueId !== venueId;
+      const stale =
+        !device.lastSeenAt ||
+        now.getTime() - device.lastSeenAt.getTime() > 60_000;
+      const before = metaOf(device);
+      const differs =
+        moved ||
+        device.hubId !== hubId ||
+        !device.online ||
+        device.paired !== t.paired ||
+        device.consoleState !== power(t) ||
+        device.model !== t.brand ||
+        (t.address && device.address !== t.address) ||
+        before.canWake !== t.canWake ||
+        before.pairing !== t.pairing ||
+        device.output !== output;
+      if (!differs && !stale) continue;
+      await this.prisma.gamingDevice.update({
+        where: { id: device.id },
+        data: {
+          venueId,
+          hubId,
+          online: true,
+          lastSeenAt: now,
+          model: t.brand,
+          paired: t.paired,
+          consoleState: power(t),
+          meta: jsonValue(meta),
+          output,
+          ...(t.address ? { address: t.address } : {}),
+          ...(device.name ? {} : { name: t.name }),
+          ...(moved
+            ? {
+                unitId: null,
+                overrideOn: null,
+                overrideUntil: null,
+                appliedKey: null,
+              }
+            : {}),
+        },
+      });
+      if (differs) {
+        touched = true;
+        if (device.consoleState !== power(t))
+          await this.log(device, 'state', {
+            from: device.consoleState,
+            to: power(t),
+          });
+        await this.changed(venueId, device.id);
+      }
+    }
+    for (const d of existing) {
+      if (d.hubId !== hubId || listed.has(d.externalId)) continue;
+      if (!d.paired && !d.unitId) {
+        await this.prisma.gamingDevice.delete({ where: { id: d.id } });
+        touched = true;
+        await this.changed(venueId, d.id);
+      } else if (d.consoleState !== 'unreachable') {
+        await this.prisma.gamingDevice.update({
+          where: { id: d.id },
+          data: { consoleState: 'unreachable', output: null },
+        });
+        touched = true;
+        await this.changed(venueId, d.id);
+      }
+    }
+    if (touched) await this.reconcileVenue(venueId, 'hub');
+  }
+
   async closed(hubId: string, venueId: string) {
     const gone = await this.prisma.gamingHub.updateMany({
       where: { id: hubId },
@@ -1061,7 +1341,7 @@ export class GamingDevicesService
 
   /** Is this device reachable right now (plug socket up / its hub connected)? */
   private onlineOf(d: GamingDevice) {
-    return d.provider === 'ps'
+    return isHubDevice(d)
       ? !!d.hubId && this.consoleHub.isOnline(d.hubId)
       : this.hub.isOnline(d.externalId);
   }
@@ -1072,7 +1352,7 @@ export class GamingDevicesService
     settings: Pick<DeviceSettings, 'invert'>,
     now: Date,
   ): boolean | null {
-    if (d.provider !== 'ps') return screenFromRelay(d.output, settings);
+    if (!isHubDevice(d)) return screenFromRelay(d.output, settings);
     if (d.consoleState === 'unreachable') return null;
     if ((this.settleUntil.get(d.id) ?? 0) > now.getTime()) return null;
     return d.output ?? null;
@@ -1083,7 +1363,7 @@ export class GamingDevicesService
     plan: { on: boolean; toggleAfter: number | null },
     now: Date,
   ) {
-    if (d.provider !== 'ps') {
+    if (!isHubDevice(d)) {
       await this.hub.call(
         d.externalId,
         'Switch.Set',
@@ -1092,6 +1372,29 @@ export class GamingDevicesService
       return;
     }
     if (!d.hubId) throw new HubRpcError('HUB_OFFLINE', 'no hub');
+    if (d.provider === 'tv') {
+      if (plan.on)
+        await this.consoleHub.call(
+          d.hubId,
+          'tv.on',
+          {
+            tvId: d.externalId,
+            // The hub keeps this time and switches the TV off by itself if the internet drops.
+            offAt: plan.toggleAfter
+              ? new Date(now.getTime() + plan.toggleAfter * 1000).toISOString()
+              : null,
+          },
+          65_000,
+        );
+      else
+        await this.consoleHub.call(
+          d.hubId,
+          'tv.off',
+          { tvId: d.externalId },
+          40_000,
+        );
+      return;
+    }
     if (plan.on)
       await this.consoleHub.call(
         d.hubId,

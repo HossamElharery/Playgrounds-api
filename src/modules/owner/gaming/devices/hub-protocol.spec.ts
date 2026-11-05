@@ -23,6 +23,7 @@ describe('hub protocol frames', () => {
       platform: 'win32',
       hostname: 'PC-1',
       psnLinked: true,
+      tv: false,
     });
     expect(parseHubFrame('{"t":"hello"}')).toMatchObject({
       kind: 'hello',

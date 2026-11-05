@@ -24,11 +24,14 @@ import {
 import {
   HUB_ERROR_CODES,
   HUB_SOCKET_PATH,
+  HUB_TV_VERSION,
   isOlderVersion,
 } from './hub-protocol';
 import {
+  AddTvDto,
   ClaimHubDto,
   PairConsoleDto,
+  PairTvDto,
   PsnSigninDto,
   PsnLinkDto,
   RenameHubDto,
@@ -304,7 +307,8 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
       if (error.droppedMidCall) return { ok: true, state: 'restarting' };
       if (error.code === 'HUB_TIMEOUT') return { ok: true, state: 'working' };
       // The hub's own scheduled update is already running: same outcome as ours.
-      if (/already running/i.test(error.message)) return { ok: true, state: 'working' };
+      if (/already running/i.test(error.message))
+        return { ok: true, state: 'working' };
     }
     return this.rethrowHubError(error);
   }
@@ -517,7 +521,23 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     await this.access(user, dto.venueId);
     await this.ownedHub(this.prisma, dto.venueId, hubId);
     const data = await this.callHub(hubId, 'scan', {}, 15_000);
-    return { ok: true, count: typeof data.count === 'number' ? data.count : 0 };
+    // Smart TVs are looked for too, unless this hub is too old to know them (it would answer UNKNOWN_OP).
+    let tvs = 0;
+    const hub = await this.prisma.gamingHub.findUnique({
+      where: { id: hubId },
+      select: { hubVersion: true },
+    });
+    if (!isOlderVersion(hub?.hubVersion, HUB_TV_VERSION)) {
+      const found = await this.hubs
+        .call(hubId, 'tv.scan', {}, 20_000)
+        .catch(() => null);
+      tvs = typeof found?.count === 'number' ? found.count : 0;
+    }
+    return {
+      ok: true,
+      count: typeof data.count === 'number' ? data.count : 0,
+      tvs,
+    };
   }
 
   async psnUrl(user: AuthenticatedUser, hubId: string, venueId: string) {
@@ -602,7 +622,7 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
 
   async pair(user: AuthenticatedUser, deviceId: string, dto: PairConsoleDto) {
     await this.access(user, dto.venueId);
-    const device = await this.ownedConsole(dto.venueId, deviceId);
+    const device = await this.ownedConsole(dto.venueId, deviceId, 'ps');
     await this.callHub(
       device.hubId!,
       'pair',
@@ -640,8 +660,10 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     const device = await this.ownedConsole(dto.venueId, deviceId);
     const data = await this.callHub(
       device.hubId!,
-      'check',
-      { consoleId: device.externalId },
+      device.provider === 'tv' ? 'tv.check' : 'check',
+      device.provider === 'tv'
+        ? { tvId: device.externalId }
+        : { consoleId: device.externalId },
       150_000,
     );
     const steps = Array.isArray(data.steps)
@@ -679,12 +701,81 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     return { ok, steps };
   }
 
-  /** Best effort: tell the hub to drop a console's credentials (device removed by the owner). */
-  async forget(hubId: string | null, consoleId: string) {
+  /** Best effort: tell the hub to drop a console's or TV's credentials (device removed by the owner). */
+  async forget(hubId: string | null, deviceId: string, provider = 'ps') {
     if (!hubId || !this.hubs.isOnline(hubId)) return;
-    await this.hubs
-      .call(hubId, 'forget', { consoleId }, 8_000)
+    await (
+      provider === 'tv'
+        ? this.hubs.call(hubId, 'tv.forget', { tvId: deviceId }, 8_000)
+        : this.hubs.call(hubId, 'forget', { consoleId: deviceId }, 8_000)
+    ).catch(() => undefined);
+  }
+
+  // ---- smart TVs ----
+
+  /** The owner typed an address (a TV discovery cannot see). The hub identifies it; its next report creates the device. */
+  async tvAdd(user: AuthenticatedUser, hubId: string, dto: AddTvDto) {
+    await this.access(user, dto.venueId);
+    await this.ownedHub(this.prisma, dto.venueId, hubId);
+    const data = await this.callHub(
+      hubId,
+      'tv.add',
+      {
+        address: dto.address,
+        ...(dto.brand ? { brand: dto.brand } : {}),
+        ...(dto.mac ? { mac: dto.mac } : {}),
+      },
+      15_000,
+    );
+    return { ok: true, tv: data.tv ?? null };
+  }
+
+  /**
+   * Link a TV: Samsung / LG show an Allow prompt on the TV (the call waits for the answer, up to a minute),
+   * Sony needs the key the owner set, Roku needs nothing.
+   */
+  async tvPair(user: AuthenticatedUser, deviceId: string, dto: PairTvDto) {
+    await this.access(user, dto.venueId);
+    const device = await this.ownedConsole(dto.venueId, deviceId, 'tv');
+    await this.callHub(
+      device.hubId!,
+      'tv.pair',
+      {
+        tvId: device.externalId,
+        ...(dto.secret ? { secret: dto.secret } : {}),
+      },
+      75_000,
+    );
+    await this.prisma.gamingDevice.update({
+      where: { id: device.id },
+      data: { paired: true, appliedKey: null, configuredAt: null },
+    });
+    await this.prisma.gamingDeviceLog
+      .create({
+        data: {
+          deviceId: device.id,
+          venueId: device.venueId,
+          kind: 'paired',
+          actorId: user.id,
+        },
+      })
       .catch(() => undefined);
+    await this.event(dto.venueId, device.id);
+    return { ok: true };
+  }
+
+  /** Stop waiting for the Allow prompt (the owner changed their mind). */
+  async tvCancel(
+    user: AuthenticatedUser,
+    deviceId: string,
+    dto: GamingCommandDto,
+  ) {
+    await this.access(user, dto.venueId);
+    const device = await this.ownedConsole(dto.venueId, deviceId, 'tv');
+    await this.hubs
+      .call(device.hubId!, 'tv.cancel', { tvId: device.externalId }, 8_000)
+      .catch(() => undefined);
+    return { ok: true };
   }
 
   // ---- helpers ----
@@ -709,9 +800,13 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     return hub;
   }
 
-  private async ownedConsole(venueId: string, id: string) {
+  private async ownedConsole(
+    venueId: string,
+    id: string,
+    provider?: 'ps' | 'tv',
+  ) {
     const device = await this.prisma.gamingDevice.findFirst({
-      where: { id, venueId, provider: 'ps' },
+      where: { id, venueId, provider: provider ?? { in: ['ps', 'tv'] } },
     });
     if (!device || !device.hubId)
       throw new ForbiddenException({ code: 'DEVICE_NOT_ACCESSIBLE' });

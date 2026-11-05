@@ -23,6 +23,7 @@ import { GamingCommandDto, GamingQueryDto } from '../gaming-operations.dto';
 import { GamingDevicesService } from './gaming-devices.service';
 import { GamingHubsService } from './gaming-hubs.service';
 import {
+  PairTvDto,
   DeviceOverrideDto,
   DeviceTestDto,
   PairConsoleDto,
@@ -98,6 +99,23 @@ export class GamingDevicesController {
     @Body() d: PairConsoleDto,
   ) {
     return this.hubs.pair(u, id, d);
+  }
+  @Post(':id/tv/pair')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @RequirePermission('devices.manage')
+  pairTv(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() d: PairTvDto,
+  ) {
+    return this.hubs.tvPair(u, id, d);
+  }
+  @Post(':id/tv/cancel') @RequirePermission('devices.manage') cancelTv(
+    @CurrentUser() u: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() d: GamingCommandDto,
+  ) {
+    return this.hubs.tvCancel(u, id, d);
   }
   @Post(':id/check')
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
