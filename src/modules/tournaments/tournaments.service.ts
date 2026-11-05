@@ -155,6 +155,7 @@ export class TournamentsService {
           userId,
           amount: entryFee,
           reason: 'tournament',
+          currency: tournament.entryFeeCurrency ?? undefined,
         });
       }
       try {

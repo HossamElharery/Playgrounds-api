@@ -1,7 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { IndexNowService } from '../seo/index-now.service';
 import { EmailService } from '../email/email.service';
+import { AdminAlertsService } from '../notifications/admin-alerts.service';
 import { PublishStatus } from '@prisma/client';
 import { CreateBlogPostDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateBlogCategoryDto } from './dto/blog-category.dto';
@@ -31,6 +32,7 @@ export class ContentService {
     private readonly prisma: PrismaService,
     private readonly indexNow: IndexNowService,
     private readonly email: EmailService,
+    @Optional() private readonly adminAlerts?: AdminAlertsService,
   ) {}
 
   private pingBlog(post: { slug: string; status: PublishStatus }): void {
@@ -313,6 +315,16 @@ export class ContentService {
         `Support inquiry ${inquiry.id} saved but email failed: ${detail}`,
       );
     }
+    void this.adminAlerts?.alert({
+      dedupKey: `support-inquiry:${inquiry.id}`,
+      titleEn: `New contact message from ${inquiry.fullName}`,
+      titleAr: `رسالة تواصل جديدة من ${inquiry.fullName}`,
+      bodyEn: inquiry.message.slice(0, 160),
+      bodyAr: inquiry.message.slice(0, 160),
+      deepLink: '/admin/support',
+      payload: { kind: 'support_inquiry', inquiryId: inquiry.id },
+      email: false, // the full message is already emailed to the support inbox above
+    });
     return inquiry;
   }
 

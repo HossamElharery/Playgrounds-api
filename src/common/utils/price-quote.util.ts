@@ -25,6 +25,7 @@ export function quoteDurationPrice(
   let total = 0;
   let currency = rules[0].currency ?? 'EGP';
   let elapsedMs = 0;
+  let lastRate: number | null = null;
   while (elapsedMs < durationMinutes * 60_000) {
     const segStart = new Date(startsAt.getTime() + elapsedMs);
     const segEnd = new Date(
@@ -46,17 +47,16 @@ export function quoteDurationPrice(
     }
     const rule = bestRule(candidates);
     const minutes = (segEnd.getTime() - segStart.getTime()) / 60_000;
-    let amount = Math.round((rule.priceAmount * minutes) / 60);
-    if (minutePrecision) {
-      weightedMinorMs += BigInt(rule.priceAmount) * BigInt(segEnd.getTime() - segStart.getTime());
-      const roundedTotal = Number((weightedMinorMs + 1_800_000n) / 3_600_000n);
-      amount = roundedTotal - total;
-    }
+    // Round the running total once, never each segment: rounding every 15 minutes turned 1.25 into 1.24 (4 x 31) and 12.50 into 12.52.
+    weightedMinorMs += BigInt(rule.priceAmount) * BigInt(segEnd.getTime() - segStart.getTime());
+    const roundedTotal = Number((weightedMinorMs + 1_800_000n) / 3_600_000n);
+    const amount = roundedTotal - total;
     total += amount;
     currency = rule.currency ?? currency;
     elapsedMs = segEnd.getTime() - startsAt.getTime();
     const last = breakdown[breakdown.length - 1];
-    if (last && last.label === (rule.label ?? 'base') && last.amount / ((new Date(last.to).getTime() - new Date(last.from).getTime()) / 60_000) === amount / minutes) {
+    // Same rule and same hourly rate: one line. (Comparing per-segment amounts no longer works: the running total is rounded once, so segments differ by a unit.)
+    if (last && last.label === (rule.label ?? 'base') && lastRate === rule.priceAmount) {
       last.to = segEnd.toISOString();
       last.amount += amount;
     } else {
@@ -67,6 +67,7 @@ export function quoteDurationPrice(
         amount,
       });
     }
+    lastRate = rule.priceAmount;
   }
   return { priceAmount: total, currency, breakdown };
 }

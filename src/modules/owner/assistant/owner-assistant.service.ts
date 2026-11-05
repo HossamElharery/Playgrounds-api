@@ -88,7 +88,7 @@ function dayLabelAr(date: string, tz: string): string {
   if (date === today) return 'النهارده';
   if (date === nextDay(today)) return 'بكرة';
   const [year, month, day] = date.split('-').map(Number);
-  return new Intl.DateTimeFormat('ar-EG', {
+  return new Intl.DateTimeFormat('ar-EG-u-nu-latn', {
     timeZone: 'UTC',
     weekday: 'long',
     day: 'numeric',

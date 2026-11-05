@@ -31,7 +31,7 @@ describe('Tournament entry fee payment', () => {
 
   it('charges the wallet for the entry fee before creating the participant row', async () => {
     await service.register('u1', 'tour');
-    expect(wallet.debit).toHaveBeenCalledWith(prisma, { userId: 'u1', amount: 5000, reason: 'tournament' });
+    expect(wallet.debit).toHaveBeenCalledWith(prisma, { userId: 'u1', amount: 5000, reason: 'tournament', currency: 'EGP' });
     expect(prisma.tournamentParticipant.create).toHaveBeenCalledWith({
       data: { tournamentId: 'tour', userId: 'u1', entryFeePaid: 5000, paymentStatus: 'paid' },
     });

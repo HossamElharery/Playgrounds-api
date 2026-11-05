@@ -68,6 +68,23 @@ describe('WalletService', () => {
     expect(prisma.walletLedgerEntry.create).not.toHaveBeenCalled();
   });
 
+  it('refuses to charge a wallet in a currency other than its own, without touching the balance', async () => {
+    prisma.user.findUnique.mockResolvedValue({ country: { currency: 'KWD' } });
+    await expect(
+      service.debit(prisma as never, { userId: 'u1', amount: 5000, reason: 'booking', currency: 'EGP' }),
+    ).rejects.toMatchObject({ response: { code: 'WALLET_CURRENCY_MISMATCH' } });
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    expect(prisma.walletLedgerEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('charges normally when the currency matches the wallet', async () => {
+    prisma.user.findUnique.mockResolvedValue({ country: { currency: 'KWD' } });
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
+    prisma.walletLedgerEntry.create.mockResolvedValue({});
+    await service.debit(prisma as never, { userId: 'u1', amount: 5000, reason: 'booking', currency: 'KWD' });
+    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it('decrements atomically and writes a negative ledger row', async () => {
     prisma.user.updateMany.mockResolvedValue({ count: 1 });
     prisma.walletLedgerEntry.create.mockResolvedValue({});

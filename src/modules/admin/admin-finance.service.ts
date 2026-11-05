@@ -240,10 +240,23 @@ export class AdminFinanceService {
       start = idx >= 0 ? idx + 1 : 0;
     }
     const page = rows.slice(start, start + limit);
+    // Venues trade in different currencies, so a single total is only honest when one currency is in play.
+    const currencies = [...new Set(rows.map((r) => r.currency))].sort();
+    const byCurrency = currencies.map((currency) => {
+      const own = rows.filter((r) => r.currency === currency);
+      return {
+        currency,
+        matchenaOwesOwners: own.filter((r) => r.balance > 0).reduce((s, r) => s + r.balance, 0),
+        ownersOweMatchena: own.filter((r) => r.balance < 0).reduce((s, r) => s + -r.balance, 0),
+        net: own.reduce((s, r) => s + r.balance, 0),
+      };
+    });
+    const single = byCurrency.length <= 1;
     const totals = {
-      matchenaOwesOwners: rows.filter((r) => r.balance > 0).reduce((s, r) => s + r.balance, 0),
-      ownersOweMatchena: rows.filter((r) => r.balance < 0).reduce((s, r) => s + -r.balance, 0),
-      net: rows.reduce((s, r) => s + r.balance, 0),
+      matchenaOwesOwners: single ? (byCurrency[0]?.matchenaOwesOwners ?? 0) : null,
+      ownersOweMatchena: single ? (byCurrency[0]?.ownersOweMatchena ?? 0) : null,
+      net: single ? (byCurrency[0]?.net ?? 0) : null,
+      byCurrency,
     };
     return {
       items: page,
@@ -874,13 +887,17 @@ export class AdminFinanceService {
       (feeSum._sum.discountAmount ?? 0) - (feeSum._sum.ownerFundedDiscount ?? 0),
     );
     const platformRevenue = (feeSum._sum.feeAmount ?? 0) + (feeSum._sum.commissionAmount ?? 0) - platformFunded;
-    let owedToOwners = 0;
-    let owedByOwners = 0;
+    const owedByCurrency = new Map<string, { owedToOwners: number; owedByOwners: number }>();
     for (const row of balances) {
       const n = row._sum.amount ?? 0;
-      if (n > 0) owedToOwners += n;
-      if (n < 0) owedByOwners += -n;
+      const bucket = owedByCurrency.get(row.currency) ?? { owedToOwners: 0, owedByOwners: 0 };
+      if (n > 0) bucket.owedToOwners += n;
+      if (n < 0) bucket.owedByOwners += -n;
+      owedByCurrency.set(row.currency, bucket);
     }
+    const owed = [...owedByCurrency.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currency, v]) => ({ currency, ...v }));
+    // Amounts in different currencies are never added together: the plain totals only exist when one currency is in play.
+    const singleCurrency = new Set([...gmvByCurrencyRows.map((r) => r.currency), ...owed.map((o) => o.currency)]).size <= 1;
     const venueNames = await this.prisma.venue.findMany({
       where: { id: { in: top.map((t) => t.venueId) } },
       select: { id: true, nameEn: true },
@@ -888,7 +905,7 @@ export class AdminFinanceService {
     const nameMap = new Map(venueNames.map((v) => [v.id, v.nameEn]));
     const stale = await this.staleVenues();
     return {
-      gmv: gmv._sum.totalAmount ?? 0,
+      gmv: singleCurrency ? (gmv._sum.totalAmount ?? 0) : null,
       gmvByCurrency: gmvByCurrencyRows.map((r) => ({ currency: r.currency, amount: r._sum.totalAmount ?? 0 })),
       platformRevenueByCurrency: revenueByCurrencyRows.map((r) => ({
         currency: r.currency,
@@ -897,9 +914,10 @@ export class AdminFinanceService {
           (r._sum.commissionAmount ?? 0) -
           Math.max(0, (r._sum.discountAmount ?? 0) - (r._sum.ownerFundedDiscount ?? 0)),
       })),
-      platformRevenue,
-      totalOwedToOwners: owedToOwners,
-      totalOwedByOwners: owedByOwners,
+      platformRevenue: singleCurrency ? platformRevenue : null,
+      totalOwedToOwners: singleCurrency ? owed.reduce((n, o) => n + o.owedToOwners, 0) : null,
+      totalOwedByOwners: singleCurrency ? owed.reduce((n, o) => n + o.owedByOwners, 0) : null,
+      owedByCurrency: owed,
       pendingRemittances: pending,
       topVenuesByGmv: top.map((t) => ({
         venueId: t.venueId,

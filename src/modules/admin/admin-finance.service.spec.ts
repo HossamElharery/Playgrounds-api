@@ -311,7 +311,10 @@ describe('AdminFinanceService', () => {
   });
 
   it('notifies the owner with formatted amounts', async () => {
-    expect(formatMoney(1250, 'EGP')).toMatch(/1[,.]250/);
+    // Ledger amounts are minor units (1/100): 1250 is twelve pounds fifty, never "1,250".
+    expect(formatMoney(1250, 'EGP')).toBe('12.50 EGP');
+    expect(formatMoney(125000, 'EGP', 'ar')).toBe('1,250 ج.م');
+    expect(formatMoney(125, 'KWD')).toBe('1.250 KWD');
     await notifyFinance(notifications as never, {
       userId: 'owner-1',
       titleEn: 'Matchena sent you 1,250 EGP',

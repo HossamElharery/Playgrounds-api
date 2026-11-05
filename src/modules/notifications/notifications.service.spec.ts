@@ -207,8 +207,8 @@ describe('Legacy cash notice amounts', () => {
     notification.findMany.mockResolvedValue([legacy]);
     cashShift.findMany.mockResolvedValue([{ id: 's1', venueId: 'v1', difference: -12550, currency: 'AED' }]);
     const result = await service.list('owner');
-    expect(result.items[0].titleAr).toBe('مارينا: الخزنة ناقصة 125.5 د.إ');
-    expect(result.items[0].titleEn).toBe('Marina: drawer short by 125.5 AED');
+    expect(result.items[0].titleAr).toBe('مارينا: الخزنة ناقصة 125.50 د.إ');
+    expect(result.items[0].titleEn).toBe('Marina: drawer short by 125.50 AED');
     expect(legacy.titleAr).toContain('12550 EGP');
     expect(notification.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'owner' } }));
   });
@@ -230,7 +230,7 @@ describe('Legacy cash notice amounts', () => {
   it('also corrects old handover notices and skips all cash queries for ordinary notices', async () => {
     notification.findMany.mockResolvedValue([{ ...legacy, payload: { venueId: 'v1', handoverId: 'h1' } }]);
     cashHandover.findMany.mockResolvedValue([{ id: 'h1', venueId: 'v1', difference: 12550, currency: 'AED' }]);
-    expect((await service.list('owner')).items[0].titleEn).toContain('125.5 AED');
+    expect((await service.list('owner')).items[0].titleEn).toContain('125.50 AED');
     expect(cashShift.findMany).not.toHaveBeenCalled();
     notification.findMany.mockResolvedValue([{ ...legacy, payload: null }]);
     cashHandover.findMany.mockClear();

@@ -638,7 +638,7 @@ export class CaptainService {
       status: r.status,
     }));
     const next = bookings[0];
-    const when = new Intl.DateTimeFormat(b.lang === 'ar' ? 'ar-EG' : 'en-GB', {
+    const when = new Intl.DateTimeFormat(b.lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-GB', {
       weekday: 'long',
       day: 'numeric',
       month: 'long',

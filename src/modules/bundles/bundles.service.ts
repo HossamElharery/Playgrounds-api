@@ -155,6 +155,7 @@ export class BundlesService {
               userId,
               amount: totalAmount,
               reason: 'bundle',
+              currency: priced.currency,
             });
           }
           const bookings: Booking[] = [];

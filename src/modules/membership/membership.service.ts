@@ -80,6 +80,7 @@ export class MembershipService {
         userId,
         amount: plan.priceAmount,
         reason: 'membership',
+        currency: plan.priceCurrency,
       });
       return tx.userMembership.upsert({
         where: { userId },

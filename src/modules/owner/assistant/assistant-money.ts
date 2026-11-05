@@ -1,14 +1,8 @@
 import { bi, type AssistantIssue, type Bi } from './assistant.types';
-import { currencyLabel } from '../../../common/money/currency-label';
+import { moneyText } from '../../../common/money/money-text';
 
 export function fmtMoney(minor: number, currency: string): Bi {
-  const major = new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 2,
-  }).format(minor / 100);
-  return bi(
-    `${major} ${currencyLabel(currency, 'ar')}`,
-    `${major} ${currencyLabel(currency, 'en')}`,
-  );
+  return bi(moneyText(minor, currency, 'ar'), moneyText(minor, currency, 'en'));
 }
 
 export function toMinor(major: number): number {

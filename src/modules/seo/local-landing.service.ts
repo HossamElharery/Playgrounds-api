@@ -1,3 +1,4 @@
+import { isoMoneyScale, rescaleMoney } from '../../common/money/money-scale';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { Prisma } from '@prisma/client';
@@ -163,7 +164,8 @@ export class LocalLandingService {
       for (const court of v.courts) {
         const perHour = [
           ...court.pricingRules.map((r) => Math.round((r.priceAmount * 60) / Math.max(court.slotDurationMins || 60, 15))),
-          ...(court.gamingHourlyRateMinor ? [court.gamingHourlyRateMinor] : []),
+          // Gaming rates use the currency's own minor unit; booking prices use 1/100. Bring them to one scale before comparing.
+          ...(court.gamingHourlyRateMinor ? [Math.round(rescaleMoney(court.gamingHourlyRateMinor, isoMoneyScale(v.currency), 100))] : []),
         ].filter((p) => p > 0);
         if (!perHour.length) continue;
         const min = Math.min(...perHour);

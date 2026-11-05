@@ -173,9 +173,9 @@ describe('CashService.closeShift', () => {
     await off.service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 400 });
     expect(off.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'owner-1', titleAr: expect.stringContaining('ناقصة') }));
     const sent = off.notifications.create.mock.calls[0][0];
-    expect(sent.titleAr).toContain('0.5 ج.م');
+    expect(sent.titleAr).toContain('0.50 ج.م');
     expect(sent.titleAr).not.toContain('EGP');
-    expect(sent.titleEn).toContain('0.5 EGP');
+    expect(sent.titleEn).toContain('0.50 EGP');
 
     const balanced = setup();
     await balanced.service.closeShift(staff, { venueId: 'v1', scope: 'mine', countedCash: 450 });

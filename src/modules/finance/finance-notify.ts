@@ -1,11 +1,11 @@
 import type { NotificationsService } from '../notifications/notifications.service';
-import { currencyLabel } from '../../common/money/currency-label';
+import { moneyText } from '../../common/money/money-text';
 
 export const MATCHENA_ACCOUNT_LINK = '/owner/earnings?section=matchena-account';
 
+/** `amount` is in the ledger's minor unit (1/100 of the major unit), exactly as stored and as the admin DTOs carry it. */
 export function formatMoney(amount: number, currency: string, locale: 'en' | 'ar' = 'en'): string {
-  const formatted = new Intl.NumberFormat(locale === 'ar' ? 'ar-EG' : 'en-EG').format(amount);
-  return `${formatted} ${currencyLabel(currency, locale)}`;
+  return moneyText(amount, currency, locale);
 }
 
 export async function notifyFinance(

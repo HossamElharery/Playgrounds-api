@@ -150,8 +150,10 @@ export class GamingSessionsService {
       const venue=await tx.venue.findUniqueOrThrow({where:{id:dto.venueId}});
       await tx.court.update({where:{id:unit.id},data:{gamingHourlyRateMinor:dto.hourlyRateMinor,...(unit.sport.activityKind==='gaming-station'?{gamingConfig:next as Prisma.InputJsonValue}: {})}});
       const baseAmount=Math.round(rescaleMoney(dto.hourlyRateMinor,isoMoneyScale(venue.currency),100));
-      const updated=await tx.pricingRule.updateMany({where:{courtId:unit.id,label:'base'},data:{priceAmount:baseAmount}});
-      if(!updated.count)await tx.pricingRule.create({data:{courtId:unit.id,label:'base',daysOfWeek:[],startTime:'00:00',endTime:'24:00',priceAmount:baseAmount,currency:venue.currency}});
+      await tx.pricingRule.updateMany({where:{courtId:unit.id,label:'base'},data:{priceAmount:baseAmount,currency:venue.currency}});
+      // A partial "base" rule (e.g. 09:00–24:00 from onboarding) must not stand in for the everyday price: keep a full-day floor so no hour is left unpriced.
+      const hasFullDay=await tx.pricingRule.findFirst({where:{courtId:unit.id,label:'base',startTime:'00:00',endTime:'24:00',daysOfWeek:{isEmpty:true}}});
+      if(!hasFullDay)await tx.pricingRule.create({data:{courtId:unit.id,label:'base',daysOfWeek:[],startTime:'00:00',endTime:'24:00',priceAmount:baseAmount,currency:venue.currency,priority:-1}});
       const rules=await tx.pricingRule.findMany({where:{courtId:unit.id}});
       if(rules.length===1&&rules[0].label==='base'&&rules[0].startTime==='00:00'&&rules[0].endTime==='24:00'&&rules[0].daysOfWeek.length===0)await tx.court.update({where:{id:unit.id},data:{gamingHourlyRateMinor:dto.hourlyRateMinor}});
       await this.commands.event(tx,dto.venueId,unit.id,null,'unit.tariffs_changed');

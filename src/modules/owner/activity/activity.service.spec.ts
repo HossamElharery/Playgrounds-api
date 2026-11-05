@@ -57,8 +57,8 @@ describe('describeActivity — a decision in a sentence', () => {
 
   it('an expense category is a word, never the raw key', () => {
     const t = say('owner.expense.recorded', { category: 'electricity', amount: 5_050, currency: 'EGP' }, 'EGP');
-    expect(t.ar).toBe('أحمد سجّل مصروف كهرباء 50.5 ج.م');
-    expect(t.en).toBe('Ahmed recorded an expense electricity 50.5 EGP');
+    expect(t.ar).toBe('أحمد سجّل مصروف كهرباء 50.50 ج.م');
+    expect(t.en).toBe('Ahmed recorded an expense electricity 50.50 EGP');
     expect(say('owner.expense.recorded', { category: 'other', categoryLabel: 'تنظيف', amount: 1_000, currency: 'EGP' }, 'EGP').ar).toContain('تنظيف');
   });
 

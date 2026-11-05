@@ -1,9 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Inject, NotFoundException, Optional } from '@nestjs/common';
 import { PaymentMethod, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider.interface';
 import { WALLET_TOP_UP_METHODS } from './dto/top-up-wallet.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AdminAlertsService } from '../notifications/admin-alerts.service';
+import { moneyText } from '../../common/money/money-text';
 
 type WalletDb = Prisma.TransactionClient | PrismaService;
 
@@ -16,6 +18,7 @@ export class WalletService {
     private readonly prisma: PrismaService,
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly adminAlerts?: AdminAlertsService,
   ) {}
 
   async get(userId: string) {
@@ -88,9 +91,21 @@ export class WalletService {
       amount: number;
       reason: WalletDebitReason;
       bookingId?: string;
+      /** The currency of `amount`. A wallet is in its owner's country currency, so a charge in any other one is refused, never converted 1:1. */
+      currency?: string;
     },
   ): Promise<void> {
     if (params.amount <= 0) return;
+    if (params.currency) {
+      const owner = await db.user.findUnique({ where: { id: params.userId }, select: { country: { select: { currency: true } } } });
+      if (owner && owner.country.currency !== params.currency) {
+        throw new BadRequestException({
+          message: 'WALLET_CURRENCY_MISMATCH',
+          code: 'WALLET_CURRENCY_MISMATCH',
+          result: { walletCurrency: owner.country.currency, chargeCurrency: params.currency },
+        });
+      }
+    }
 
     const spent = await db.user.updateMany({
       where: { id: params.userId, walletBalance: { gte: params.amount } },
@@ -154,11 +169,31 @@ export class WalletService {
   }
 
   async requestWithdrawal(userId: string, amount: number, destination: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const request = await this.prisma.$transaction(async (tx) => {
       await this.debit(tx, { userId, amount, reason: 'withdrawal' });
       return tx.walletWithdrawalRequest.create({
         data: { userId, amount, destination },
       });
+    });
+    void this.notifyAdminsOfWithdrawal(request.id, userId, amount, destination);
+    return request;
+  }
+
+  private async notifyAdminsOfWithdrawal(requestId: string, userId: string, amount: number, destination: string) {
+    if (!this.adminAlerts) return;
+    const user = await this.prisma.user
+      .findUnique({ where: { id: userId }, select: { name: true, country: { select: { currency: true } } } })
+      .catch(() => null);
+    const currency = user?.country?.currency ?? 'EGP';
+    const who = user?.name || 'A user';
+    await this.adminAlerts.alert({
+      dedupKey: `wallet-withdrawal:${requestId}`,
+      titleEn: 'New withdrawal request',
+      titleAr: 'طلب سحب جديد',
+      bodyEn: `${who} asked to withdraw ${moneyText(amount, currency, 'en')} to ${destination}.`,
+      bodyAr: `${who} طلب سحب ${moneyText(amount, currency, 'ar')} إلى ${destination}.`,
+      deepLink: '/admin/finance',
+      payload: { kind: 'wallet_withdrawal', requestId },
     });
   }
 

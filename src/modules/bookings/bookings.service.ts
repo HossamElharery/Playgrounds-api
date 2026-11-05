@@ -914,6 +914,7 @@ export class BookingsService {
             amount: chargeAmount,
             reason: 'booking',
             bookingId,
+            currency: booking.currency,
           });
         }
 
@@ -991,6 +992,7 @@ export class BookingsService {
         amount: shareRow.amount,
         reason: 'booking',
         bookingId: shareRow.bookingId,
+        currency: booking.currency,
       });
       const updated = await tx.bookingSplitShare.update({
         where: { id: shareRow.id },

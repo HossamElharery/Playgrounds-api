@@ -15,6 +15,8 @@ import { PartnerApplicationStatus, Prisma, VenueStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AdminAlertsService } from '../notifications/admin-alerts.service';
+import { RealtimeGatewayEmitter } from '../realtime/realtime-emitter.interface';
 import { VenuesService } from '../venues/venues.service';
 import { VenueTextService } from '../venues/venue-text.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -62,6 +64,8 @@ export class PartnersService {
     private readonly subscriptions: SubscriptionsService,
     @Optional() private readonly venueTexts?: VenueTextService,
     @Optional() private readonly geo?: GeoService,
+    @Optional() private readonly adminAlerts?: AdminAlertsService,
+    @Optional() private readonly emitter?: RealtimeGatewayEmitter,
   ) {}
 
   private async localizePublicText(payload: PartnerApplicationPayload) {
@@ -305,7 +309,39 @@ export class PartnersService {
       },
       include: { events: { orderBy: { createdAt: 'desc' }, take: 20 } },
     });
+    void this.notifyAdminsOfSubmission(updated, app.status === 'changes_requested');
+    this.pingOwner(ownerId, id);
     return this.toOwnerDto(updated);
+  }
+
+  private async notifyAdminsOfSubmission(
+    app: { id: string; publicNameEn: string | null; publicNameAr: string | null; contactPhone: string | null; version: number },
+    resubmitted: boolean,
+  ) {
+    const nameEn = app.publicNameEn || 'Untitled venue';
+    const nameAr = app.publicNameAr || 'منشأة بدون اسم';
+    await this.adminAlerts?.alert({
+      dedupKey: `partner-submit:${app.id}:${app.version}`,
+      titleEn: `${resubmitted ? 'Venue resubmitted' : 'New venue application'}: ${nameEn}`,
+      titleAr: `${resubmitted ? 'منشأة أُعيد إرسالها' : 'طلب منشأة جديد'}: ${nameAr}`,
+      bodyEn: `A venue owner submitted "${nameEn}" for review${app.contactPhone ? ` (phone ${app.contactPhone})` : ''}. Open the queue to approve it.`,
+      bodyAr: `صاحب منشأة أرسل "${nameAr}" للمراجعة${app.contactPhone ? ` (هاتف ${app.contactPhone})` : ''}. افتح قائمة الطلبات للموافقة.`,
+      deepLink: '/admin/venues',
+      payload: { kind: 'partner_application', applicationId: app.id },
+    });
+  }
+
+  /** Tells the owner's open tabs that their application / venues changed, so screens refresh without a reload. */
+  private pingOwner(ownerId: string, applicationId: string, venueId?: string | null) {
+    try {
+      this.emitter?.emitToUser(ownerId, {
+        type: 'venue.updated',
+        applicationId,
+        ...(venueId ? { venueId } : {}),
+      });
+    } catch {
+      /* best effort */
+    }
   }
 
   async adminList(
@@ -716,6 +752,7 @@ export class PartnersService {
       dto.note,
       updated.venueId,
     );
+    this.pingOwner(app.ownerId, id, updated.venueId);
     return this.toAdminDto(updated);
   }
 
