@@ -29,6 +29,8 @@ import { VenueAiCreditModule } from '../ai/credit/venue-ai-credit.module';
 import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OwnerBookingsService } from './owner-bookings.service';
+import { BookingMoveService } from './booking-move/booking-move.service';
+import { BookingMoveController } from './booking-move/booking-move.controller';
 import { OwnerSummaryService } from './owner-summary.service';
 import { FixedBookingsService } from './fixed/fixed-bookings.service';
 import {
@@ -83,6 +85,7 @@ import { ActivityService } from './activity/activity.service';
     OwnerAssistantPreferencesService,
     AssistantRemindersService,
     OwnerBookingsService,
+    BookingMoveService,
     OwnerSummaryService,
     InsightsService,
     FixedBookingsService,
@@ -104,6 +107,7 @@ import { ActivityService } from './activity/activity.service';
     GamingOperationsController,
     GamingSetupController,
     OwnerController,
+    BookingMoveController,
     PlatformRequestsController,
     VenueHealthController,
   ],

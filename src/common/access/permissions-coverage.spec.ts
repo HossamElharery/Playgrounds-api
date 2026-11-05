@@ -12,6 +12,7 @@ import {
 } from '../decorators/permissions.decorator';
 import { PERMISSION_CATALOG, PERMISSION_KEYS, PERMISSION_PRESETS, normalizePermissions } from './permissions';
 import { OwnerController } from '../../modules/owner/owner.controller';
+import { BookingMoveController } from '../../modules/owner/booking-move/booking-move.controller';
 import { VenuesController } from '../../modules/venues/venues.controller';
 import { BookingsController } from '../../modules/bookings/bookings.controller';
 import { RewardsController } from '../../modules/rewards/rewards.controller';
@@ -23,6 +24,7 @@ import { CallsController } from '../../modules/calls/calls.controller';
 
 const CONTROLLERS = [GamingSetupController,GamingOperationsController,GamingLayoutController,GamingDevicesController,
   OwnerController,
+  BookingMoveController,
   VenuesController,
   BookingsController,
   RewardsController,

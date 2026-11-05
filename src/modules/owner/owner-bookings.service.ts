@@ -502,6 +502,14 @@ export class OwnerBookingsService {
       slotEnd.getTime() !== booking.slotEnd.getTime() ||
       courtId !== booking.courtId;
     if (moved) assertSlotNotInPast(slotStart);
+    // Attended or closed bookings may still be extended or corrected, but never moved to another place or start:
+    // their money, attendance and reports already belong to the time they happened.
+    if (
+      (courtId !== booking.courtId || slotStart.getTime() !== booking.slotStart.getTime()) &&
+      (booking.checkedInAt || booking.status === 'completed' || booking.status === 'no_show')
+    ) {
+      throw new ApiException(HttpStatus.CONFLICT, 'BOOKING_NOT_MOVABLE_STATUS', 'A booking that was attended or closed cannot be moved');
+    }
     if (dto.courtId) {
       const court = await this.prisma.court.findUnique({ where: { id: dto.courtId } });
       if (!court || court.venueId !== booking.venueId) {
