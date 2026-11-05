@@ -79,6 +79,8 @@ export class BillingSettingsDto extends GamingCommandDto {
   @IsIn(['exact-time','ceil-started-minute','step-minutes']) mode!: string;
   @IsInt() @Min(0) @Max(720) minimumMinutes!: number;
   @IsInt() @Min(1) @Max(720) stepMinutes!: number;
+  /** What happens when a timed session passes its planned end. */
+  @IsOptional() @IsIn(['stop','continue','auto-end']) overrun?: 'stop' | 'continue' | 'auto-end';
 }
 
 export class GamingCapabilitiesDto extends GamingCommandDto {

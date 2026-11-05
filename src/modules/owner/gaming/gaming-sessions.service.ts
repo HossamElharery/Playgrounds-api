@@ -14,15 +14,20 @@ import { ChangePlayModeDto, UnitTariffDto, BillingSettingsDto, CorrectSessionEnd
 import { DeviceHubService } from './devices/device-hub.service';
 import { ConsoleHubService } from './devices/console-hub.service';
 import { deviceView } from './devices/gaming-devices.service';
-import { allocatePayment, calculateSessionCharge, calculateUsageCharge, SessionBillingPolicy } from './session-billing';
+import { allocatePayment, calculateSessionCharge, calculateUsageCharge, capsAtPlannedEnd, DEFAULT_OVERRUN, SessionBillingPolicy } from './session-billing';
 const exact: SessionBillingPolicy = { version: 1, mode: 'exact-time' };
+/** The venue's policy as a session snapshots it: what happens at the planned end defaults to "stop the bill". */
+const venuePolicy = (raw: unknown): SessionBillingPolicy => {
+  const p = (raw ?? exact) as SessionBillingPolicy;
+  return { ...p, overrun: p.overrun ?? DEFAULT_OVERRUN };
+};
 @Injectable()
 export class GamingSessionsService {
   constructor(private readonly commands: GamingCommandService, private readonly ledger: LedgerService, @Optional() private readonly hub?: DeviceHubService, @Optional() private readonly consoleHub?: ConsoleHubService) {}
   private get prisma() { return this.commands.prisma; }
   async capabilities(user: AuthenticatedUser, venueId: string) {
     const venue = await this.commands.access(this.prisma,user,venueId,'bookings.view',false);
-    return { venueId, approved: venue.status==='active' && !!venue.approvedAt, sessionsEnabled: venue.gamingSessionsEnabled, productsEnabled: venue.gamingProductsEnabled, receiptsEnabled: venue.gamingReceiptsEnabled, billingPolicy: venue.gamingBillingPolicy ?? exact, serverNow: new Date().toISOString() };
+    return { venueId, approved: venue.status==='active' && !!venue.approvedAt, sessionsEnabled: venue.gamingSessionsEnabled, productsEnabled: venue.gamingProductsEnabled, receiptsEnabled: venue.gamingReceiptsEnabled, billingPolicy: venuePolicy(venue.gamingBillingPolicy), serverNow: new Date().toISOString() };
   }
   configure(user: AuthenticatedUser, dto: GamingCapabilitiesDto) {
     return this.commands.command(user,'venue.manage','capabilities',dto, async tx => {
@@ -32,7 +37,8 @@ export class GamingSessionsService {
   }
   billing(user: AuthenticatedUser, dto: BillingSettingsDto) {
     return this.commands.command(user,'pricing.manage','billing-policy',dto, async tx => {
-      const policy = {version:1,mode:dto.mode,minimumMinutes:dto.minimumMinutes,stepMinutes:dto.stepMinutes};
+      const current = (await tx.venue.findUniqueOrThrow({where:{id:dto.venueId},select:{gamingBillingPolicy:true}})).gamingBillingPolicy as SessionBillingPolicy | null;
+      const policy = {version:1,mode:dto.mode,minimumMinutes:dto.minimumMinutes,stepMinutes:dto.stepMinutes,overrun:dto.overrun ?? current?.overrun ?? DEFAULT_OVERRUN};
       await tx.venue.update({where:{id:dto.venueId},data:{gamingBillingPolicy:policy}}); return policy;
     });
   }
@@ -100,7 +106,7 @@ export class GamingSessionsService {
       if (dto.customerId || dto.guestName || dto.guestPhone) await assertStaffPermission(tx as never,user,'customers.view');
       const order = dto.orderId ? await this.commands.versionOrder(tx,dto.venueId,dto.orderId,dto.orderVersion ?? 0) : await tx.gamingOrder.create({data:{venueId:dto.venueId,currency:venue.currency,moneyScale:isoMoneyScale(venue.currency),createdById:user.id,customerId:dto.customerId,guestName:dto.guestName?.trim()||null,guestPhone:dto.guestPhone?guestPhoneForStorage(dto.guestPhone,venue.countryCode):null}});
       if (dto.orderId) await assertStaffPermission(tx as never,user,'orders.manage');
-      const session = await tx.usageSession.create({data:{venueId:dto.venueId,unitId:unit.id,orderId:order.id,bookingId:booking?.id,startedAt,expectedEnd,policy:venue.gamingBillingPolicy ?? exact as unknown as Prisma.InputJsonValue,createdById:user.id}});
+      const session = await tx.usageSession.create({data:{venueId:dto.venueId,unitId:unit.id,orderId:order.id,bookingId:booking?.id,startedAt,expectedEnd,policy:venuePolicy(venue.gamingBillingPolicy) as unknown as Prisma.InputJsonValue,createdById:user.id}});
       const snap = {playMode:dto.playMode??'standard',controllers:dto.playMode==='multi'?4:2,ruleId:rule.id,label:rule.label,hourlyRateMinor:rule.priceAmount,currency:rule.currency,bookingTotalMinor:booking?.membershipCovered ? 0 : booking?rescaleMoney(booking.totalAmount,100,order.moneyScale):null,coveredUntil:booking?.slotEnd.toISOString() ?? null,membershipCovered:booking?.membershipCovered ?? false};
       await tx.usageSegment.create({data:{sessionId:session.id,unitId:unit.id,startedAt,hourlyRateMinor:rule.priceAmount,currency:venue.currency,rateSnapshot:snap}});
       const line = await tx.gamingOrderLine.create({data:{orderId:order.id,kind:booking?'booking-time':'time',sourceId:session.id,nameAr:unit.name,nameEn:unit.name,quantity:1,unitPriceMinor:rule.priceAmount,amountMinor:booking && !booking.membershipCovered ? rescaleMoney(booking.totalAmount,100,order.moneyScale) : 0,snapshot:{policy:session.policy,rate:snap,startedAt:startedAt.toISOString()}}});
@@ -194,7 +200,11 @@ export class GamingSessionsService {
       const s=await this.session(tx,dto.venueId,id,dto.expectedVersion);
       if(!s.expectedEnd) throw new BadRequestException({code:'OPEN_SESSION_CANNOT_EXTEND'});
       const expectedEnd=new Date(Math.max(s.expectedEnd.getTime(),now.getTime())+dto.additionalMinutes*60000);
-      const result=await tx.usageSession.update({where:{id},data:{expectedEnd,version:{increment:1}}});
+      // When the bill stopped at the planned end, the wait for this extension is not billed: it is remembered as paused time.
+      const policy=s.policy as unknown as SessionBillingPolicy;
+      const waited=capsAtPlannedEnd(s)?Math.max(0,now.getTime()-s.expectedEnd.getTime()):0;
+      const nextPolicy=waited>0?{...policy,pausedMs:(policy.pausedMs??0)+waited}:policy;
+      const result=await tx.usageSession.update({where:{id},data:{expectedEnd,policy:nextPolicy as unknown as Prisma.InputJsonValue,version:{increment:1}}});
       await this.commands.event(tx,dto.venueId,id,result.version,'session.changed'); return {...result,serverNow:now.toISOString()};
     });
   }
@@ -221,6 +231,32 @@ export class GamingSessionsService {
       await tx.gamingOrderLine.updateMany({where:{orderId:s.orderId,sourceId:id},data:{amountMinor:0,snapshot:{voidReason:dto.reason}}});
       await this.refreshOrder(tx,s.orderId,now); await this.commands.event(tx,dto.venueId,id,result.version,'session.ended');return result;
     });
+  }
+  /**
+   * Closes a walk-in timed session at its planned end when the venue chose "end automatically". Runs from a job, so the
+   * session is re-read under the venue lock: a person pressing end at the same moment simply wins.
+   */
+  async autoEnd(id:string):Promise<{venueId:string;ownerId:string;nameAr:string;nameEn:string;unitName:string}|null>{
+    const done=await this.prisma.$transaction(async tx=>{
+      const first=await tx.usageSession.findUnique({where:{id},select:{venueId:true}});
+      if(!first)return null;
+      await tx.$queryRaw`SELECT id FROM "Venue" WHERE id=${first.venueId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${first.venueId},91005))::text`;
+      const s=await tx.usageSession.findUnique({where:{id},include:{segments:{orderBy:{startedAt:'asc'}},venue:{select:{ownerId:true,nameAr:true,nameEn:true}},unit:{select:{name:true}}}});
+      const now=new Date();
+      if(!s||s.state!=='running'||s.bookingId||!s.expectedEnd||s.expectedEnd>now||(s.policy as unknown as SessionBillingPolicy).overrun!=='auto-end')return null;
+      const last=s.segments[s.segments.length-1];
+      const endedAt=last&&s.expectedEnd>last.startedAt?s.expectedEnd:now;
+      await tx.usageSegment.updateMany({where:{sessionId:id,endedAt:null},data:{endedAt}});
+      const ended=await tx.usageSession.update({where:{id},data:{state:'ended',endedAt,version:{increment:1}}});
+      await this.refreshOrder(tx,s.orderId,now);
+      await this.commands.event(tx,s.venueId,id,ended.version,'session.ended');
+      await tx.auditLogEntry.create({data:{actorUserId:s.venue.ownerId,action:'owner.gaming.session.auto-ended',targetType:'session',targetId:id,metadata:{venueId:s.venueId,plannedEnd:s.expectedEnd.toISOString()}}});
+      return {venueId:s.venueId,ownerId:s.venue.ownerId,nameAr:s.venue.nameAr,nameEn:s.venue.nameEn,unitName:s.unit.name};
+    },{maxWait:10000,timeout:20000});
+    // after the commit: screens and consoles follow the session
+    if(done)this.commands.committed(done.venueId,'session.auto-end');
+    return done;
   }
   charge(s:UsageSession & {segments:UsageSegment[]},now:Date){return calculateUsageCharge(s,now);}
   async refreshOrder(tx:Prisma.TransactionClient,orderId:string,now:Date) {

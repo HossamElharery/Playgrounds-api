@@ -16,6 +16,8 @@ export class GamingCommandService {
   constructor(readonly prisma: PrismaService) {}
   /** Called after every committed gaming command (smart plugs follow session changes from here). */
   onCommitted(listener: (venueId: string, operation: string) => void) { this.committedListeners.push(listener); }
+  /** For work done outside `command()` (jobs) that still must wake whatever follows gaming changes. */
+  committed(venueId: string, operation: string) { for (const listener of this.committedListeners) { try { listener(venueId, operation); } catch { /* listeners must not fail the work */ } } }
   async access(db: Prisma.TransactionClient | PrismaService, user: AuthenticatedUser, venueId: string, permission: PermissionKey, write: boolean, allowSports=false) {
     const venue = await assertVenueAccess(db as PrismaService, user, venueId, { write });
     await assertStaffPermission(db as PrismaService, user, permission);

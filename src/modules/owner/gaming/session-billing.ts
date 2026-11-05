@@ -10,6 +10,23 @@ export interface SessionBillingPolicy {
   mode: 'exact-time' | 'ceil-started-minute' | 'step-minutes';
   stepMinutes?: number;
   minimumMinutes?: number;
+  /**
+   * What happens when a timed session passes its planned end. `stop`: the bill stops at the planned end (the session stays open
+   * until someone collects or extends). `continue`: the clock keeps counting (the original behavior). `auto-end`: the session is
+   * closed at its planned end. Sessions without this field behave as `continue`. Booking sessions are never capped.
+   */
+  overrun?: 'stop' | 'continue' | 'auto-end';
+  /** Time the session spent past its planned end before it was extended; never billed (`stop` only). */
+  pausedMs?: number;
+}
+
+export const OVERRUN_MODES = ['stop', 'continue', 'auto-end'] as const;
+export const DEFAULT_OVERRUN = 'stop' as const;
+
+/** Does the planned end cap what this session is billed? */
+export function capsAtPlannedEnd(s: { policy: unknown; expectedEnd: Date | null; bookingId?: string | null }): boolean {
+  const mode = (s.policy as SessionBillingPolicy | null)?.overrun;
+  return !!s.expectedEnd && !s.bookingId && (mode === 'stop' || mode === 'auto-end');
 }
 const HOUR_MS = 3_600_000n;
 const MAX_AMOUNT = 2_147_483_647n;
@@ -73,5 +90,13 @@ export function calculateUsageCharge(s:UsageSession & {segments:UsageSegment[]},
       const segments=s.segments.map(x=>({startedAtMs:Math.max(x.startedAt.getTime(),covered),endedAtMs:Math.max((x.endedAt??now).getTime(),covered),hourlyRateMinor:x.hourlyRateMinor,currency:x.currency}));
       return calculateSessionCharge(segments,{...(s.policy as unknown as SessionBillingPolicy),minimumMinutes:0}).amountMinor;
     }
-    return calculateSessionCharge(s.segments.map(x=>({startedAtMs:x.startedAt.getTime(),endedAtMs:(x.endedAt??now).getTime(),hourlyRateMinor:x.hourlyRateMinor,currency:x.currency})),s.policy as unknown as SessionBillingPolicy).amountMinor;
+    const policy=s.policy as unknown as SessionBillingPolicy;
+    const raw=s.segments.map(x=>({startedAtMs:x.startedAt.getTime(),endedAtMs:(x.endedAt??now).getTime(),hourlyRateMinor:x.hourlyRateMinor,currency:x.currency}));
+    if(!capsAtPlannedEnd(s))return calculateSessionCharge(raw,policy).amountMinor;
+    // The bill stops at the planned end; time spent waiting for an extension is not billed either.
+    const cap=s.expectedEnd!.getTime();
+    const clipped=raw.map(x=>({...x,startedAtMs:Math.min(x.startedAtMs,cap),endedAtMs:Math.min(x.endedAtMs,cap)}));
+    let pause=Math.max(0,Math.floor(policy.pausedMs??0));
+    for(let i=clipped.length-1;i>=0&&pause>0;i--){const room=clipped[i].endedAtMs-clipped[i].startedAtMs;const take=Math.min(room,pause);clipped[i].endedAtMs-=take;pause-=take;for(let j=i+1;j<clipped.length;j++){clipped[j].startedAtMs-=take;clipped[j].endedAtMs-=take;}}
+    return calculateSessionCharge(clipped,policy).amountMinor;
 }
