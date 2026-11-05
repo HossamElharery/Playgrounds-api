@@ -25,7 +25,8 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   autoOn: true,
   autoOff: true,
   cutAtEnd: true,
-  graceMinutes: 2,
+  // The screen goes off when the time ends. A grace period is for venues that want staff to have a moment to extend or collect.
+  graceMinutes: 0,
   guard: true,
   invert: false,
 };

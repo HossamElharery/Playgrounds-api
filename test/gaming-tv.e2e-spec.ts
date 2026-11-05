@@ -117,7 +117,7 @@ describe('smart TVs follow gaming sessions through a Matchena Hub (PostgreSQL + 
     const on=sim.calledWith('tv.on').at(-1)!.args;
     expect(on.tvId).toBe(SAM);
     const first=Date.parse(String(on.offAt));
-    expect(first-Date.now()).toBeGreaterThan(31*60_000);expect(first-Date.now()).toBeLessThanOrEqual(32*60_000+5000);
+    expect(first-Date.now()).toBeGreaterThan(29*60_000);expect(first-Date.now()).toBeLessThanOrEqual(30*60_000+5000);
     const extended=await sessions.extend(user,s.id,{...key(),expectedVersion:s.version,additionalMinutes:30});
     await until(()=>Date.parse(String(sim.calledWith('tv.on').at(-1)!.args.offAt))>first+25*60_000,'extended time');
     await sessions.end(user,s.id,{...key(),expectedVersion:extended.version});

@@ -135,7 +135,7 @@ describe('consoles follow gaming sessions through a Matchena Hub (PostgreSQL + r
     const wake=sim.calledWith('wake').at(-1)!.args;
     expect(wake.consoleId).toBe('PS5AAAA1');
     const first=Date.parse(String(wake.standbyAt));
-    expect(first-Date.now()).toBeGreaterThan(31*60_000);expect(first-Date.now()).toBeLessThanOrEqual(32*60_000+5000);
+    expect(first-Date.now()).toBeGreaterThan(29*60_000);expect(first-Date.now()).toBeLessThanOrEqual(30*60_000+5000);
     const extended=await sessions.extend(user,s.id,{...key(),expectedVersion:s.version,additionalMinutes:30});
     await until(()=>Date.parse(String(sim.calledWith('wake').at(-1)!.args.standbyAt))>first+25*60_000,'extended time');
     await sessions.end(user,s.id,{...key(),expectedVersion:extended.version});

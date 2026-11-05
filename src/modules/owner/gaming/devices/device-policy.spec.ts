@@ -19,14 +19,25 @@ describe('device policy', () => {
     ).toEqual({ ...DEFAULT_DEVICE_SETTINGS, invert: true });
   });
 
-  it('timed session: on with a cut-off timer that includes the grace', () => {
+  it('timed session: on, and the screen goes off exactly when the time ends', () => {
     const intent = deviceIntent(s(), { expectedEnd: at(30) }, null, now);
     expect(intent).toMatchObject({
       screenOn: true,
       reason: 'session',
-      cutAt: at(32),
+      cutAt: at(30),
     });
     expect(commandFor(intent, s(), null, false, now)).toEqual({
+      send: true,
+      on: true,
+      toggleAfter: 30 * 60,
+    });
+  });
+
+  it('a venue that chose a grace period gets a cut-off timer that includes it', () => {
+    const grace = s({ graceMinutes: 2 });
+    const intent = deviceIntent(grace, { expectedEnd: at(30) }, null, now);
+    expect(intent).toMatchObject({ screenOn: true, cutAt: at(32) });
+    expect(commandFor(intent, grace, null, false, now)).toEqual({
       send: true,
       on: true,
       toggleAfter: 32 * 60,
@@ -44,13 +55,17 @@ describe('device policy', () => {
     ).toMatchObject({ screenOn: true, cutAt: null });
   });
 
-  it('expired session goes off once the grace has passed', () => {
+  it('expired session goes off as soon as the time (plus any grace) has passed', () => {
     expect(deviceIntent(s(), { expectedEnd: at(-1) }, null, now)).toMatchObject(
-      { screenOn: true },
-    );
-    expect(deviceIntent(s(), { expectedEnd: at(-3) }, null, now)).toMatchObject(
       { screenOn: false, reason: 'expired', enforce: true },
     );
+    const grace = s({ graceMinutes: 2 });
+    expect(
+      deviceIntent(grace, { expectedEnd: at(-1) }, null, now),
+    ).toMatchObject({ screenOn: true });
+    expect(
+      deviceIntent(grace, { expectedEnd: at(-3) }, null, now),
+    ).toMatchObject({ screenOn: false, reason: 'expired', enforce: true });
   });
 
   it('idle: guard enforces off, autoOff only sends once, neither leaves the plug alone', () => {
@@ -123,7 +138,7 @@ describe('device policy', () => {
     expect(commandFor(intent, s({ invert: true }), null, null, now)).toEqual({
       send: true,
       on: false,
-      toggleAfter: 12 * 60,
+      toggleAfter: 10 * 60,
     });
   });
 });

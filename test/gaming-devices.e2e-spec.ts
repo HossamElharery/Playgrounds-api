@@ -67,7 +67,7 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
     await devices.reconcileVenue(venueId);
     expect(sim.calledWith('Switch.Set')).toHaveLength(0);
     const overview=await devices.overview(user,venueId);
-    expect(overview.devices.find(d=>d.id===device.id)).toMatchObject({online:true,screenOn:true,unitId:null,settings:{enabled:true,guard:true,cutAtEnd:true,graceMinutes:2}});
+    expect(overview.devices.find(d=>d.id===device.id)).toMatchObject({online:true,screenOn:true,unitId:null,settings:{enabled:true,guard:true,cutAtEnd:true,graceMinutes:0}});
   });
 
   it('linking a plug makes power-loss safe and switches an idle screen off (guard)',async()=>{
@@ -83,9 +83,9 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
     const s=await sessions.start(user,{...key(),unitId:units[0],startMode:'now',durationMinutes:30});
     await until(()=>sim.output===true,'session on');
     expect(lastSet(sim)).toMatchObject({id:0,on:true});
-    expect(Number(lastSet(sim)!.toggle_after)).toBeGreaterThan(31*60);expect(Number(lastSet(sim)!.toggle_after)).toBeLessThanOrEqual(32*60);
+    expect(Number(lastSet(sim)!.toggle_after)).toBeGreaterThan(29*60);expect(Number(lastSet(sim)!.toggle_after)).toBeLessThanOrEqual(30*60);
     const extended=await sessions.extend(user,s.id,{...key(),expectedVersion:s.version,additionalMinutes:30});
-    await until(()=>Number(lastSet(sim)?.toggle_after)>61*60,'extended timer');
+    await until(()=>Number(lastSet(sim)?.toggle_after)>59*60,'extended timer');
     const before=sim.calledWith('Switch.Set').length;
     sim.press();sim.press(); // someone toggles it off and on again during the session: nothing to correct
     await new Promise(r=>setTimeout(r,300));await devices.reconcileVenue(venueId);
@@ -115,14 +115,18 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
     await until(()=>b.output===false,'B off');
   });
 
-  it('a session that runs out goes dark after the grace period even if nobody presses end',async()=>{
+  it('a session that runs out goes dark when its time ends (plus the grace a venue chose) even if nobody presses end',async()=>{
     const sim=sims[0];
+    const row=await db.gamingDevice.findFirstOrThrow({where:{externalId:sim.deviceId}});
+    expect((row.settings as {graceMinutes:number}).graceMinutes).toBe(0); // the default: off exactly when the time ends
+    await devices.update(user,row.id,{...key(),settings:{graceMinutes:2}});
     const s=await sessions.start(user,{...key(),unitId:units[0],startMode:'now',durationMinutes:10});
     await until(()=>sim.output===true,'on');
     await devices.reconcileVenue(venueId,undefined,new Date(Date.now()+11*60000));
     expect(sim.output).toBe(true); // inside the 2-minute grace
     await devices.reconcileVenue(venueId,undefined,new Date(Date.now()+13*60000));
     await until(()=>sim.output===false,'expired off');
+    await devices.update(user,row.id,{...key(),settings:{graceMinutes:0}});
     const s2=await db.usageSession.findUniqueOrThrow({where:{id:s.id}});
     await sessions.end(user,s.id,{...key(),expectedVersion:s2.version});
   });

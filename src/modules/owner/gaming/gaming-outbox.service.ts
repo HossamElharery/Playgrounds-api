@@ -26,9 +26,16 @@ export class GamingOutboxService {
    const now=new Date();const sessions=await this.prisma.usageSession.findMany({where:{state:'running',expectedEnd:{lte:new Date(now.getTime()+5*60000)}},include:{venue:{select:{ownerId:true,nameAr:true,nameEn:true}},unit:{select:{name:true}}},take:200});
    for(const s of sessions){
     const targetId=`${s.id}:${s.expectedEnd!.toISOString()}`;
-    if(await this.prisma.auditLogEntry.findFirst({where:{action:'owner.gaming.reminder',targetId}}))continue;
     const staff=await this.prisma.staffMember.findMany({where:{user:{roles:{has:'staff'},status:'active'},ownerId:s.venue.ownerId,venueIds:{has:s.venueId},permissions:{has:'sessions.end'}},select:{userId:true}});
-    try{for(const userId of new Set([s.venue.ownerId,...staff.map(x=>x.userId)]))await this.notifications.create({dedupKey:`gaming-reminder:${targetId}:${userId}`,userId,category:'system',titleAr:`${s.venue.nameAr}: قرب انتهاء الجلسة`,titleEn:`${s.venue.nameEn}: session due to end`,bodyAr:`راجع جلسة ${s.unit.name} وأنهِها أو مددها.`,bodyEn:`Review ${s.unit.name} and end or extend the session.`,deepLink:'/owner/gaming',payload:{venueId:s.venueId,sessionId:s.id,eventId:targetId}});
+    const people=new Set([s.venue.ownerId,...staff.map(x=>x.userId)]);
+    // Time is up: tell the team now (the screen is about to go off, and the clock keeps running until someone ends the session).
+    if(s.expectedEnd!<=now&&!(await this.prisma.auditLogEntry.findFirst({where:{action:'owner.gaming.timeup',targetId}}))){
+     try{for(const userId of people)await this.notifications.create({dedupKey:`gaming-timeup:${targetId}:${userId}`,userId,category:'system',titleAr:`${s.venue.nameAr}: انتهى وقت ${s.unit.name}`,titleEn:`${s.venue.nameEn}: time is up on ${s.unit.name}`,bodyAr:`حصّل المبلغ أو مدّد الجلسة. ما زال العدّاد يعمل إلى أن تُنهى الجلسة.`,bodyEn:`Collect payment or extend the session. The clock keeps running until the session is ended.`,deepLink:'/owner/gaming',payload:{venueId:s.venueId,sessionId:s.id,eventId:`${targetId}:timeup`}});
+     await this.prisma.auditLogEntry.create({data:{actorUserId:s.venue.ownerId,action:'owner.gaming.timeup',targetType:'session',targetId,metadata:{venueId:s.venueId}}});}catch{this.logger.warn(`Gaming time-up retry ${s.id}`);}
+    }
+    if(s.expectedEnd!<=now)continue; // already past: the time-up notice above says it
+    if(await this.prisma.auditLogEntry.findFirst({where:{action:'owner.gaming.reminder',targetId}}))continue;
+    try{for(const userId of people)await this.notifications.create({dedupKey:`gaming-reminder:${targetId}:${userId}`,userId,category:'system',titleAr:`${s.venue.nameAr}: قرب انتهاء الجلسة`,titleEn:`${s.venue.nameEn}: session due to end`,bodyAr:`راجع جلسة ${s.unit.name} وأنهِها أو مددها.`,bodyEn:`Review ${s.unit.name} and end or extend the session.`,deepLink:'/owner/gaming',payload:{venueId:s.venueId,sessionId:s.id,eventId:targetId}});
     await this.prisma.auditLogEntry.create({data:{actorUserId:s.venue.ownerId,action:'owner.gaming.reminder',targetType:'session',targetId,metadata:{venueId:s.venueId}}});
     }catch{this.logger.warn(`Gaming reminder retry ${s.id}`);}
    }
