@@ -1,4 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { publicVenueWhere } from '../../common/utils/venue-visibility.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -133,7 +134,13 @@ ${items}
   async sports(): Promise<string> {
     // The sport hub is noindex while no public venue offers the sport; listing it here would contradict that.
     const sports = await this.prisma.sportCategory.findMany({
-      where: { venueSports: { some: { venue: publicVenueWhere() } } },
+      // Sport hubs call the unscoped venue search, which defaults to Egypt and
+      // excludes listings without opening hours. Use that same searchable set.
+      where: { venueSports: { some: { venue: {
+        ...publicVenueWhere(),
+        countryCode: 'EG',
+        NOT: { weeklyHours: { equals: Prisma.DbNull } },
+      } } } },
       select: { slug: true, createdAt: true },
     });
     return this.urlset(

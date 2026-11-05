@@ -1,5 +1,6 @@
 import { LlmsService } from './llms.service';
 import { SitemapService } from './sitemap.service';
+import { Prisma } from '@prisma/client';
 
 const config = { get: () => 'https://matchena.com' } as never;
 const date = new Date('2026-09-20T00:00:00Z');
@@ -100,7 +101,10 @@ describe('SitemapService', () => {
 
   it('lists only sports that a public venue offers', async () => {
     expect(await svc.sports()).toContain('/ar/sports/padel');
-    expect(lastSportWhere).toEqual({ venueSports: { some: { venue: { status: 'active', ownerListingEnabled: true, adminHidden: false } } } });
+    expect(lastSportWhere).toEqual({ venueSports: { some: { venue: {
+      status: 'active', ownerListingEnabled: true, adminHidden: false,
+      countryCode: 'EG', NOT: { weeklyHours: { equals: Prisma.DbNull } },
+    } } } });
   });
 
   it('posts and hashtags use the frontend url shapes', async () => {
