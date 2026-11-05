@@ -269,8 +269,44 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     const latest = this.latest();
     if (!latest || !isOlderVersion(hub.hubVersion, latest.version))
       throw new BadRequestException({ code: 'UPDATE_NOT_AVAILABLE' });
-    await this.callHub(hubId, 'update', {}, 150_000);
-    return { ok: true };
+    return this.startUpdate(hubId);
+  }
+
+  /** How long the owner's request waits for the hub's first answer. The download itself can take much longer. */
+  updateAckMs = 25_000;
+
+  /**
+   * Starts the update and tells the owner how it is going. The hub downloads the new version, swaps it in
+   * and restarts, so its link drops right after it answers (or before the answer is read) and a slow
+   * connection takes minutes. None of that is a failure: the request must not hang or report an error
+   * for a restart, and the page follows the hub's own status until it is back on the new version.
+   */
+  private async startUpdate(
+    hubId: string,
+  ): Promise<{ ok: true; state: 'done' | 'working' | 'restarting' }> {
+    type Settled = { error: unknown } | { value: true };
+    const call = this.hubs
+      .call(hubId, 'update', {}, 150_000)
+      .then<Settled, Settled>(
+        () => ({ value: true }),
+        (error: unknown) => ({ error }),
+      );
+    let timer: NodeJS.Timeout | undefined;
+    const slow = new Promise<'working'>((resolve) => {
+      timer = setTimeout(() => resolve('working'), this.updateAckMs);
+    });
+    const first = await Promise.race([call, slow]);
+    if (timer) clearTimeout(timer);
+    if (first === 'working') return { ok: true, state: 'working' };
+    if ('value' in first) return { ok: true, state: 'done' };
+    const error = first.error;
+    if (error instanceof HubRpcError) {
+      if (error.droppedMidCall) return { ok: true, state: 'restarting' };
+      if (error.code === 'HUB_TIMEOUT') return { ok: true, state: 'working' };
+      // The hub's own scheduled update is already running: same outcome as ours.
+      if (/already running/i.test(error.message)) return { ok: true, state: 'working' };
+    }
+    return this.rethrowHubError(error);
   }
 
   /** Absolute path of a releasable file, or null when the name is not allowed or the file is not there. */
@@ -691,15 +727,19 @@ echo "Done. Matchena opens in your browser; keep this computer on and connected 
     try {
       return await this.hubs.call(hubId, op, args, timeoutMs);
     } catch (error) {
-      if (!(error instanceof HubRpcError)) throw error;
-      if (error.code === 'HUB_OFFLINE')
-        throw new ConflictException({ code: 'HUB_OFFLINE' });
-      if (error.code === 'HUB_TIMEOUT')
-        throw new GatewayTimeoutException({ code: 'HUB_TIMEOUT' });
-      throw new BadRequestException({
-        code: HUB_ERROR_CODES.has(error.code) ? error.code : 'HUB_ERROR',
-      });
+      return this.rethrowHubError(error);
     }
+  }
+
+  private rethrowHubError(error: unknown): never {
+    if (!(error instanceof HubRpcError)) throw error;
+    if (error.code === 'HUB_OFFLINE')
+      throw new ConflictException({ code: 'HUB_OFFLINE' });
+    if (error.code === 'HUB_TIMEOUT')
+      throw new GatewayTimeoutException({ code: 'HUB_TIMEOUT' });
+    throw new BadRequestException({
+      code: HUB_ERROR_CODES.has(error.code) ? error.code : 'HUB_ERROR',
+    });
   }
 
   private event(venueId: string, entityId: string) {

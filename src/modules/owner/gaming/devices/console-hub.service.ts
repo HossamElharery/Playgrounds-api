@@ -31,6 +31,8 @@ export class HubRpcError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    /** The hub was connected when the request went out and the link dropped before it answered. */
+    readonly droppedMidCall = false,
   ) {
     super(message);
   }
@@ -259,7 +261,7 @@ export class ConsoleHubService
       if (waiting.hubId !== link.hubId) continue;
       clearTimeout(waiting.timer);
       this.pending.delete(id);
-      waiting.reject(new HubRpcError('HUB_OFFLINE', 'hub disconnected'));
+      waiting.reject(new HubRpcError('HUB_OFFLINE', 'hub disconnected', true));
     }
     await this.serial(link.hubId, () =>
       this.handler?.closed(link.hubId, link.venueId),
