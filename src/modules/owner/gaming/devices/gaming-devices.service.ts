@@ -50,6 +50,7 @@ import {
 } from './shelly-protocol';
 import { publicSocketUrl } from './public-url';
 import {
+  DeviceGuardDto,
   DeviceOverrideDto,
   DeviceTestDto,
   UpdateGamingDeviceDto,
@@ -185,7 +186,8 @@ export class GamingDevicesService
   /** How long a console's own report is ignored after we woke it / rested it (tests shorten it). */
   settleMs = SETTLE_MS;
   /** How long a console may be on with no session before the owner is told (tests shorten it). */
-  unloggedGraceMs = UNLOGGED_GRACE_MS;
+  /** Test override. Normally each device uses its own Guard delay (one minute for the "no session" alert when Guard is off). */
+  unloggedGraceMs: number | null = null;
   private readonly awakeSince = new Map<string, number>();
   private readonly helloPending = new Set<string>();
 
@@ -395,6 +397,56 @@ export class GamingDevicesService
     for (const plug of freed)
       if (plug.provider === 'shelly') await this.restorePower(plug);
     return result;
+  }
+
+  /**
+   * Use one Guard choice (on/off and how fast it reacts) on every device of the venue at once, so an owner does not
+   * have to repeat it for each screen. Everything else about each device stays as it was.
+   */
+  async applyGuard(user: AuthenticatedUser, dto: DeviceGuardDto) {
+    return this.commands.command(
+      user,
+      'devices.manage',
+      `devices.guard:${dto.venueId}`,
+      dto,
+      async (tx) => {
+        const devices = await tx.gamingDevice.findMany({
+          where: { venueId: dto.venueId },
+        });
+        for (const device of devices) {
+          const settings = deviceSettings({
+            ...deviceSettings(device.settings),
+            guard: dto.guard,
+            guardDelayMinutes: dto.delayMinutes,
+          });
+          await tx.gamingDevice.update({
+            where: { id: device.id },
+            data: { settings: jsonValue(settings) },
+          });
+          await tx.gamingDeviceLog.create({
+            data: {
+              deviceId: device.id,
+              venueId: dto.venueId,
+              kind: 'settings',
+              actorId: user.id,
+              detail: jsonValue({ settings, bulk: 'guard' }),
+            },
+          });
+          await this.commands.event(
+            tx,
+            dto.venueId,
+            device.id,
+            null,
+            'device.changed',
+          );
+        }
+        return {
+          updated: devices.length,
+          guard: dto.guard,
+          delayMinutes: dto.delayMinutes,
+        };
+      },
+    );
   }
 
   /** Best effort: switch a released plug on so its screen works normally again. */
@@ -885,11 +937,16 @@ export class GamingDevicesService
       );
       // A console that is on with no session: give staff a minute to start one, then tell the owner
       // (and rest it again when guard is on).
+      const graceMs =
+        this.unloggedGraceMs ??
+        (settings.guard
+          ? settings.guardDelayMinutes * 60_000
+          : UNLOGGED_GRACE_MS);
       let unlogged = false;
       if (isConsole && intent.reason === 'idle' && reported === true) {
         const since = this.awakeSince.get(device.id) ?? now.getTime();
         this.awakeSince.set(device.id, since);
-        if (now.getTime() - since < this.unloggedGraceMs) return 'idle';
+        if (now.getTime() - since < graceMs) return 'idle';
         unlogged = true;
         if (!settings.guard) {
           await (isTv
@@ -912,6 +969,20 @@ export class GamingDevicesService
           return 'idle';
         }
       } else if (isConsole) this.awakeSince.delete(device.id);
+      else {
+        // A plug that Matchena put off and someone switched back on: Guard waits its delay, then undoes it.
+        const undoing =
+          settings.guard &&
+          intent.enforce &&
+          intent.screenOn === false &&
+          intent.key === device.appliedKey &&
+          reported === true;
+        if (undoing && graceMs > 0) {
+          const since = this.awakeSince.get(device.id) ?? now.getTime();
+          this.awakeSince.set(device.id, since);
+          if (now.getTime() - since < graceMs) return 'idle';
+        } else this.awakeSince.delete(device.id);
+      }
       if (!plan) return 'idle';
       const guardFired = isConsole
         ? unlogged && intent.enforce && intent.screenOn === false

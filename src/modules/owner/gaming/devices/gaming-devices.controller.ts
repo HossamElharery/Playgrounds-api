@@ -24,6 +24,7 @@ import { GamingDevicesService } from './gaming-devices.service';
 import { GamingHubsService } from './gaming-hubs.service';
 import {
   PairTvDto,
+  DeviceGuardDto,
   DeviceOverrideDto,
   DeviceTestDto,
   PairConsoleDto,
@@ -53,6 +54,12 @@ export class GamingDevicesController {
     @Body() d: GamingCommandDto,
   ) {
     return this.devices.rotateLink(u, d);
+  }
+  @Post('guard') @RequirePermission('devices.manage') applyGuard(
+    @CurrentUser() u: AuthenticatedUser,
+    @Body() d: DeviceGuardDto,
+  ) {
+    return this.devices.applyGuard(u, d);
   }
   @Put(':id') @RequirePermission('devices.manage') update(
     @CurrentUser() u: AuthenticatedUser,

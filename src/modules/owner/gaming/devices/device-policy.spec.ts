@@ -19,6 +19,11 @@ describe('device policy', () => {
     ).toEqual({ ...DEFAULT_DEVICE_SETTINGS, invert: true });
   });
 
+  it('Guard delay: at once, one or three minutes; one minute when unknown (what consoles always did)', () => {
+    expect(DEFAULT_DEVICE_SETTINGS.guardDelayMinutes).toBe(1);
+    for (const m of [0, 1, 3]) expect(deviceSettings({ guardDelayMinutes: m }).guardDelayMinutes).toBe(m);
+    for (const bad of [2, 5, -1, 1.5, 'x', null]) expect(deviceSettings({ guardDelayMinutes: bad }).guardDelayMinutes).toBe(1);
+  });
   it('timed session: on, and the screen goes off exactly when the time ends', () => {
     const intent = deviceIntent(s(), { expectedEnd: at(30) }, null, now);
     expect(intent).toMatchObject({

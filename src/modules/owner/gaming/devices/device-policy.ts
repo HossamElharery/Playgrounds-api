@@ -3,6 +3,11 @@
  * device settings, the running session (if any) and the clock, and sends a command only when
  * the answer changes — or, with `guard`, whenever the plug disagrees with an "off".
  */
+/** The choices the owner has for how fast Guard reacts. One minute is what consoles and TVs always did. */
+export const GUARD_DELAYS = [0, 1, 3] as const;
+export type GuardDelay = (typeof GUARD_DELAYS)[number];
+export const DEFAULT_GUARD_DELAY: GuardDelay = 1;
+
 export interface DeviceSettings {
   /** Master switch: off = Matchena never touches this plug. */
   enabled: boolean;
@@ -16,6 +21,8 @@ export interface DeviceSettings {
   graceMinutes: number;
   /** Keep the screen off whenever no session runs (switching it on by hand is undone and reported). */
   guard: boolean;
+  /** How long Matchena waits before undoing a screen that was switched on by hand: 0 = at once, 1 or 3 minutes. */
+  guardDelayMinutes: GuardDelay;
   /** The relay cuts power when ON (normally-closed wiring). */
   invert: boolean;
 }
@@ -28,6 +35,7 @@ export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = {
   // The screen goes off when the time ends. A grace period is for venues that want staff to have a moment to extend or collect.
   graceMinutes: 0,
   guard: true,
+  guardDelayMinutes: DEFAULT_GUARD_DELAY,
   invert: false,
 };
 
@@ -41,6 +49,7 @@ export function deviceSettings(raw: unknown): DeviceSettings {
       ? v[key]
       : (DEFAULT_DEVICE_SETTINGS[key] as boolean);
   const grace = Number(v.graceMinutes);
+  const delay = v.guardDelayMinutes;
   return {
     enabled: bool('enabled'),
     autoOn: bool('autoOn'),
@@ -51,6 +60,11 @@ export function deviceSettings(raw: unknown): DeviceSettings {
         ? grace
         : DEFAULT_DEVICE_SETTINGS.graceMinutes,
     guard: bool('guard'),
+    guardDelayMinutes:
+      typeof delay === 'number' &&
+      (GUARD_DELAYS as readonly number[]).includes(delay)
+        ? (delay as GuardDelay)
+        : DEFAULT_GUARD_DELAY,
     invert: bool('invert'),
   };
 }

@@ -31,6 +31,6 @@ describe('device and Hub owner routes are permission-gated', () => {
 
   it('the smart-TV routes exist and are among them', () => {
     const paths = [...routes(GamingDevicesController), ...routes(GamingHubsController)].map((r) => r.path);
-    expect(paths).toEqual(expect.arrayContaining([':id/tv/pair', ':id/tv/cancel', ':hubId/tv/add']));
+    expect(paths).toEqual(expect.arrayContaining([':id/tv/pair', ':id/tv/cancel', ':hubId/tv/add', 'guard']));
   });
 });

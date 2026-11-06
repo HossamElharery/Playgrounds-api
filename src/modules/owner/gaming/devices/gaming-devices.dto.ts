@@ -16,7 +16,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { GamingCommandDto } from '../gaming-operations.dto';
-import { MAX_GRACE_MINUTES } from './device-policy';
+import { GUARD_DELAYS, MAX_GRACE_MINUTES } from './device-policy';
 
 export class DeviceSettingsDto {
   @IsOptional() @IsBoolean() enabled?: boolean;
@@ -25,6 +25,7 @@ export class DeviceSettingsDto {
   @IsOptional() @IsBoolean() cutAtEnd?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_GRACE_MINUTES) graceMinutes?: number;
   @IsOptional() @IsBoolean() guard?: boolean;
+  @IsOptional() @IsIn([...GUARD_DELAYS]) guardDelayMinutes?: number;
   @IsOptional() @IsBoolean() invert?: boolean;
 }
 export class UpdateGamingDeviceDto extends GamingCommandDto {
@@ -38,6 +39,11 @@ export class UpdateGamingDeviceDto extends GamingCommandDto {
   @ValidateNested()
   @Type(() => DeviceSettingsDto)
   settings?: DeviceSettingsDto;
+}
+/** Use one Guard choice on every device of the venue. */
+export class DeviceGuardDto extends GamingCommandDto {
+  @IsBoolean() guard!: boolean;
+  @IsIn([...GUARD_DELAYS]) delayMinutes!: number;
 }
 export class DeviceTestDto extends GamingCommandDto {
   @IsInt() @Min(3) @Max(300) seconds!: number;

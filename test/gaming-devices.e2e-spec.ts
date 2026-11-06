@@ -96,6 +96,9 @@ describe('smart plugs follow gaming sessions (PostgreSQL + real WebSocket)',()=>
 
   it('switching the screen on by hand with no session is undone and reported to the owner',async()=>{
     const sim=sims[0];notifications.create.mockClear();
+    const device={deviceId:(await db.gamingDevice.findFirstOrThrow({where:{externalId:'shellyplugsg3-aaaaaaaaaaa1'}})).id};
+    await devices.update(user,device.deviceId,{...key(),settings:{guardDelayMinutes:0}}); // "at once": the delay itself is covered in gaming-guard
+    await until(async()=>(await db.gamingDevice.findUniqueOrThrow({where:{id:device.deviceId}})).appliedKey==='off','idle off sent');
     sim.press();
     await until(()=>sim.output===false,'guard off again');
     await until(async()=>(await db.gamingDeviceLog.count({where:{kind:'guard'}}))>0,'guard log');
